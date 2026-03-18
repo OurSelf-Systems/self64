@@ -37,6 +37,27 @@ static const char* bus_code_name(int code) {
 }
 
 
+static const char* trap_code_name(int code) {
+  switch (code) {
+    case TRAP_BRKPT: return "TRAP_BRKPT: process breakpoint (brk instruction)";
+    case TRAP_TRACE: return "TRAP_TRACE: process trace trap (single-step)";
+    default:         return "unknown";
+  }
+}
+
+
+static const char* ill_code_name(int code) {
+  switch (code) {
+    case ILL_ILLOPC: return "ILL_ILLOPC: illegal opcode";
+    case ILL_ILLOPN: return "ILL_ILLOPN: illegal operand";
+    case ILL_ILLADR: return "ILL_ILLADR: illegal addressing mode";
+    case ILL_ILLTRP: return "ILL_ILLTRP: illegal trap";
+    case ILL_PRVOPC: return "ILL_PRVOPC: privileged opcode";
+    default:         return "unknown";
+  }
+}
+
+
 static void print_platform_info() {
 # if TARGET_OS_VERSION == MACOSX_VERSION
   char version[64] = "unknown";
@@ -96,6 +117,8 @@ static void print_signal_info(int sig, int32 code) {
   const char* code_desc = "unknown";
   if (sig == SIGSEGV)      code_desc = segv_code_name(code);
   else if (sig == SIGBUS)  code_desc = bus_code_name(code);
+  else if (sig == SIGTRAP) code_desc = trap_code_name(code);
+  else if (sig == SIGILL)  code_desc = ill_code_name(code);
 
 # if TARGET_OS_VERSION == MACOSX_VERSION
   char sig_name[16] = "unknown";
