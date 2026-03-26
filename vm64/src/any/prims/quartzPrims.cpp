@@ -79,14 +79,14 @@ CGLayer* CGLayerCreateWithContext_wrap(CGContextRef context, float w, float h) {
 
 
 void CGContextSelectFont_wrap(CGContext* c, const char* s, float siz) {
-  // CGContextSelectFont is deprecated since macOS 10.9.
-  // Self code uses this to set the font on a context; the actual text
-  // drawing happens via CGContextShowTextAtPoint_wrap below.
-  // We store the font selection but rely on Core Text for rendering.
-  (void)c; (void)s; (void)siz;
-  // Font is already set up via CTFontRef in QuartzWindow.
-  // This function is now a no-op; Self-level code should use
-  // the window's draw_text method instead.
+  // CGContextSelectFont is deprecated since macOS 10.9 but still functional.
+  // Self-level code calls this through glue to set the font for subsequent
+  // showText/showTextAtPoint calls.  Suppressing the warning here is
+  // preferable to breaking the Self→Quartz text rendering pipeline.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  CGContextSelectFont(c, s, siz, kCGEncodingMacRoman);
+#pragma clang diagnostic pop
 }
 
 
