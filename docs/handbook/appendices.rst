@@ -12,4 +12,5 @@ Appendices
    menus
    monitor
    primitives
+   creatingprimitives
 
