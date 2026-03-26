@@ -967,7 +967,10 @@ void QuartzWindow::draw_text(const char* text, int x, int y)  {
 
   clear_rectangle(x, y-h, len * font_width(), h);
 
-  // Use Core Text instead of deprecated CGContextShowText
+  // Use Core Text instead of deprecated CGContextShowText.
+  // The graphics context has a flipped CTM (y increases downward) and
+  // a flipped text matrix.  Core Text expects an identity text matrix
+  // and handles glyph positioning itself, so we temporarily reset it.
   @autoreleasepool {
     CFStringRef cfStr = CFStringCreateWithBytes(
         kCFAllocatorDefault, (const UInt8*)text, len,
@@ -981,8 +984,16 @@ void QuartzWindow::draw_text(const char* text, int x, int y)  {
     CFAttributedStringRef attrStr = CFAttributedStringCreate(
         kCFAllocatorDefault, cfStr, attrs);
     CTLineRef line = CTLineCreateWithAttributedString(attrStr);
-    CGContextSetTextPosition(myContext, x, y);
+
+    // Core Text draws upward from the baseline in the text matrix
+    // coordinate system.  With our flipped CTM, set a text matrix
+    // that flips glyphs back upright and positions at (x, y).
+    CGAffineTransform savedTextMatrix = CGContextGetTextMatrix(myContext);
+    CGContextSetTextMatrix(myContext,
+        CGAffineTransformMake(1, 0, 0, -1, x, y));
     CTLineDraw(line, myContext);
+    CGContextSetTextMatrix(myContext, savedTextMatrix);
+
     CFRelease(line);
     CFRelease(attrStr);
     CFRelease(attrs);
