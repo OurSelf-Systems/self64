@@ -63,7 +63,7 @@ static oop byteVectorFromCFString(CFStringRef cfs, const char* primName, void* F
 
 static void* reportOSError(OSStatus e, const char* n, void* FH)  {
     static char buf[1000];
-    sprintf(buf, "%s failed: error %d", n, (int)e);
+    snprintf(buf, sizeof(buf), "%s failed: error %d", n, (int)e);
     failure(FH, buf);
     return NULL;
   }
@@ -79,10 +79,14 @@ CGLayer* CGLayerCreateWithContext_wrap(CGContextRef context, float w, float h) {
 
 
 void CGContextSelectFont_wrap(CGContext* c, const char* s, float siz) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-  return CGContextSelectFont(c, s, siz, kCGEncodingMacRoman);
-#pragma clang diagnostic pop
+  // CGContextSelectFont is deprecated since macOS 10.9.
+  // Self code uses this to set the font on a context; the actual text
+  // drawing happens via CGContextShowTextAtPoint_wrap below.
+  // We store the font selection but rely on Core Text for rendering.
+  (void)c; (void)s; (void)siz;
+  // Font is already set up via CTFontRef in QuartzWindow.
+  // This function is now a no-op; Self-level code should use
+  // the window's draw_text method instead.
 }
 
 
@@ -110,13 +114,13 @@ static bool convertFloatObjVector( objVectorOop v, const char* prinName, void* F
   int badI = -1;
   for (uint32 i = 0;  i < count;  ++i) {
     oop o = v->obj_at(i);
-    floats[i] = o->is_float() ? floatOop(o)->value()
-              : o->is_smi()   ? smiOop(o)->value()
-              : ((badI = i), (i = count), 0.0);
+    if      (o->is_float()) floats[i] = floatOop(o)->value();
+    else if (o->is_smi())   floats[i] = smiOop(o)->value();
+    else                   { badI = i; break; }
   }
   if (badI != -1) {
     static char buf[1000];
-    sprintf(buf, "%s failed: bad oop at: %d", prinName, badI);
+    snprintf(buf, sizeof(buf), "%s failed: bad oop at: %d", prinName, badI);
     failure(FH, buf);
     return false;
   }

@@ -323,7 +323,7 @@ static uint32 cocoaCharToMacCharCode(unichar ch) {
     IOSurfaceRef surface = _quartzWindow->ioSurface();
     if (!surface) return;
     self.layer.contents = (__bridge id)surface;
-    [self.layer setContentsChanged];
+    [self.layer performSelector:@selector(setContentsChanged)];
 }
 
 @end
@@ -447,7 +447,7 @@ static void blitIOSurfaceToView(SelfContentView* view, IOSurfaceRef surface) {
         [CATransaction begin];
         [CATransaction setDisableActions:YES]; // no implicit animation
         layer.contents = (__bridge id)surface;
-        [layer setContentsChanged];
+        [layer performSelector:@selector(setContentsChanged)];
         [CATransaction commit];
     }
 }
@@ -640,8 +640,8 @@ bool QuartzWindow::open(
     [nsWin setDelegate:delegate];
 
     // Store references
-    _ns_window = (__bridge_retained void*)nsWin;
-    _ns_view = (__bridge_retained void*)view;
+    _ns_window = (void*)nsWin;
+    _ns_view = (void*)view;
 
     // Set up WindowRef compatibility struct
     _windowPtr.nsWindow = _ns_window;
@@ -748,8 +748,8 @@ void QuartzWindow::close() {
 
     WindowSet::rm_window(_quartz_win);
 
-    NSWindow* nsWin = (__bridge_transfer NSWindow*)_ns_window;
-    SelfContentView* view = (__bridge_transfer SelfContentView*)_ns_view;
+    NSWindow* nsWin = (NSWindow*)_ns_window;
+    SelfContentView* view = (SelfContentView*)_ns_view;
     view.quartzWindow = nil;
     id delegate = [nsWin delegate];
     if ([delegate isKindOfClass:[SelfWindowDelegate class]]) {
@@ -938,8 +938,6 @@ bool QuartzWindow::pre_draw(bool incremental) {
   if (fresh && myContext) {
     setupCTM();
     CGContextSetTextMatrix(myContext, CGAffineTransformMake( 1, 0, 0, -1, 0, 0));
-    CGContextSelectFont(myContext,
-      default_fixed_font_name(), default_fixed_font_size(), kCGEncodingMacRoman);
     CGContextSetShouldAntialias(myContext, false);
   }
   if (fresh || !incremental) {
@@ -968,8 +966,28 @@ void QuartzWindow::draw_text(const char* text, int x, int y)  {
   int h = font_height();
 
   clear_rectangle(x, y-h, len * font_width(), h);
-  CGContextSetTextPosition(myContext, x, y);
-  CGContextShowText(myContext, text, len);
+
+  // Use Core Text instead of deprecated CGContextShowText
+  @autoreleasepool {
+    CFStringRef cfStr = CFStringCreateWithBytes(
+        kCFAllocatorDefault, (const UInt8*)text, len,
+        kCFStringEncodingMacRoman, false);
+    if (!cfStr) return;
+    CFStringRef keys[] = { kCTFontAttributeName };
+    CFTypeRef   vals[] = { _default_ct_font };
+    CFDictionaryRef attrs = CFDictionaryCreate(
+        kCFAllocatorDefault, (const void**)keys, (const void**)vals,
+        1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFAttributedStringRef attrStr = CFAttributedStringCreate(
+        kCFAllocatorDefault, cfStr, attrs);
+    CTLineRef line = CTLineCreateWithAttributedString(attrStr);
+    CGContextSetTextPosition(myContext, x, y);
+    CTLineDraw(line, myContext);
+    CFRelease(line);
+    CFRelease(attrStr);
+    CFRelease(attrs);
+    CFRelease(cfStr);
+  }
 }
 
 void QuartzWindow::draw_line(int x1, int y1, int x2, int y2) {

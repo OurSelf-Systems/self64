@@ -20,6 +20,7 @@ class AbstractPlatformWindow: public CHeapObj {
  public:
   // Creation/destruction:
   AbstractPlatformWindow() {}
+  virtual ~AbstractPlatformWindow() {}
   
   // Opening/closing:
   // There also may be a platform-specific open
