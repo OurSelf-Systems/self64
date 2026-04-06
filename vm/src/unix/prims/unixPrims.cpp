@@ -28,7 +28,9 @@ extern "C" {
   int fcntl(int fildes, int cmd, /* arg */ ...);
 }
 
-# elif TARGET_OS_VERSION == MACOSX_VERSION
+# elif TARGET_OS_VERSION == MACOSX_VERSION || TARGET_OS_VERSION == LINUX_VERSION
+
+  # include <sys/ptrace.h>
 
   // removed for Tiger: (5/05 dmu)
   // typedef int socklen_t;
@@ -582,6 +584,20 @@ byteVectorOop syscall6(int n,  void* a0, void* a1, void* a2, void* a3,
   errno = 0;
   return convertLongToByteVector(syscall(n, a0, a1, a2, a3, a4, a5), FH);}
 
+
+int gethostid_wrap() { return (int)gethostid(); }
+
+int ioctl_wrap(int fd, int request, void* arg) {
+  return ioctl(fd, (unsigned long)request, arg);
+}
+
+int ptrace_wrap(int request, int pid, void* addr, int data) {
+#ifdef __linux__
+  return (int)ptrace((__ptrace_request)request, (pid_t)pid, (caddr_t)addr, data);
+#else
+  return (int)ptrace(request, (pid_t)pid, (caddr_t)addr, data);
+#endif
+}
 
 void unixPrims_init() { ioC = new IOCleanup; }
 

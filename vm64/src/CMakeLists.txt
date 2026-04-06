@@ -1,0 +1,630 @@
+#!/usr/bin/env cmake
+
+#config below.
+
+set(SRC_any
+  any/asm/asm.cpp
+  any/asm/asm.hh
+  any/asm/asm_abstract.hh
+  any/asm/asm_inline.hh
+  any/asm/asm_inline_abstract.hh
+  any/asm/disasm.cpp
+  any/asm/disasm.hh
+  any/asm/fields.cpp
+  any/asm/fields.hh
+  any/asm/label.cpp
+  any/asm/label.hh
+  any/asm/label_inline.hh
+  any/asm/nameDesc.cpp
+  any/asm/nameDesc.hh
+  any/asm/pcDesc.cpp
+  any/asm/pcDesc.hh
+  any/asm/regs.cpp
+  any/asm/regs.hh
+  any/asm/scopeDesc.cpp
+  any/asm/scopeDesc.hh
+  any/fast_compiler/blist.cpp
+  any/fast_compiler/blist.hh
+  any/fast_compiler/codeGen.cpp
+  any/fast_compiler/codeGen.hh
+  any/fast_compiler/fcompiler.cpp
+  any/fast_compiler/fcompiler.hh
+  any/fast_compiler/fscope.cpp
+  any/fast_compiler/fscope.hh
+  any/fast_compiler/registerState.cpp
+  any/fast_compiler/registerState.hh
+  any/fast_compiler/registerString.cpp
+  any/fast_compiler/registerString.hh
+  any/interpreter/abstract_interpreter.cpp
+  any/interpreter/abstract_interpreter.hh
+  any/interpreter/abstract_interpreter_inline.hh
+  any/interpreter/interpreter.cpp
+  any/interpreter/interpreter.hh
+  any/interpreter/interpreterPICTable.cpp
+  any/interpreter/interpreterPICTable.hh
+  any/interpreter/stacking_interpreter.cpp
+  any/interpreter/stacking_interpreter.hh
+  any/lookup/cacheStub.cpp
+  any/lookup/cacheStub.hh
+  any/lookup/cacheStub_inline.hh
+  any/lookup/complexLookup.cpp
+  any/lookup/complexLookup.hh
+  any/lookup/deps.cpp
+  any/lookup/deps.hh
+  any/lookup/diDesc.cpp
+  any/lookup/diDesc.hh
+  any/lookup/key.cpp
+  any/lookup/key.hh
+  any/lookup/sendDesc.cpp
+  any/lookup/sendDesc.hh
+  any/lookup/simpleLookup.cpp
+  any/lookup/simpleLookup.hh
+  any/lookup/simpleLookup_inline.hh
+  any/lookup/slotRef.cpp
+  any/lookup/slotRef.hh
+  any/lookup/target.cpp
+  any/lookup/target.hh
+  any/memory/ageTable.cpp
+  any/memory/ageTable.hh
+  any/memory/asmErrorCodes.hh
+  any/memory/enumeration.cpp
+  any/memory/enumeration.hh
+  any/memory/generation.cpp
+  any/memory/generation.hh
+  any/memory/generation_inline.hh
+  any/memory/mapTable.cpp
+  any/memory/mapTable.hh
+  any/memory/mapVtbls.cpp
+  any/memory/mapVtbls.hh
+  any/memory/oopClosures.cpp
+  any/memory/oopClosures.hh
+  any/memory/oTable.cpp
+  any/memory/oTable.hh
+  any/memory/oTable_inline.hh
+  any/memory/rSet.cpp
+  any/memory/rSet.hh
+  any/memory/rSet_inline.hh
+  any/memory/search.cpp
+  any/memory/search.hh
+  any/memory/slotIterator.cpp
+  any/memory/slotIterator.hh
+  any/memory/slotList.cpp
+  any/memory/slotList.hh
+  any/memory/space.cpp
+  any/memory/space.hh
+  any/memory/space_inline.hh
+  any/memory/spaceSize.cpp
+  any/memory/spaceSize.hh
+  any/memory/spaceSizeMacros.hh
+  any/memory/stringTable.cpp
+  any/memory/stringTable.hh
+  any/memory/universe.cpp
+  any/memory/universe.hh
+  any/memory/universe.more.cpp
+  any/memory/universe_inline.hh
+  any/memory/vmStrings.cpp
+  any/memory/vmStrings.hh
+  any/objects/assignmentMap.cpp
+  any/objects/assignmentMap.hh
+  any/objects/assignmentOop.hh
+  any/objects/blockMap.cpp
+  any/objects/blockMap.hh
+  any/objects/blockOop.cpp
+  any/objects/blockOop.hh
+  any/objects/blockOop_inline.hh
+  any/objects/byteVectorMap.cpp
+  any/objects/byteVectorMap.hh
+  any/objects/byteVectorOop.cpp
+  any/objects/byteVectorOop.hh
+  any/objects/codeLikeSlotsMap.cpp
+  any/objects/codeLikeSlotsMap.hh
+  any/objects/codeSlotsMap.cpp
+  any/objects/codeSlotsMap.hh
+  any/objects/fctProxyMap.cpp
+  any/objects/fctProxyMap.hh
+  any/objects/fctProxyOop.cpp
+  any/objects/fctProxyOop.hh
+  any/objects/floatMap.cpp
+  any/objects/floatMap.hh
+  any/objects/floatOop.cpp
+  any/objects/floatOop.hh
+  any/objects/foreignMap.hh
+  any/objects/foreignOop.cpp
+  any/objects/foreignOop.hh
+  any/objects/immediateMap.cpp
+  any/objects/immediateMap.hh
+  any/objects/map.cpp
+  any/objects/map.hh
+  any/objects/mapMap.cpp
+  any/objects/mapMap.hh
+  any/objects/mapOop.cpp
+  any/objects/mapOop.hh
+  any/objects/markMap.cpp
+  any/objects/markMap.hh
+  any/objects/markOop.cpp
+  any/objects/markOop.hh
+  any/objects/memOop.cpp
+  any/objects/memOop.hh
+  any/objects/memOop_inline.hh
+  any/objects/mirrorMap.cpp
+  any/objects/mirrorMap.hh
+  any/objects/mirrorOop.cpp
+  any/objects/mirrorOop.hh
+  any/objects/objVectorMap.cpp
+  any/objects/objVectorMap.hh
+  any/objects/objVectorOop.cpp
+  any/objects/objVectorOop.hh
+  any/objects/oop.cpp
+  any/objects/oop.hh
+  any/objects/oop_inline.hh
+  any/objects/oopsOop.cpp
+  any/objects/oopsOop.hh
+  any/objects/oopsOop_inline.hh
+  any/objects/processMap.cpp
+  any/objects/processMap.hh
+  any/objects/processOop.cpp
+  any/objects/processOop.hh
+  any/objects/profilerMap.cpp
+  any/objects/profilerMap.hh
+  any/objects/profilerOop.cpp
+  any/objects/profilerOop.hh
+  any/objects/proxyMap.cpp
+  any/objects/proxyMap.hh
+  any/objects/proxyOop.cpp
+  any/objects/proxyOop.hh
+  any/objects/slotDesc.cpp
+  any/objects/slotDesc.hh
+  any/objects/slotsMap.cpp
+  any/objects/slotsMap.hh
+  any/objects/slotsMapDeps.cpp
+  any/objects/slotsMapDeps.hh
+  any/objects/slotsOop.cpp
+  any/objects/slotsOop.hh
+  any/objects/slotType.cpp
+  any/objects/slotType.hh
+  any/objects/smiMap.cpp
+  any/objects/smiMap.hh
+  any/objects/smiOop.cpp
+  any/objects/smiOop.hh
+  any/objects/stringMap.cpp
+  any/objects/stringMap.hh
+  any/objects/stringOop.cpp
+  any/objects/stringOop.hh
+  any/objects/tag.hh
+  any/objects/vframeMap.cpp
+  any/objects/vframeMap.hh
+  any/objects/vframeOop.cpp
+  any/objects/vframeOop.hh
+  any/os/crashDiagnostics.cpp
+  any/os/crashDiagnostics.hh
+  any/os/errorCodes.cpp
+  any/os/errorCodes.hh
+  any/os/itimer.cpp
+  any/os/itimer.hh
+  any/os/monitorWindow.cpp
+  any/os/monitorWindow.hh
+  any/os/os.cpp
+  any/os/os.hh
+  any/os/os_includes.hh
+  any/os/platformWindow.cpp
+  any/os/platformWindow.hh
+  # -> Quartz
+  # any/os/quartzWindow.cpp
+  # any/os/quartzWindow.hh
+  any/os/sig.cpp
+  any/os/sig.hh
+  any/os/signalBlocker.hh
+  any/os/timer.cpp
+  any/os/timer.hh
+  # -> X11
+  # any/os/xlibWindow.cpp
+  # any/os/xlibWindow.hh
+  any/parser/branchSet.cpp
+  any/parser/branchSet.hh
+  any/parser/branchSet_inline.hh
+  any/parser/byteCodes.cpp
+  any/parser/byteCodes.hh
+  any/parser/expr.cpp
+  any/parser/expr.hh
+  any/parser/kinds.cpp
+  any/parser/kinds.hh
+  any/parser/labelSet.cpp
+  any/parser/labelSet.hh
+  any/parser/labelSet_inline.hh
+  any/parser/list.cpp
+  any/parser/list.hh
+  any/parser/parser.cpp
+  any/parser/parser.hh
+  any/parser/positionTable.cpp
+  any/parser/positionTable.hh
+  any/parser/preserve.hh
+  any/parser/scanner.cpp
+  any/parser/scanner.hh
+  any/parser/send.cpp
+  any/parser/send.hh
+  any/parser/slot.cpp
+  any/parser/slot.hh
+  any/parser/str.cpp
+  any/parser/str.hh
+  any/parser/stringUtil.cpp
+  any/parser/stringUtil.hh
+  any/prims/dynLink.cpp
+  any/prims/dynLink.hh
+  any/prims/glue.cpp
+  any/prims/glue.hh
+  any/prims/glueCheckSum.cpp
+  any/prims/glueDefs.cpp
+  any/prims/glueDefs.hh
+  any/prims/glueSupport.cpp
+  any/prims/glueSupport.hh
+  any/prims/include_glue.hh
+  any/prims/miscPrims.cpp
+  any/prims/miscPrims.hh
+  any/prims/prim.cpp
+  any/prims/prim.hh
+  any/prims/smiPrims_x86_64.cpp
+  any/prims/smiPrims_aarch64.cpp
+  any/prims/prim_table_arch.hh
+  any/prims/prim_table_os.hh
+  # -> quartz
+  # any/prims/prim_table_quartz.hh
+  # any/prims/quartzPrims.cpp
+  # any/prims/quartzPrims.hh
+  any/runtime/aCompiler.cpp
+  any/runtime/aCompiler.hh
+  any/runtime/allocation.cpp
+  any/runtime/allocation.hh
+  any/runtime/asmDefs.hh
+  any/runtime/asserts.hh
+  any/runtime/asyncMalloc.cpp
+  any/runtime/asyncMalloc.hh
+  any/runtime/bits.hh
+  any/runtime/callgraph.cpp
+  any/runtime/callgraph.hh
+  any/runtime/clist.cpp
+  any/runtime/clist.hh
+  any/runtime/config.hh
+  any/runtime/conversion.cpp
+  any/runtime/conversion.hh
+  any/runtime/debug.cpp
+  any/runtime/debug.hh
+  any/runtime/debugPrintable.cpp
+  any/runtime/debugPrintable.hh
+  any/runtime/error.hh
+  any/runtime/eventlog.cpp
+  any/runtime/eventlog.hh
+  any/runtime/files.cpp
+  any/runtime/files.hh
+  any/runtime/frame.cpp
+  any/runtime/frame.hh
+  any/runtime/frame_format.cpp
+  any/runtime/frame_format.hh
+  any/runtime/frame_format_abstract.hh
+  any/runtime/frame_inline.hh
+  any/runtime/frame_iterator.cpp
+  any/runtime/frame_iterator.hh
+  any/runtime/framePieces.cpp
+  any/runtime/framePieces.hh
+  any/runtime/framePieces_abstract.hh
+  any/runtime/framePieces_inline.hh
+  any/runtime/hprofiler.cpp
+  any/runtime/hprofiler.hh
+  any/runtime/init.cpp
+  any/runtime/init.hh
+  any/runtime/interruptedCtx.cpp
+  any/runtime/interruptedCtx.hh
+  any/runtime/lprintf.cpp
+  any/runtime/lprintf.hh
+  any/runtime/machineCache.cpp
+  any/runtime/machineCache.hh
+  any/runtime/machineCache_abstract.hh
+  any/runtime/macros.hh
+  any/runtime/monitor.cpp
+  any/runtime/monitor.hh
+  any/runtime/monitor_abstract.hh
+  any/runtime/monitor_inline.hh
+  any/runtime/monitor_inline_abstract.hh
+  any/runtime/monitorHooks.cpp
+  any/runtime/monitorHooks.hh
+  any/runtime/monitorPieces.cpp
+  any/runtime/monitorPieces.hh
+  any/runtime/nlrSupport.cpp
+  any/runtime/nlrSupport.hh
+  any/runtime/nprofiler.copygraph.cpp
+  any/runtime/nprofiler.cpp
+  any/runtime/nprofiler.hh
+  any/runtime/print.cpp
+  any/runtime/print.hh
+  any/runtime/process.cpp
+  any/runtime/process.hh
+  any/runtime/recompile.cpp
+  any/runtime/recompile.hh
+  any/runtime/registerLocator.cpp
+  any/runtime/registerLocator.hh
+  any/runtime/runtime.cpp
+  any/runtime/runtime.hh
+  any/runtime/runtime_stubs_x86_64.cpp
+  any/runtime/runtime_stubs_aarch64.cpp
+  any/runtime/selfMonitor.cpp
+  any/runtime/selfMonitor.hh
+  any/runtime/shell.cpp
+  any/runtime/shell.hh
+  any/runtime/stack.cpp
+  any/runtime/stack.hh
+  any/runtime/table.cpp
+  any/runtime/table.hh
+  any/runtime/top.hh
+  any/runtime/top_includes.hh
+  any/runtime/types.hh
+  any/runtime/uncommonBranch.cpp
+  any/runtime/uncommonBranch.hh
+  any/runtime/util.cpp
+  any/runtime/util.hh
+  any/runtime/vframe.cpp
+  any/runtime/vframe.hh
+  any/sic/aNode.cpp
+  any/sic/aNode.hh
+  any/sic/basicBlock.cpp
+  any/sic/basicBlock.hh
+  any/sic/basicBlock_inline.hh
+  any/sic/bitVector.cpp
+  any/sic/bitVector.hh
+  any/sic/defUse.cpp
+  any/sic/defUse.hh
+  any/sic/defUse_inline.hh
+  any/sic/genHelper.cpp
+  any/sic/genHelper.hh
+  any/sic/inlining.cpp
+  any/sic/inlining.hh
+  any/sic/longRegString.cpp
+  any/sic/longRegString.hh
+  any/sic/node.cpp
+  any/sic/node.hh
+  any/sic/node_inline.hh
+  any/sic/nodeGen.cpp
+  any/sic/nodeGen.hh
+  any/sic/opcode.cpp
+  any/sic/opcode.hh
+  any/sic/preg.cpp
+  any/sic/preg.hh
+  any/sic/regAlloc.cpp
+  any/sic/regAlloc.hh
+  any/sic/rscope.cpp
+  any/sic/rscope.hh
+  any/sic/sic.cpp
+  any/sic/sic.hh
+  any/sic/sicExpr.cpp
+  any/sic/sicExpr.hh
+  any/sic/sicInline.cpp
+  any/sic/sicPrimline.cpp
+  any/sic/sicScope.cpp
+  any/sic/sicScope.hh
+  any/sic/sicScope_inline.hh
+  any/sic/sicSplit.cpp
+  any/sic/sicSplit.hh
+  any/sic/slist.cpp
+  any/sic/slist.hh
+  any/sic/tracing.cpp
+  any/sic/tracing.hh
+  any/tests/vm_tests.cpp
+  any/tests/vm_tests.hh
+  any/tests/tag_tests.cpp
+  any/tests/oop_tests.cpp
+  any/tests/smi_tests.cpp
+  any/tests/float_tests.cpp
+  any/tests/mark_tests.cpp
+  any/tests/bits_tests.cpp
+  any/tests/util_tests.cpp
+  any/zone/addrDesc.cpp
+  any/zone/addrDesc.hh
+  any/zone/codeTable.cpp
+  any/zone/codeTable.hh
+  any/zone/countPattern.cpp
+  any/zone/countPattern.hh
+  any/zone/countStub.cpp
+  any/zone/countStub.hh
+  any/zone/countStub_abstract.hh
+  any/zone/fprofiler.cpp
+  any/zone/fprofiler.hh
+  any/zone/ncode.cpp
+  any/zone/ncode.hh
+  any/zone/nmethod.cpp
+  any/zone/nmethod.hh
+  any/zone/nmethod_inline.hh
+  any/zone/nmethodScopes.cpp
+  any/zone/nmethodScopes.hh
+  any/zone/nmln.cpp
+  any/zone/nmln.hh
+  any/zone/scopeDescRecorder.cpp
+  any/zone/scopeDescRecorder.hh
+  any/zone/trapdoors.cpp
+  any/zone/trapdoors.hh
+  any/zone/zone.cpp
+  any/zone/zone.hh
+  any/zone/zoneHeap.cpp
+  any/zone/zoneHeap.hh
+)
+# include non-dependent
+list(APPEND SRC_src ${SRC_any})
+
+set(SRC_amd64
+  amd64/asm/asm_amd64.hh
+  amd64/asm/asm_inline_amd64.hh
+  amd64/asm/disasm_amd64.hh
+  amd64/asm/fields_amd64.cpp
+  amd64/asm/fields_amd64.hh
+  amd64/asm/regs_amd64.cpp
+  amd64/asm/regs_amd64.hh
+  amd64/fast_compiler/codeGen_amd64.hh
+  amd64/fast_compiler/codeGen_inline_amd64.hh
+  amd64/fast_compiler/fcompiler_amd64.hh
+  amd64/fast_compiler/registerState_amd64.hh
+  amd64/fast_compiler/registerString_amd64.hh
+  amd64/lookup/cacheStub_amd64.hh
+  amd64/lookup/cacheStub_inline_amd64.hh
+  amd64/lookup/diDesc_amd64.hh
+  amd64/lookup/sendDesc_amd64.hh
+  amd64/memory/search_amd64.cpp
+  amd64/memory/search_amd64.hh
+  amd64/prims/prim_table_arch_amd64.hh
+  amd64/runtime/aCompiler_amd64.hh
+  amd64/runtime/asmDefs_gcc_amd64.hh
+  amd64/runtime/conversion_amd64.cpp
+  amd64/runtime/conversion_amd64.hh
+  amd64/runtime/frame_amd64.cpp
+  amd64/runtime/frame_amd64.hh
+  amd64/runtime/frame_format_amd64.cpp
+  amd64/runtime/frame_format_amd64.hh
+  amd64/runtime/frame_iterator_amd64.cpp
+  amd64/runtime/frame_iterator_amd64.hh
+  amd64/runtime/framePieces_amd64.cpp
+  amd64/runtime/framePieces_amd64.hh
+  amd64/runtime/interruptedCtx_amd64.cpp
+  amd64/runtime/interruptedCtx_amd64.hh
+  amd64/runtime/registerLocator_amd64.cpp
+  amd64/runtime/registerLocator_amd64.hh
+  amd64/runtime/runtime_amd64.cpp
+  amd64/runtime/runtime_amd64.hh
+  amd64/runtime/stubs_amd64.cpp
+  amd64/runtime/uncommonBranch_amd64.cpp
+  amd64/runtime/vframe_amd64.cpp
+  amd64/sic/basicNode_amd64.hh
+  amd64/sic/deadBlockNode_amd64.hh
+  amd64/sic/genHelper_amd64.hh
+  amd64/sic/longRegString_amd64.hh
+  amd64/sic/prologueNode_amd64.hh
+  amd64/sic/sic_amd64.hh
+  amd64/zone/addrDesc_amd64.hh
+  amd64/zone/countPattern_amd64.hh
+  amd64/zone/countStub_amd64.hh
+  amd64/zone/nmethod_amd64.hh
+  amd64/zone/trapdoors_amd64.hh
+)
+
+set(SRC_aarch64
+  aarch64/asm/regs_aarch64.cpp
+  aarch64/asm/regs_aarch64.hh
+  aarch64/memory/search_aarch64.cpp
+  aarch64/memory/search_aarch64.hh
+  aarch64/prims/prim_table_arch_aarch64.hh
+  aarch64/runtime/aCompiler_aarch64.hh
+  aarch64/runtime/asmDefs_gcc_aarch64.hh
+  aarch64/runtime/conversion_aarch64.cpp
+  aarch64/runtime/conversion_aarch64.hh
+  aarch64/runtime/frame_aarch64.cpp
+  aarch64/runtime/frame_aarch64.hh
+  aarch64/runtime/frame_format_aarch64.cpp
+  aarch64/runtime/frame_format_aarch64.hh
+  aarch64/runtime/frame_iterator_aarch64.cpp
+  aarch64/runtime/frame_iterator_aarch64.hh
+  aarch64/runtime/framePieces_aarch64.cpp
+  aarch64/runtime/framePieces_aarch64.hh
+  aarch64/runtime/interruptedCtx_aarch64.cpp
+  aarch64/runtime/interruptedCtx_aarch64.hh
+  aarch64/runtime/registerLocator_aarch64.cpp
+  aarch64/runtime/registerLocator_aarch64.hh
+  aarch64/runtime/runtime_aarch64.cpp
+  aarch64/runtime/runtime_aarch64.hh
+  aarch64/runtime/stubs_aarch64.cpp
+  aarch64/runtime/uncommonBranch_aarch64.cpp
+  aarch64/runtime/vframe_aarch64.cpp
+)
+
+# include platform files
+if(TARGET_ARCH STREQUAL "X86_64_ARCH")
+  list(APPEND SRC_src ${SRC_amd64})
+elseif(TARGET_ARCH STREQUAL "AARCH64_ARCH")
+  list(APPEND SRC_src ${SRC_aarch64})
+else()
+  list(APPEND SRC_src ${SRC_${platform_processor}})
+endif()
+
+
+set(SRC_unix
+  unix/os/errorCodes_unix.cpp
+  unix/os/errorCodes_unix.hh
+  unix/os/itimer_unix.cpp
+  unix/os/itimer_unix.hh
+  unix/os/os_includes_unix.hh
+  unix/os/os_unix.cpp
+  unix/os/os_unix.hh
+  unix/os/sig_unix.cpp
+  unix/os/sig_unix.hh
+  unix/os/signalBlocker_unix.cpp
+  unix/os/signalBlocker_unix.hh
+  unix/os/timer_unix.cpp
+  unix/os/timer_unix.hh
+  unix/prims/include_glue_unix.hh
+  unix/prims/prim_table_os_unix.hh
+  unix/prims/unixPrims.cpp
+  unix/prims/unixPrims.glue.cpp
+  unix/prims/unixPrims.hh
+  # -> X11
+  # unix/prims/x_includes.hh
+  # unix/prims/xlibPrims.cpp
+  # unix/prims/xlibPrims.hh
+  unix/runtime/config_unix.hh
+  unix/runtime/interruptedCtx_unix.cpp
+  unix/runtime/machineCache_unix.cpp
+  unix/runtime/machineCache_unix.hh
+  unix/runtime/monitorHooks_unix.cpp
+  unix/runtime/monitorPieces_unix.cpp
+)
+
+# include unix files
+if(UNIX)
+  list(APPEND SRC_src ${SRC_unix})
+endif(UNIX)
+
+
+set(SRC_x11
+  any/os/xlibWindow.cpp
+  any/os/xlibWindow.hh
+  unix/prims/x_includes.hh
+  unix/prims/xlibPrims.cpp
+  unix/prims/xlibPrims.hh
+)
+
+if(SELF_X11)
+  list(APPEND SRC_src ${SRC_x11})
+endif()
+
+set(SRC_quartz
+  any/prims/prim_table_quartz.hh
+  any/prims/quartzPrims.cpp
+  any/prims/quartzPrims.hh
+  any/os/quartzWindow.hh
+)
+
+# ARM64 uses quartzWindow.mm (Objective-C++ for Cocoa), others use quartzWindow.cpp (Carbon)
+if(${platform_processor} STREQUAL "aarch64")
+  list(APPEND SRC_quartz any/os/quartzWindow.mm)
+else()
+  list(APPEND SRC_quartz any/os/quartzWindow.cpp)
+endif()
+
+if(SELF_QUARTZ)
+  list(APPEND SRC_src ${SRC_quartz})
+endif()
+
+
+set(SRC_cocoa
+  cocoa/os/main.mm
+  cocoa/os/Pty.h
+  cocoa/os/Pty.m
+  cocoa/os/SelfAppDelegate.h
+  cocoa/os/SelfAppDelegate.m
+  cocoa/os/Self.nib
+  cocoa/os/SelfConsoleView.h
+  cocoa/os/SelfConsoleView.m
+)
+
+if(SELF_OSX_COCOA)
+  list(APPEND SRC_src ${SRC_cocoa})
+  set(SELF_MACOSX_NIBS ${SELF_MACOSX_NIBS} ${CMAKE_CURRENT_SOURCE_DIR}/cocoa/os/Self.nib)
+endif()
+
+prepend_every_item(SRC_src "${CMAKE_CURRENT_SOURCE_DIR}/")
+
+set(SRC_src ${SRC_src} PARENT_SCOPE)
+set(SELF_MACOSX_NIBS ${SELF_MACOSX_NIBS} PARENT_SCOPE)
