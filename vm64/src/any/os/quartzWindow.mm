@@ -476,6 +476,10 @@ static void ensure_cocoa_initialized() {
   @autoreleasepool {
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    // Set an empty main menu before finishLaunching to prevent AppKit from
+    // building the default menu, which triggers lazy loading of Writing Tools
+    // and other frameworks — very slow under lldb due to dyld image notifications.
+    [NSApp setMainMenu:[[NSMenu alloc] init]];
     [NSApp finishLaunching];
 
     // Register for sleep notification to guard the Cocoa event loop.
