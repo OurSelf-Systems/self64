@@ -293,10 +293,18 @@ endmacro()
 # API
 macro(include_prefix_header target file)
   if(CMAKE_GENERATOR MATCHES Xcode)
+    # Do NOT use the blanket GCC_PREFIX_HEADER setting — it injects the PCH
+    # into .mm/.m files too, but those files need to import system frameworks
+    # before Self headers (e.g. quartzWindow.mm imports AppKit first to avoid
+    # name collisions like const K vs NSDictionary<K,V>).  Instead, apply
+    # -include per-file, matching the Makefile build's NEED_PCH_EXT filter.
     get_target_property(target_sources ${target} SOURCES)
     set_source_files_properties(${target_sources} PROPERTIES OBJECT_DEPENDS "${file}")
-    set_target_properties(${target} PROPERTIES XCODE_ATTRIBUTE_GCC_PRECOMPILE_PREFIX_HEADER "YES")
-    set_target_properties(${target} PROPERTIES XCODE_ATTRIBUTE_GCC_PREFIX_HEADER "${file}")
+    foreach(_src ${target_sources})
+      if(_src MATCHES ${NEED_PCH_EXT})
+        set_source_files_properties(${_src} PROPERTIES COMPILE_FLAGS "-include ${file}")
+      endif()
+    endforeach()
   else()
     include_prefix_header_common(${target} ${file})
   endif()

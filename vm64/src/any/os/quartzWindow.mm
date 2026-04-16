@@ -21,8 +21,14 @@
 #undef check
 #undef verify
 
-// Now include Self precompiled header and specific includes
-# include "_precompiled.hh"
+// Now include Self precompiled header and specific includes.
+// Guard against double-inclusion: Xcode's PCH mechanism auto-includes the
+// prefix header for ALL sources (including .mm), whereas Makefile builds
+// only inject it for .cpp/.c/.hh files.  The headers lack include guards.
+// Test for a macro defined by config.hh (the first file in the PCH).
+# ifndef SPARC_ARCH
+#  include "_precompiled.hh"
+# endif
 # include "_quartzWindow.cpp.incl"
 
 
