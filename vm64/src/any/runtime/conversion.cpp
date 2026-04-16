@@ -14,7 +14,8 @@ void Conversion::doit() {
   convert();
   if (VerifyAfterConversion) Memory->verify();
   returnToSelf(result, sp, nlr, nlrHome, nlrHomeID, sd, isInterpreting);
-  ShouldNotReachHere(); 
+  if (isInterpreting) return; // interpreter-only: normal return through C stack
+  ShouldNotReachHere();
 }
 
 
@@ -382,9 +383,11 @@ void Conversion::returnToSelf(oop res, char* self_sparc_fp_or_ppc_sp,
      assert(currentProcess->preemptionPending(),  "should stop immediately after send");
   }
   
-  if (isInterpretingArg)
+  if (isInterpretingArg) {
     return_to_interpreted_self( dest_self_fr, restartSend,
                                 self_sparc_fp_or_ppc_sp,  res, nlrHome_arg,  nlrHomeID_arg);
+    return; // interpreter-only builds: return_to_interpreted_self returns normally
+  }
   else if (nlr_arg)
     nlr_to_compiled_self(res, restartSend, nlrHome_arg, nlrHomeID_arg,
                           self_sd, self_sparc_fp_or_ppc_sp);
@@ -413,8 +416,19 @@ void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSen
     ConversionInProgress = false;
     if (this) delete rm; // free all resources
     OutgoingArgsOfReturnTrapOrRecompileFrame = NULL; // done
+# if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+    // Interpreter-only builds: ContinueNLRAfterReturnTrap is a JIT assembly
+    // routine that doesn't exist.  Save NLR state and return normally — the
+    // C call stack unwinds back through HandleReturnTrap to the interpreter's
+    // send loop, which checks have_NLR_through_C and handles the NLR.
+    // (Cannot longjmp here — that would skip ResourceMark destructors.)
+    NLRSupport::save_NLR_results(res, (smi)nlrHome_arg, nlrHomeID_arg);
+    processSemaphore = false;
+    return;
+# else
     ContinueNLRAfterReturnTrap( continuationPC, self_sparc_fp_or_ppc_sp, res, nlrHome_arg, nlrHomeID_arg );
     ShouldNotReachHere();
+# endif
 }
  
 // this may be NULL

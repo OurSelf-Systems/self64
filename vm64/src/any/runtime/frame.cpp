@@ -601,11 +601,13 @@ void HandleReturnTrap(oop result, char* sp_of_patched_frame,
     trivial_exit_from_return_trap(result, sp_of_patched_frame,
                                   nlr, nlrHome, nlrHomeID,
                                   selfPC, patched_self_frame);
+    if (selfPC == 0) return; // interpreter-only: normal return through C stack
     ShouldNotReachHere();
   }
   // programming conversion / single-stepping trap / stop trap / unc. trap
   if (  conversion_needed_for_return_trap(nlr, nlrHome, nlrHomeID, convertFrame)) {
     ConvertFrame(result, sp_of_patched_frame, nlr, nlrHome, nlrHomeID,  selfPC == 0);
+    if (selfPC == 0) return; // interpreter-only: normal return through C stack
     ShouldNotReachHere();
   }
   // just return through this frame, don't need to convert
@@ -681,6 +683,7 @@ void trivial_exit_from_return_trap(oop result, char* sp_of_patched_frame, bool n
                               ?  NULL
                               :  patched_self_frame->send_desc(),
                             selfPC == 0);
+  if (selfPC == 0) return; // interpreter-only: normal return through C stack
   ShouldNotReachHere();
 }
 
