@@ -363,7 +363,10 @@ void Process::resetSingleStepping() {
 }
 
 void Process::patchForSingleStepping(frame* belowFrame) {
-  if (isSingleStepping() || stopping) {
+  // Also arm when stopActivation is set: `stopping` only becomes true
+  // *after* the stop-target activation has died, but the return trap that
+  // detects it needs to have been patched *before* the target returns.
+  if (isSingleStepping() || stopping || stopActivation != NULL) {
     // make sure we stop at the next possible byte code
     setupPreemption();
     if (inSelf()) {

@@ -89,15 +89,19 @@ void abstract_interpreter::interpret_method() {
     if ( get_error_msg() )
       return;
     ++pc;
-    // Per-bytecode yield for single-stepping.  The scheduler's TWAINS
-    // primitive sets isSingleStepping() when resuming a stepped process;
-    // it is cleared when we transfer back to twains, so at most one
-    // bytecode runs per step request.  pc is advanced above so it points
-    // to the next bytecode to execute at yield time.
-    if (currentProcess && currentProcess->isSingleStepping()
+    // Per-bytecode yield for single-stepping and finish (stop-at-activation).
+    // The scheduler's TWAINS primitive sets isSingleStepping() when resuming
+    // a stepped process; `stopping` becomes true once the stop-target
+    // activation returns.  In either case we want to hand control back to
+    // twains at the very next bytecode boundary.  pc is advanced above so
+    // it points to the next bytecode to execute at yield time.
+    if (currentProcess
+        && (currentProcess->isSingleStepping() || currentProcess->isStopping())
         && twainsProcess
         && !processSemaphore) {
-      preemptCause = cSingleStepped;
+      if (preemptCause == cNoCause)
+        preemptCause = currentProcess->isSingleStepping()
+                         ? cSingleStepped : cFinishedActivation;
       twainsProcess->transfer();
     }
   }
