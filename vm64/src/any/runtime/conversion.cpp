@@ -413,16 +413,21 @@ void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSen
     dest_self_fr->get_interpreter()->set_restartSend(restartSend);
     if (restartSend)
       NLRSupport::reset_have_NLR_through_C();
+    // Capture nlr before deleting the resource area below: this->nlr
+    // lives in the resource mark so reading it after delete rm is UB.
+    bool wasNLR = this && this->nlr;
     ConversionInProgress = false;
     if (this) delete rm; // free all resources
     OutgoingArgsOfReturnTrapOrRecompileFrame = NULL; // done
 # if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
     // Interpreter-only builds: ContinueNLRAfterReturnTrap is a JIT assembly
-    // routine that doesn't exist.  Save NLR state and return normally — the
-    // C call stack unwinds back through HandleReturnTrap to the interpreter's
-    // send loop, which checks have_NLR_through_C and handles the NLR.
-    // (Cannot longjmp here — that would skip ResourceMark destructors.)
-    NLRSupport::save_NLR_results(res, (smi)nlrHome_arg, nlrHomeID_arg);
+    // routine that doesn't exist.  Only fake an NLR-through-C when the
+    // return really was an NLR.  For a normal trapped return (e.g. during
+    // single-stepping) faking an NLR would cascade up the stack and
+    // terminate the process; instead let the caller's interpreter send loop
+    // resume with its natural result.
+    if (wasNLR)
+      NLRSupport::save_NLR_results(res, (smi)nlrHome_arg, nlrHomeID_arg);
     processSemaphore = false;
     return;
 # else
