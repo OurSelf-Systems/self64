@@ -84,10 +84,22 @@ void abstract_interpreter::print_short() {
 
 
 void abstract_interpreter::interpret_method() {
-  for ( ;  pc < mi.length_codes;  ++pc ) {
+  while ( pc < mi.length_codes ) {
     interpret_bytecode();
     if ( get_error_msg() )
       return;
+    ++pc;
+    // Per-bytecode yield for single-stepping.  The scheduler's TWAINS
+    // primitive sets isSingleStepping() when resuming a stepped process;
+    // it is cleared when we transfer back to twains, so at most one
+    // bytecode runs per step request.  pc is advanced above so it points
+    // to the next bytecode to execute at yield time.
+    if (currentProcess && currentProcess->isSingleStepping()
+        && twainsProcess
+        && !processSemaphore) {
+      preemptCause = cSingleStepped;
+      twainsProcess->transfer();
+    }
   }
 }
 
