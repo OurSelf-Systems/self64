@@ -84,7 +84,8 @@ void abstract_interpreter::print_short() {
 
 
 void abstract_interpreter::interpret_method() {
-  while ( pc < mi.length_codes ) {
+  fint length_codes = mi.length_codes;
+  while ( pc < length_codes ) {
     interpret_bytecode();
     if ( get_error_msg() )
       return;
@@ -95,10 +96,18 @@ void abstract_interpreter::interpret_method() {
     // activation returns.  In either case we want to hand control back to
     // twains at the very next bytecode boundary.  pc is advanced above so
     // it points to the next bytecode to execute at yield time.
+    // MOVE OUT OF LOOP!
+    if (currentProcess && currentProcess->isSingleStepping()) {
+      lprintf("%s", "\nsingle stepping\n");
+    }
     if (currentProcess
         && (currentProcess->isSingleStepping() || currentProcess->isStopping())
         && twainsProcess
         && !processSemaphore) {
+      if (currentProcess->isSingleStepping() && pc >= length_codes) {
+        lprintf("%s", "\nsingle stepping off end, so keep going\n");
+        break; // single stepping does not want to see off the end of the codes
+      }
       if (preemptCause == cNoCause)
         preemptCause = currentProcess->isSingleStepping()
                          ? cSingleStepped : cFinishedActivation;
