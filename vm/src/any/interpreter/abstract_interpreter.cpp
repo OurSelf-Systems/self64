@@ -97,7 +97,7 @@ void abstract_interpreter::interpret_method() {
         && twainsProcess
         && !processSemaphore
         && currentProcess->stopActivation
-        && my_frame() == currentProcess->stopActivation->locals()) {   
+        && my_frame() == currentProcess->stopActivation->locals()) {
       if (preemptCause == cNoCause)
         preemptCause = cFinishedActivation;
       twainsProcess->transfer();
@@ -128,7 +128,7 @@ void abstract_interpreter::interpret_method() {
               pc,
               length_codes);
       lprintf("interpret_method: source: ");
-      mi.map()->print_source();
+      mi.map()->print_source(); lprintf("\n");
       if (
 //          currentProcess->isSingleStepping() &&
           pc >= length_codes) {
@@ -145,6 +145,9 @@ void abstract_interpreter::interpret_method() {
         lprintf("interpret_method: %s", "about to transfer when NOT off the end");
       }
       twainsProcess->transfer();
+    }
+    else if (twainsProcess) {
+      lprintf("about to return normally\n");
     }
   }
 }
