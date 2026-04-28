@@ -86,23 +86,6 @@ void abstract_interpreter::print_short() {
 void abstract_interpreter::interpret_method() {
   fint length_codes = mi.length_codes;
   while ( pc < length_codes ) {
-    bool gazorp = currentProcess
-    && (currentProcess->isSingleStepping() || currentProcess->isStopping())
-    && twainsProcess;
-    assert(!gazorp || !processSemaphore, "sema??");
-    if (gazorp) { lprintf("about to pc %d\n", pc); }
-    
-    // HACK: MOVE?
-    if (currentProcess
-        && twainsProcess
-        && !processSemaphore
-        && currentProcess->stopActivation
-        && my_frame() == currentProcess->stopActivation->locals()) {
-      if (preemptCause == cNoCause)
-        preemptCause = cFinishedActivation;
-      twainsProcess->transfer();
-    }
-    
     interpret_bytecode();
     if ( get_error_msg() )
       return;
@@ -145,9 +128,13 @@ void abstract_interpreter::interpret_method() {
         lprintf("interpret_method: %s", "about to transfer when NOT off the end");
       }
       twainsProcess->transfer();
-    }
-    else if (twainsProcess) {
-      lprintf("about to return normally\n");
+      // While this process was yielded, twains was
+      // free to call setStopPoint, so currentProcess->stopActivation
+      // may now point at THIS frame even though it didn't a moment ago.
+      // This is the only path where stopActivation can change while the
+      // running interpreter's bytecode loop is the one in control, so it's
+      // the unique post-resume re-check site.
+      yield_if_in_stop_activation();
     }
   }
 }

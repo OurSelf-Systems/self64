@@ -276,6 +276,24 @@ void interpreter::setup_for_block() {
 
 
 
+// Yield to twains if this interpreter is running in the activation
+// the user asked to stop at (cp finish: stop-before-bytecode semantics).
+// Only correct/cheap to call at the boundaries where this interpreter
+// regains its bytecode loop: post twains transfer, the _RESTART
+// primitive, and after each nested send returns.
+void interpreter::yield_if_in_stop_activation() {
+  if (currentProcess
+      && twainsProcess
+      && !processSemaphore
+      && currentProcess->stopActivation
+      && _my_frame == currentProcess->stopActivation->locals()) {
+    if (preemptCause == cNoCause)
+      preemptCause = cFinishedActivation;
+    twainsProcess->transfer();
+  }
+}
+
+
 void interpreter::interpret_method() {
 
   do {
@@ -437,8 +455,18 @@ void interpreter::do_send_code(bool isSelfImplicit, stringOop selector, fint arg
   else if ( is.delegatee != NULL)      type = DirectedResendLookupType;
   else                                 type =   ImplicitSelfLookupType;
 
-  if (selector == VMString[_RESTART])
+  if (selector == VMString[_RESTART]) {
     pc= restart_pc();
+    // _RESTART will fall through this bytecode-loop iteration, exit
+    // abstract_interpreter::interpret_method, and re-enter via the
+    // outer do/while in interpreter::interpret_method with
+    // pc = mi.firstBCI() — i.e. the bytecode loop is about to start
+    // over with no further return-from-callee or resume-from-twains
+    // hook in between.  If THIS activation is stop_vfo, this is the
+    // last opportunity to yield before the next bytecode of the
+    // (restarted) stop activation would run.
+    yield_if_in_stop_activation();
+  }
   else {
     selToSend= selector;
     send(type, is.delegatee, arg_count);
@@ -447,6 +475,16 @@ void interpreter::do_send_code(bool isSelfImplicit, stringOop selector, fint arg
     if (NLRSupport::have_NLR_through_C()) {
       continue_NLR();
       pc= return_pc();
+    } else {
+      // The callee just returned normally to us.  Control has just
+      // come back into stop_vfo's bytecode loop without going through
+      // any twains transfer or restart.  Without a check here, the
+      // next iteration would run the next bytecode of stop_vfo
+      // unchecked, defeating "stop before bytecode in stop_vfo".
+      // (NLR path is intentionally skipped: continue_NLR sets
+      // pc = return_pc, so the loop will exit and we'll never run
+      // another bytecode in this activation.)
+      yield_if_in_stop_activation();
     }
   }
 }
