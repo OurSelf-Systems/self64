@@ -1,0 +1,9 @@
+/Users/ungar/self/vms/russell_allen_self/CMakeFiles/makeDeps_Self.dir
+/Users/ungar/self/vms/russell_allen_self/CMakeFiles/create_vmDate_Self.dir
+/Users/ungar/self/vms/russell_allen_self/CMakeFiles/Self.dir
+/Users/ungar/self/vms/russell_allen_self/CMakeFiles/edit_cache.dir
+/Users/ungar/self/vms/russell_allen_self/CMakeFiles/rebuild_cache.dir
+/Users/ungar/self/vms/russell_allen_self/src/CMakeFiles/edit_cache.dir
+/Users/ungar/self/vms/russell_allen_self/src/CMakeFiles/rebuild_cache.dir
+/Users/ungar/self/vms/russell_allen_self/_glue/CMakeFiles/edit_cache.dir
+/Users/ungar/self/vms/russell_allen_self/_glue/CMakeFiles/rebuild_cache.dir

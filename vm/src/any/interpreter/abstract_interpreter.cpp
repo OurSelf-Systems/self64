@@ -86,6 +86,23 @@ void abstract_interpreter::print_short() {
 void abstract_interpreter::interpret_method() {
   fint length_codes = mi.length_codes;
   while ( pc < length_codes ) {
+    bool gazorp = currentProcess
+    && (currentProcess->isSingleStepping() || currentProcess->isStopping())
+    && twainsProcess;
+    assert(!gazorp || !processSemaphore, "sema??");
+    if (gazorp) { lprintf("about to pc %d\n", pc); }
+    
+    // HACK: MOVE?
+    if (currentProcess
+        && twainsProcess
+        && !processSemaphore
+        && currentProcess->stopActivation
+        && my_frame() == currentProcess->stopActivation->locals()) {   
+      if (preemptCause == cNoCause)
+        preemptCause = cFinishedActivation;
+      twainsProcess->transfer();
+    }
+    
     interpret_bytecode();
     if ( get_error_msg() )
       return;
@@ -96,21 +113,37 @@ void abstract_interpreter::interpret_method() {
     // activation returns.  In either case we want to hand control back to
     // twains at the very next bytecode boundary.  pc is advanced above so
     // it points to the next bytecode to execute at yield time.
-    // MOVE OUT OF LOOP!
+    // MOVE OUT OF LOOP! see fastPreemptionCheck in interpret_method
+    // bug suspicion: need to check on stopping BEFORE the bytecode in the stopping frame in TWAINS call -- dmu 4/26
     if (currentProcess && currentProcess->isSingleStepping()) {
-      lprintf("%s", "\nsingle stepping\n");
+      lprintf("%s", "\ninterpret_method: single stepping\n");
     }
     if (currentProcess
         && (currentProcess->isSingleStepping() || currentProcess->isStopping())
         && twainsProcess
         && !processSemaphore) {
-      if (currentProcess->isSingleStepping() && pc >= length_codes) {
-        lprintf("%s", "\nsingle stepping off end, so keep going\n");
-        break; // single stepping does not want to see off the end of the codes
+      lprintf("interpret_method: step %s, stopping %s, pc %d, len %d\n",
+              currentProcess->isSingleStepping() ? "y" : "n",
+              currentProcess->isStopping() ? "y" : "n",
+              pc,
+              length_codes);
+      lprintf("interpret_method: source: ");
+      mi.map()->print_source();
+      if (
+//          currentProcess->isSingleStepping() &&
+          pc >= length_codes) {
+            lprintf("%s", "\ninterpret_method: single stepping off end, so keep going\n");
+            break; // single stepping does not want to see off the end of the codes
       }
       if (preemptCause == cNoCause)
         preemptCause = currentProcess->isSingleStepping()
                          ? cSingleStepped : cFinishedActivation;
+      if (pc >= length_codes) {
+        lprintf("interpret_method: %s", "about to transfer when off the end");
+      }
+      else {
+        lprintf("interpret_method: %s", "about to transfer when NOT off the end");
+      }
       twainsProcess->transfer();
     }
   }

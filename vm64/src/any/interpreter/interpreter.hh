@@ -153,6 +153,7 @@ class interpreter: public abstract_interpreter {
   void  attach_pics();  // look up or create PICs in the persistent table
 
   void interpret_method();
+  frame* my_frame() {return _my_frame; }
   
   oop methodHolder() {
     assert( ! _methodHolder->is_map(), "interp mh always object");
