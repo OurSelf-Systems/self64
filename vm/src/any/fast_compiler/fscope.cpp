@@ -200,22 +200,10 @@ void fcompiler_code_generator::fetch_and_decode_bytecode() {
   // stop when single-stepping; the code in nmethod::sendDescFor()
   // depends on the algorithm used here
 
-  if ( fscope->frequentPreemption ) {
-    if ( bc.op   == INDEX_CODE
-    ||   bc.code == BuildCode(NO_OPERAND_CODE, UNDIRECTED_RESEND_CODE)
-    ||   bc.op   == DELEGATEE_CODE
-    // Stritly speaking, should need the following, but we don't seem to, 
-    //   and it's faster this way.
-    // Well, there is a mysterious infinite sendDesc finding bug, and I'm trying to fix it with this:
-    //   -- dmu 5/02
-    ||   (mi.instruction_set == TWENTIETH_CENTURY_PLUS_ARGUMENT_COUNT_INSTRUCTION_SET
-          &&  bc.op == ARGUMENT_COUNT_CODE)
-	 ) 
-	  ; // do not add pc desc for these, even if in debug mode
-    else {
+  if ( fscope->frequentPreemption
+      && !is_skipped_even_for_preemption_checks(bc.code)) {
       addPcDesc();
       theCodeGen->testStackOverflow(fscope->allocs);
-    }
   }
   if (pc == mi.firstBCI()) {
     // make sure we're generating at least one pcDesc
