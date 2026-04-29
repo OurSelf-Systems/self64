@@ -253,6 +253,38 @@ oop interpret( oop rcv,
   // let the per-bytecode yield in abstract_interpreter::interpret_method
   // pick them up after ++pc — by then pc is correctly at the
   // post-send bytecode when twains sees the yielded process.
+  
+  // How this works if stop-frame is NLR-returned through:
+  //  The trace for an NLR through stop_vfo (call C = stop_vfo, A = NLR target frame above C):
+  //
+  //  1. A block somewhere below C performs do_NONLOCAL_RETURN_CODE → start_NLR arms NLR-through-C and sets the block's pc =
+  //  return_pc().
+  //  2. Block's interpret_method exits, interpret() returns to its sender's send().
+  //  3. At every frame on the way up (including C and C's caller B), do_send_code's post-send() block runs:
+  //  if (NLRSupport::have_NLR_through_C()) {
+  //    continue_NLR();
+  //    pc = return_pc();   // = length_codes - 1
+  //  }
+  //  4. Back in that frame's bytecode loop: ++pc → pc = length_codes (off the end).
+  //  5. The 2026 per-bytecode hook in abstract_interpreter::interpret_method fires but takes the off-the-end branch — and
+  //  that branch unconditionally breaks without yielding:
+  //  if (pc >= length_codes) {
+  //    lprintf(... "single stepping off end, so keep going");
+  //    break; // single stepping does not want to see off the end of the codes
+  //  }
+  //  5. The comment says "single stepping" but the break is taken for stopping too — there's no isSingleStepping() guard on
+  //  it (the line is commented out). So the per-bytecode yield is skipped on every NLR-unwinding frame.
+  //  6. The frame's interpret() returns. When that frame happens to be C (stop_vfo), my new hook fires and sets
+  //  stopping=true / cFinishedActivation ✓.
+  //  7. Unwinding continues up through B, B's interpret() returns, etc. — none of them yield (off-the-end break) and none of
+  //   them re-enter my hook (frame mismatch).
+  //  8. Eventually NLR resolves at A. A's bytecode loop resumes with pc inside its valid range
+  //  (post-send-that-invoked-the-block).
+  //  9. Now — on the next iteration in A — the per-bytecode hook fires with isStopping() true and pc < length_codes, so it
+  //  yields with cFinishedActivation.
+  //
+  //  The yield happens — but in the NLR target frame, after the NLR has fully resolved, not in stop_vfo's immediate
+  //   caller.
   if (currentProcess
       && currentProcess->stopActivation
       && interp._my_frame == currentProcess->stopActivation->locals()) {
