@@ -248,7 +248,6 @@ class abstract_interpreter: public AnywhereObj {
  public:
   virtual void interpret_method();
   virtual frame* my_frame() {return NULL;}
-  virtual void yield_if_returned_from_stop_activation() {}   // overridden in interpreter
   virtual void interpret_bytecode() {
     fetch_and_decode_bytecode();
     dispatch_bytecode();

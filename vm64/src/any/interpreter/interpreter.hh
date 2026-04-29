@@ -154,8 +154,8 @@ class interpreter: public abstract_interpreter {
 
   void interpret_method();
   frame* my_frame() {return _my_frame; }
-  void yield_if_returned_from_stop_activation();
-  
+
+
   oop methodHolder() {
     assert( ! _methodHolder->is_map(), "interp mh always object");
     return _methodHolder;

@@ -239,6 +239,28 @@ oop interpret( oop rcv,
   interpreter::_active_interp_list = interp._prev_interp;
 # endif
 
+  // Pre-2026 stop semantics, replicated for the interpreter.
+  // On nmethods this was driven by a return trap on the frame below
+  // the last Self frame: when stop_vfo's nmethod returned, the trap
+  // dispatched to Process::killVFrameOops, which set stopping=true /
+  // preemptCause=cFinishedActivation; the trap-handler return path
+  // then yielded.  The interpreter has no return trap, so we hook
+  // the equivalent point directly here.  We don't yield from this
+  // site — yielding now would leave the caller's pc still pointing
+  // at the send bytecode (the caller's bytecode loop hasn't run its
+  // ++pc yet).  Instead we set the same flags Process::killVFrameOops
+  // would have set, return naturally into the caller's send(), and
+  // let the per-bytecode yield in abstract_interpreter::interpret_method
+  // pick them up after ++pc — by then pc is correctly at the
+  // post-send bytecode when twains sees the yielded process.
+  if (currentProcess
+      && currentProcess->stopActivation
+      && interp._my_frame == currentProcess->stopActivation->locals()) {
+    currentProcess->setStopping();
+    if (preemptCause == cNoCause)
+      preemptCause = cFinishedActivation;
+  }
+
   return interp.top();
 }
 
@@ -274,23 +296,6 @@ void interpreter::setup_for_block() {
   }
 }
 
-
-
-// Yield to twains if this interpreter is running in the activation
-// the user asked to stop at (cp finish: stop-before-bytecode semantics).
-// Only correct/cheap to call at the boundaries where this interpreter
-// regains its bytecode loop: post twains transfer, the _RESTART
-// primitive, and after each nested send returns.
-void interpreter::yield_if_returned_from_stop_activation() {
-  if (currentProcess
-      && twainsProcess
-      && !processSemaphore
-      && currentProcess->stopping) {
-    if (preemptCause == cNoCause)
-      preemptCause = cFinishedActivation;
-    twainsProcess->transfer();
-  }
-}
 
 
 void interpreter::interpret_method() {
@@ -465,16 +470,6 @@ void interpreter::do_send_code(bool isSelfImplicit, stringOop selector, fint arg
     if (NLRSupport::have_NLR_through_C()) {
       continue_NLR();
       pc= return_pc();
-    } else {
-      // The callee just returned normally to us.  Control has just
-      // come back into stop_vfo's bytecode loop without going through
-      // any twains transfer or restart.  Without a check here, the
-      // next iteration would run the next bytecode of stop_vfo
-      // unchecked, defeating "stop before bytecode in stop_vfo".
-      // (NLR path is intentionally skipped: continue_NLR sets
-      // pc = return_pc, so the loop will exit and we'll never run
-      // another bytecode in this activation.)
-      yield_if_returned_from_stop_activation();
     }
   }
 }
