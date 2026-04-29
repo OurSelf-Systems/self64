@@ -97,19 +97,20 @@ void abstract_interpreter::interpret_method() {
     // twains at the very next bytecode boundary.  pc is advanced above so
     // it points to the next bytecode to execute at yield time.
     // MOVE OUT OF LOOP! see fastPreemptionCheck in interpret_method
-    // bug suspicion: need to check on stopping BEFORE the bytecode in the stopping frame in TWAINS call -- dmu 4/26
+    // Don't stop before doing arg count bytecode; is silly
     if (currentProcess && currentProcess->isSingleStepping()) {
       lprintf("%s", "\ninterpret_method: single stepping\n");
     }
     if (currentProcess
         && (currentProcess->isSingleStepping() || currentProcess->isStopping())
         && twainsProcess
-        && !processSemaphore) {
-      lprintf("interpret_method: step %s, stopping %s, pc %d, len %d\n",
+        && !processSemaphore
+        && getOp(mi.codes[pc]) != ARGUMENT_COUNT_CODE) {
+      lprintf("interpret_method: step %s, stopping %s, pc %d, len %d, bc.op %d\n",
               currentProcess->isSingleStepping() ? "y" : "n",
               currentProcess->isStopping() ? "y" : "n",
               pc,
-              length_codes);
+              length_codes, bc.op);
       lprintf("interpret_method: source: ");
       mi.map()->print_source(); lprintf("\n");
       if (
