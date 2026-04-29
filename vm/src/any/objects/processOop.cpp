@@ -246,6 +246,9 @@ oop processOopClass::TWAINS_prim(objVectorOop resultArg,
     ((methodMap*) stop_vfo->method()->map())->print_source();
     lprintf("\n");
   }
+  if (stepping) {
+    lprintf("TWAINS: stepping\n");
+  }
 
   preemptCause = cNoCause;
   twainsProcess = currentProcess;

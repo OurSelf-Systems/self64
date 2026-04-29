@@ -128,13 +128,6 @@ void abstract_interpreter::interpret_method() {
         lprintf("interpret_method: %s", "about to transfer when NOT off the end");
       }
       twainsProcess->transfer();
-      // While this process was yielded, twains was
-      // free to call setStopPoint, so currentProcess->stopActivation
-      // may now point at THIS frame even though it didn't a moment ago.
-      // This is the only path where stopActivation can change while the
-      // running interpreter's bytecode loop is the one in control, so it's
-      // the unique post-resume re-check site.
-      yield_if_in_stop_activation();
     }
   }
 }

@@ -281,12 +281,11 @@ void interpreter::setup_for_block() {
 // Only correct/cheap to call at the boundaries where this interpreter
 // regains its bytecode loop: post twains transfer, the _RESTART
 // primitive, and after each nested send returns.
-void interpreter::yield_if_in_stop_activation() {
+void interpreter::yield_if_returned_from_stop_activation() {
   if (currentProcess
       && twainsProcess
       && !processSemaphore
-      && currentProcess->stopActivation
-      && _my_frame == currentProcess->stopActivation->locals()) {
+      && currentProcess->stopping) {
     if (preemptCause == cNoCause)
       preemptCause = cFinishedActivation;
     twainsProcess->transfer();
@@ -457,15 +456,6 @@ void interpreter::do_send_code(bool isSelfImplicit, stringOop selector, fint arg
 
   if (selector == VMString[_RESTART]) {
     pc= restart_pc();
-    // _RESTART will fall through this bytecode-loop iteration, exit
-    // abstract_interpreter::interpret_method, and re-enter via the
-    // outer do/while in interpreter::interpret_method with
-    // pc = mi.firstBCI() — i.e. the bytecode loop is about to start
-    // over with no further return-from-callee or resume-from-twains
-    // hook in between.  If THIS activation is stop_vfo, this is the
-    // last opportunity to yield before the next bytecode of the
-    // (restarted) stop activation would run.
-    yield_if_in_stop_activation();
   }
   else {
     selToSend= selector;
@@ -484,7 +474,7 @@ void interpreter::do_send_code(bool isSelfImplicit, stringOop selector, fint arg
       // (NLR path is intentionally skipped: continue_NLR sets
       // pc = return_pc, so the loop will exit and we'll never run
       // another bytecode in this activation.)
-      yield_if_in_stop_activation();
+      yield_if_returned_from_stop_activation();
     }
   }
 }
