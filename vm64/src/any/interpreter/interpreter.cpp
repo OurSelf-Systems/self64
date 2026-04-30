@@ -947,6 +947,10 @@ void interpreter::print() {
 
 // Call before every bytecode unless is_skipped_even_for_preemption_checks
 void interpreter::transfer_back_to_twains_process_if_stepping_or_stopping_pre() {
+  fastPreemptionCheck();
+  return;
+  
+  
   const auto length_codes = mi.length_codes;
   const auto relevant_pc = pc;
   const auto relevant_code = mi.codes[relevant_pc];
@@ -957,7 +961,7 @@ void interpreter::transfer_back_to_twains_process_if_stepping_or_stopping_pre() 
       && twainsProcess
       && !processSemaphore) {
     if (p) {
-      lprintf("__FUNCTION__" ": step %s, stfopping %s, pc %d, len %d, bc.op %d\n",
+      lprintf("__FUNCTION__" ": step %s, stopping %s, pc %d, len %d, bc.op %d\n",
               currentProcess->isSingleStepping() ? "y" : "n",
               currentProcess->isStopping() ? "y" : "n",
               relevant_pc,
