@@ -221,7 +221,11 @@ class interpreter: public abstract_interpreter {
   void setup_for_block(  );
   void start_NLR(oop res);
   void continue_NLR();
-};
+  
+private:
+  // must be called after every bytecode
+  void transfer_back_to_twains_process_if_stepping_or_stopping_pre();
+ };
 
 extern void InterpreterLookup_cont( simpleLookup *L, int32 arg_count);
 

@@ -1645,6 +1645,9 @@ void Process::nonLifoError() {
 
 
 void interruptCheck() {
+  if (gazorp == currentProcess) {
+    lprintf("CAUGHT\n");
+  }
    
   if (isStackOverflow((char*)currentFrame())) {
     currentProcess->state = stopped;

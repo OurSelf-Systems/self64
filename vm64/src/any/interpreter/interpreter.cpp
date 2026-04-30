@@ -365,17 +365,24 @@ void interpreter::interpret_method() {
 }
 
 
-void interpreter::do_SELF_CODE()  { stack[sp++]= self; }
+void interpreter::do_SELF_CODE()  {
+  transfer_back_to_twains_process_if_stepping_or_stopping_pre();
+  stack[sp++]= self; }
 
-void interpreter::do_POP_CODE()  { --sp; assert(sp >= 0, "too many pops"); }
+void interpreter::do_POP_CODE()  {
+  transfer_back_to_twains_process_if_stepping_or_stopping_pre();
+  --sp; assert(sp >= 0, "too many pops"); }
 
 void interpreter::do_NONLOCAL_RETURN_CODE() {
+  transfer_back_to_twains_process_if_stepping_or_stopping_pre();
   start_NLR(stack[sp - 1]);
   pc= return_pc();
 }
 
 
 void interpreter::do_branch_code( int32 target_PC, oop target_oop ) {
+  transfer_back_to_twains_process_if_stepping_or_stopping_pre();
+
   if ( target_oop != badOop ) { // conditional
     assert(sp > 0, "conditional branch needs stack element");
     if ( stack[--sp] != target_oop )
@@ -403,6 +410,7 @@ void interpreter::do_BRANCH_INDEXED_CODE() {
  
  
 void interpreter::do_literal_code(oop lit) {
+  transfer_back_to_twains_process_if_stepping_or_stopping_pre();
   if (lit->is_block()) {
     oop cb = cloned_blocks[is.index];
     if (cb == NULL ) {
@@ -465,6 +473,7 @@ void interpreter::local_slot_desc( interpreter*& r,
 
 
 void interpreter::do_read_write_local_code(bool isWrite) {
+  transfer_back_to_twains_process_if_stepping_or_stopping_pre();
   interpreter* interp;
   slotDesc* sd;
   ResourceMark rm; // for vf
@@ -484,6 +493,9 @@ void interpreter::do_read_write_local_code(bool isWrite) {
 
  
 void interpreter::do_send_code(bool isSelfImplicit, stringOop selector, fint arg_count) {
+  // not needed because send causes a new interpreter which calls interpret_method, which calls interruptCheck
+  // transfer_back_to_twains_process_if_stepping_or_stopping_pre();
+  
   LookupType type;
 
   if      ( !isSelfImplicit )          type =         NormalLookupType;
@@ -923,6 +935,61 @@ void interpreter::print() {
   lprintf("\n\tselToSend: "); selToSend->print_oop();
 }
 
+// Per-bytecode yield for single-stepping and finish (stop-at-activation).
+// The scheduler's TWAINS primitive sets isSingleStepping() when resuming
+// a stepped process; `stopping` becomes true once the stop-target
+// activation returns.  In either case we want to hand control back to
+// twains at the very next bytecode boundary.  pc is advanced above so
+// it points to the next bytecode to execute at yield time.
+// MOVE OUT OF LOOP! see fastPreemptionCheck in interpret_method
+// Don't stop before doing arg count bytecode; is silly
+
+
+// Call before every bytecode unless is_skipped_even_for_preemption_checks
+void interpreter::transfer_back_to_twains_process_if_stepping_or_stopping_pre() {
+  const auto length_codes = mi.length_codes;
+  const auto relevant_pc = pc;
+  const auto relevant_code = mi.codes[relevant_pc];
+  const auto p = false;
+  assert(!is_skipped_even_for_preemption_checks(relevant_code), "should not be here");
+  if (currentProcess
+      && (currentProcess->isSingleStepping() || currentProcess->isStopping())
+      && twainsProcess
+      && !processSemaphore) {
+    if (p) {
+      lprintf("__FUNCTION__" ": step %s, stfopping %s, pc %d, len %d, bc.op %d\n",
+              currentProcess->isSingleStepping() ? "y" : "n",
+              currentProcess->isStopping() ? "y" : "n",
+              relevant_pc,
+              length_codes, bc.op);
+      lprintf("transfer_back_to_twains_process_if_stepping_or_stopping_pre: source: ");
+      //mi.map()->print_source();
+      lprintf("\n");
+    }
+    if (preemptCause == cNoCause)
+      preemptCause = currentProcess->isSingleStepping()
+      ? cSingleStepped : cFinishedActivation;
+    if (p) {
+      if (relevant_pc >= length_codes) {
+        lprintf("transfer_back_to_twains_process_if_stepping_or_stopping_pre: %s", "about to transfer when off the end");
+      }
+      else {
+        lprintf("transfer_back_to_twains_process_if_stepping_or_stopping_pre: %s", "about to transfer when NOT off the end");
+      }
+    }
+    // caller will increment pc, scheduler expects an incremented pc
+   // pc += 1;
+    lprintf("transferring from pre pc: %d", pc);
+    twainsProcess->transfer();
+    if (pc == 6) {
+      lprintf("setting gazorp\n");
+      gazorp = currentProcess;
+    }
+    // pc -= 1;
+  }
+}
+
+
 // XXX look at these:
 // all 4 sends
 // sending to interp
@@ -940,3 +1007,24 @@ void interpreter::print() {
 
 // spy
 
+
+/*
+SELF
+POP
+NONLOCAL_RETURN
+LITERAL
+READ_LOCAL
+WRITE_LOCAL
+SEND
+IMPLICIT_SEND
+BRANCH
+BRANCH_TRUE
+BRANCH_FALSE
+BRANCH_INDEXED
+ 
+ INDEX
+ DELEGATEE
+ UNDIRECTED_RESEND
+ ARGUMENT_COUNT
+
+*/

@@ -90,47 +90,6 @@ void abstract_interpreter::interpret_method() {
     if ( get_error_msg() )
       return;
     ++pc;
-    // Per-bytecode yield for single-stepping and finish (stop-at-activation).
-    // The scheduler's TWAINS primitive sets isSingleStepping() when resuming
-    // a stepped process; `stopping` becomes true once the stop-target
-    // activation returns.  In either case we want to hand control back to
-    // twains at the very next bytecode boundary.  pc is advanced above so
-    // it points to the next bytecode to execute at yield time.
-    // MOVE OUT OF LOOP! see fastPreemptionCheck in interpret_method
-    // Don't stop before doing arg count bytecode; is silly
-    if (currentProcess && currentProcess->isSingleStepping()) {
-      lprintf("%s", "\ninterpret_method: single stepping\n");
-    }
-    if (currentProcess
-        && (currentProcess->isSingleStepping() || currentProcess->isStopping())
-        && twainsProcess
-        && !processSemaphore
-        &&  (pc >= length_codes
-             || !is_skipped_even_for_preemption_checks(mi.codes[pc]))) {
-      lprintf("interpret_method: step %s, stopping %s, pc %d, len %d, bc.op %d\n",
-              currentProcess->isSingleStepping() ? "y" : "n",
-              currentProcess->isStopping() ? "y" : "n",
-              pc,
-              length_codes, bc.op);
-      lprintf("interpret_method: source: ");
-      mi.map()->print_source(); lprintf("\n");
-      if (
-//          currentProcess->isSingleStepping() &&
-          pc >= length_codes) {
-            lprintf("%s", "\ninterpret_method: single stepping off end, so keep going\n");
-            break; // single stepping does not want to see off the end of the codes
-      }
-      if (preemptCause == cNoCause)
-        preemptCause = currentProcess->isSingleStepping()
-                         ? cSingleStepped : cFinishedActivation;
-      if (pc >= length_codes) {
-        lprintf("interpret_method: %s", "about to transfer when off the end");
-      }
-      else {
-        lprintf("interpret_method: %s", "about to transfer when NOT off the end");
-      }
-      twainsProcess->transfer();
-    }
   }
 }
 
@@ -155,6 +114,9 @@ void abstract_interpreter::fetch_and_decode_bytecode() {
   case opName: interpret(opName)
   
 void abstract_interpreter::dispatch_bytecode() {
+  if (gazorp == currentProcess) {
+    lprintf("STOP");
+  }
   switch (bc.op) {
    default: interpret(illegal_code);               break;
    case_op(LEXICAL_LEVEL_CODE);                    break;
@@ -279,6 +241,7 @@ void abstract_interpreter::check_delegatee(abstract_interpreter *ai, oop) {
   if ( !ai->error_msg  &&  !ai->get_literal()->is_string())
     ai->set_error_msg( "delegatee must be string"); 
 }
+Process* gazorp = NULL;
 
 void abstract_interpreter::check_no_argument_count(abstract_interpreter *ai, oop) {
   if (ai->is.argument_count != 0)
