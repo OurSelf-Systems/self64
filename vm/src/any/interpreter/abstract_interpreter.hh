@@ -150,7 +150,6 @@ class abstract_interpreter_interbytecode_state: public PartObj {
 // that do it.
 // I only know about "syntax".
 
-extern Process *gazorp;
 class abstract_interpreter: public AnywhereObj {
   friend class frame; // for the ITERATORs (ugh)
   friend class FrameIterator; // for the ITERATORs (ugh)

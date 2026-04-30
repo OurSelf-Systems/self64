@@ -114,9 +114,6 @@ void abstract_interpreter::fetch_and_decode_bytecode() {
   case opName: interpret(opName)
   
 void abstract_interpreter::dispatch_bytecode() {
-  if (gazorp == currentProcess) {
-    lprintf("STOP");
-  }
   switch (bc.op) {
    default: interpret(illegal_code);               break;
    case_op(LEXICAL_LEVEL_CODE);                    break;
@@ -241,7 +238,6 @@ void abstract_interpreter::check_delegatee(abstract_interpreter *ai, oop) {
   if ( !ai->error_msg  &&  !ai->get_literal()->is_string())
     ai->set_error_msg( "delegatee must be string"); 
 }
-Process* gazorp = NULL;
 
 void abstract_interpreter::check_no_argument_count(abstract_interpreter *ai, oop) {
   if (ai->is.argument_count != 0)

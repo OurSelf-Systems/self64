@@ -978,14 +978,8 @@ void interpreter::transfer_back_to_twains_process_if_stepping_or_stopping_pre() 
       }
     }
     // caller will increment pc, scheduler expects an incremented pc
-   // pc += 1;
     lprintf("transferring from pre pc: %d", pc);
     twainsProcess->transfer();
-    if (pc == 6) {
-      lprintf("setting gazorp\n");
-      gazorp = currentProcess;
-    }
-    // pc -= 1;
   }
 }
 
