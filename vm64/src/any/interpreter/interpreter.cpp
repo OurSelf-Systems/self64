@@ -946,10 +946,13 @@ void interpreter::print() {
 
 
 // Call before every bytecode unless is_skipped_even_for_preemption_checks
+// Makes single-stepping and stopping work.
 void interpreter::transfer_back_to_twains_process_if_stepping_or_stopping_pre() {
-  fastPreemptionCheck();
-  return;
-  
+  // potential optimization, but does not work yet
+  // better would be to optimize interpreter and not pay for stepping when not stepping
+  // -- dmu 5/26
+  //  fastPreemptionCheck();
+  //  return;
   
   const auto length_codes = mi.length_codes;
   const auto relevant_pc = pc;
