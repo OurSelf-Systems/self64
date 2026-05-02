@@ -405,11 +405,18 @@ void Conversion::returnToSelf(oop res, char* self_sparc_fp_or_ppc_sp,
 // this may be NULL
 void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSend,
                                                    char* self_sparc_fp_or_ppc_sp, oop res, frame* nlrHome_arg, int32 nlrHomeID_arg) {
+# if !(TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER))
    // a bit slow, for sparc f is just callee of self_sparc_fp_or_ppc_sp, same frame on ppc
     frame* f= currentProcess->stack()
                 ->interpreter_frame_for_continuing_from_return_trap();
     assert(f, "must have frame to return to");
     char* continuationPC = f->c_return_pc();
+# endif
+    // Skip the HandleReturnTrap-frame lookup on 64-bit interpreter-only
+    // builds: continuationPC is unused below (no ContinueNLRAfterReturnTrap),
+    // and frame::c_entry_point() is unreliable here because the BL-decoding
+    // it does fails when the optimizer shuffles call sites or the linker
+    // routes the call through a stub (see frame.cpp ~line 134).
     dest_self_fr->get_interpreter()->set_restartSend(restartSend);
     if (restartSend)
       NLRSupport::reset_have_NLR_through_C();

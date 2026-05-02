@@ -360,6 +360,28 @@ oop processOopClass::ActivationStack_prim(void *FH) {
   Process* p = checkProcess(this);
   if (p == currentProcess)
     p->killVFrameOopsAndSetWatermark( p->last_self_frame(false));
+#if !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+  else if (p && p->inSelf()) {
+    // Interpreter-only cross-process cleanup. When the debugger queries
+    // a non-current process, the existing vframeList may contain entries
+    // for frames that have popped during prior stepping (the per-bytecode
+    // kill path runs only on the current process). Without this purge the
+    // merge below would insert new vframeOops at the head, breaking the
+    // most-recent-first ordering that findInsertionPoint relies on, which
+    // then causes the next Process::transfer's post-kill verifyVFrameList
+    // to walk a stale entry and assert in vframeOopClass::fr().
+    // We can't call killVFrameOopsAndSetWatermark here -- its
+    // setupPreemption() side effect rewrites the global SP limit, which
+    // would clobber preemption checks for the actual currentProcess.
+    frame* topFrame = p->last_self_frame(false);
+    vframeOop sentinel = vframeList();
+    vframeOop l;
+    while ((l = sentinel->next()) != NULL && l->is_below(topFrame)) {
+      sentinel->set_next(l->next());
+      l->kill();
+    }
+  }
+#endif
   if (!p) {
     prim_failure(FH, NOPROCESSERROR);
     return NULL;
