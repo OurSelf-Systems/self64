@@ -564,7 +564,7 @@ static void patch_frame_at_end_of_NLR_for_returnTrap(frame* convertFrame, frame*
 
 
 // The caller of HandleReturnTrap is the frame that must be converted;
-// the assembly glue makes sure no registers are clobbered before 
+// the assembly glue makes sure no registers are clobbered before
 // HandleReturnTrap is called and creates a new stack frame.
 
 void HandleReturnTrap(oop result, char* sp_of_patched_frame,
@@ -586,8 +586,8 @@ void HandleReturnTrap(oop result, char* sp_of_patched_frame,
   frame* convertFrame;
   unpatch_the_convertFrame_and_get_returnTrap_info(sp_of_patched_frame, patched_self_frame,
                                                    convertFrame, selfPC);
-    
-  if (traceV) 
+
+  if (traceV)
     lprintf("*** HandleReturnTrap: sp_of_patched_frame = 0x%x, nlr = %d, nlrHome = 0x%x, nlrHomeID = %d patched_self_frame = 0x%x\n",
             sp_of_patched_frame, nlr, nlrHome, nlrHomeID, patched_self_frame);
 
