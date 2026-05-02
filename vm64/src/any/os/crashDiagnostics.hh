@@ -6,3 +6,7 @@
 # endif
 
 void print_crash_diagnostics(int sig, char* addr, int32 code);
+
+// Print a native backtrace: raw async-signal-safe pass first, then a
+// best-effort demangled pass (uses malloc; may fail on heap-corruption crashes).
+void print_native_backtrace_hybrid();

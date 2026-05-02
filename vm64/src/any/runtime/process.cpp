@@ -865,7 +865,15 @@ vframeOop Process::findInsertionPoint(abstract_vframe* target) {
     static fint findInseritonPoint_count = 0;
     ++findInseritonPoint_count;
     lprintf("*** Entering Process::findInsertionPoint(0x%x), %d\n", target, findInseritonPoint_count);
+#   if defined(FAST_COMPILER) || defined(SIC_COMPILER)
     verifyVFrameList();
+#   else
+    // Interpreter-only: findInsertionPoint is called from killVFrameOops
+    // *before* the kill walk, so the list routinely contains stale
+    // vframeOops here (frames popped eagerly during interpretation).
+    // The post-kill verify at the end of killVFrameOops is the one that
+    // establishes the invariant.
+#   endif
   }
   assert(stack()->contains((char*)target->fr) ||
          ((ConversionInProgress || theRecompilation)

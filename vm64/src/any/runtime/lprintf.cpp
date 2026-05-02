@@ -21,6 +21,7 @@ extern "C" {
   void error_breakpoint();
   volatile void fatal_handler();
 }
+void print_native_backtrace_hybrid();
 
 void lprintf_exit() {
   if (logFile) {
@@ -134,11 +135,9 @@ volatile void fatal_handler() {
   }
   else
     return;
-  // Print native backtrace for post-mortem diagnosis
-  void* frames[64];
-  int n = backtrace(frames, 64);
-  fprintf(stderr, "\nNative stack trace (fatal):\n");
-  backtrace_symbols_fd(frames, n, STDERR_FILENO);
+  // Print native backtrace for post-mortem diagnosis (raw + demangled).
+  fprintf(stderr, "\nFatal:");
+  print_native_backtrace_hybrid();
   error_breakpoint();
   SignalInterface::simulate_fatal_signal();
   OS::terminate(-1);
