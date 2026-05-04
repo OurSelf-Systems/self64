@@ -1091,7 +1091,31 @@ frame* Process::frame_for_check_vfo_locals(abstract_vframe* currentVF) {
   
   frame* first  = currentVF->fr;
   frame* second = first->selfSender();
-
+  
+  // Defensive: when invoked via HandleReturnTrap on a return that unwinds off
+  // the top of the process, `first` is the bottom sentinel frame
+  // (PC = ReturnOffTopOfProcess) and has no Self sender. That is not a bug --
+  // there is simply no frame above to check vfo locals against. Treat it the
+  // same as the `currentVF == NULL` case at the top of this function and
+  // return NULL so callers (killVFrameOopsInCurrentFrame, etc.) skip the
+  // check cleanly. Without this guard we crash dereferencing `second` at the
+  // `second->vfo_locals_of_home_frame()` log line below, or fatal at
+  // "null second".
+  //
+  // This happens with an optimized build of the 64-bit Mac interpreter.
+  // With the sequence: halt. 3 + 4     attach: 0      10 do: [step]
+  //
+  // When this happens, the "first" frame's pc points into ReturnOffTopOfProcess
+  //
+  // At this point, I'm not sure if there is a bug in the caller, which is: Process::killVFrameOopsInCurrentFrame(abstract_vframe*)
+  //
+  // -- dmu 5/26
+  
+  if (second == NULL) {
+    if (traceV) lprintf("frame_for_check_vfo_locals: null self-sender (bottom of process), returning NULL\n");
+    return NULL;
+  }
+  
   // check to see if we have returned since check_vfo_locals
   
   // if frame is no longer on stack, all vfos have been killed through the
