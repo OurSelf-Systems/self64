@@ -1111,9 +1111,16 @@ frame* Process::frame_for_check_vfo_locals(abstract_vframe* currentVF) {
   //
   // -- dmu 5/26
   
-  if (second == NULL) {
-    if (traceV) lprintf("frame_for_check_vfo_locals: null self-sender (bottom of process), returning NULL\n");
+  char* first_pc = first->real_return_addr();
+  if (first_pc == (char*)&ReturnOffTopOfProcess) {
+    if (traceV) lprintf("frame_for_check_vfo_locals: first is bottom-of-process sentinel, returning NULL\n");
     return NULL;
+  }
+  if (second == NULL) {
+    lprintf("frame_for_check_vfo_locals: unexpected NULL selfSender\n"
+            "  first = %p  pc = %p  (not ReturnOffTopOfProcess = %p)\n",
+            first, first_pc, (void*)&ReturnOffTopOfProcess);
+    fatal("null second (not bottom sentinel)");
   }
   
   // check to see if we have returned since check_vfo_locals
