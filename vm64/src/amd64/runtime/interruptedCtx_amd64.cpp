@@ -122,13 +122,13 @@ void InterruptedContext::setupPreemptionFromSignal() {
 # elif TARGET_OS_VERSION == FREEBSD_VERSION
 
   char** InterruptedContext::pc_addr() {
-      return  (char**) &((ucontext_t*) scp)->uc_mcontext.mc_eip;
+      return  (char**) &((ucontext_t*) scp)->uc_mcontext.mc_rip;
   }
   int* InterruptedContext::sp_addr() {
-    return  (int*) &((ucontext_t*) scp)->uc_mcontext.mc_esp;
+    return  (int*) &((ucontext_t*) scp)->uc_mcontext.mc_rsp;
   }
   int* InterruptedContext::ebp_addr() {
-    return  (int*) &((ucontext_t*) scp)->uc_mcontext.mc_ebp;
+    return  (int*) &((ucontext_t*) scp)->uc_mcontext.mc_rbp;
   }
 
 
@@ -241,17 +241,17 @@ void InterruptedContext::print_registers() {
   # elif TARGET_OS_VERSION == FREEBSD_VERSION
 
     const mcontext_t *mc = &ic->scp->uc_mcontext;
-    lprintf("eax       = 0x%x\n", mc->mc_eax);
-    lprintf("ebx       = 0x%x\n", mc->mc_ebx);
-    lprintf("ecx       = 0x%x\n", mc->mc_ecx);
-    lprintf("edx       = 0x%x\n", mc->mc_edx);
-    lprintf("esi       = 0x%x\n", mc->mc_esi);
-    lprintf("edi       = 0x%x\n", mc->mc_edi);
-    lprintf("ebp       = 0x%x\n", mc->mc_ebp);
-    lprintf("esp       = 0x%x\n", mc->mc_esp);
+    lprintf("eax       = 0x%lx\n", mc->mc_rax);
+    lprintf("ebx       = 0x%lx\n", mc->mc_rbx);
+    lprintf("ecx       = 0x%lx\n", mc->mc_rcx);
+    lprintf("edx       = 0x%lx\n", mc->mc_rdx);
+    lprintf("esi       = 0x%lx\n", mc->mc_rsi);
+    lprintf("edi       = 0x%lx\n", mc->mc_rdi);
+    lprintf("ebp       = 0x%lx\n", mc->mc_rbp);
+    lprintf("esp       = 0x%lx\n", mc->mc_rsp);
     lprintf("ss        = 0x%x\n", mc->mc_ss);
-    lprintf("eflags    = 0x%x\n", mc->mc_eflags);
-    lprintf("eip       = 0x%x\n", mc->mc_eip);
+    lprintf("eflags    = 0x%lx\n", mc->mc_rflags);
+    lprintf("eip       = 0x%lx\n", mc->mc_rip);
     lprintf("cs        = 0x%x\n", mc->mc_cs);
     lprintf("ds        = 0x%x\n", mc->mc_ds);
     lprintf("es        = 0x%x\n", mc->mc_es);

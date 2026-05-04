@@ -33,7 +33,7 @@
     MakeDataExecutable(s, (char*)e - (char*)s);
   }
 
-# elif (TARGET_OS_VERSION == MACOSX_VERSION || TARGET_OS_VERSION == LINUX_VERSION) \
+# elif (TARGET_OS_VERSION == MACOSX_VERSION || TARGET_OS_VERSION == LINUX_VERSION || TARGET_OS_VERSION == FREEBSD_VERSION) \
     && TARGET_ARCH == AARCH64_ARCH
   // ARM64 has split I/D caches; interpreter-only builds don't generate code,
   // so these are no-ops.
@@ -113,7 +113,8 @@ void MachineCache::flush_instruction_cache_range(void* s, void* e) {}
   # endif
 
 # elif TARGET_OS_VERSION == FREEBSD_VERSION \
-    && TARGET_ARCH       == I386_ARCH
+    && (   TARGET_ARCH   == I386_ARCH \
+        || TARGET_ARCH   == X86_64_ARCH )
   void MachineCache::flush_instruction_cache_word(void* addr) {}
   void MachineCache::flush_instruction_cache_range(void* s, void* e) {}
 

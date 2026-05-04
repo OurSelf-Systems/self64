@@ -14,6 +14,10 @@ enable_language(C)
 # find_package(Threads REQUIRED)
 # set(EXTRA_LIBRARIES ${EXTRA_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
 
+# On FreeBSD, backtrace() / backtrace_symbols_fd() live in libexecinfo
+# (in base since 10.0). On glibc Linux they're in libc.
+list(APPEND EXTRA_LIBRARIES execinfo)
+
 
 #
 # FreeBSD compile definitons
