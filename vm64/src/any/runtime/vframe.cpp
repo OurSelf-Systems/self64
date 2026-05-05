@@ -786,7 +786,7 @@ void compiled_vframe::enumerate_references(enumeration* e) {
 # endif // defined(FAST_COMPILER) || defined(SIC_COMPILER)
 
 interpreted_vframe::interpreted_vframe(frame* f) {
-  assert(f->is_interpreted_self_frame(), "must be right frame");
+  assert(f == NULL || f->is_interpreted_self_frame(), "must be right frame");
   fr = f;
 }
 

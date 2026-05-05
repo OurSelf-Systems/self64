@@ -629,7 +629,6 @@ void HandleReturnTrap(oop result, char* sp_of_patched_frame,
   }
   lprintf("in HRT 616\n");
 
-  if (selfPC == 0) lprintf("bad in HRT\n");
   // programming conversion / single-stepping trap / stop trap / unc. trap
   if (  conversion_needed_for_return_trap(nlr, nlrHome, nlrHomeID, convertFrame)) {
     ConvertFrame(result, sp_of_patched_frame, nlr, nlrHome, nlrHomeID,  selfPC == 0);
