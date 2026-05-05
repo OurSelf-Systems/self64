@@ -8,6 +8,8 @@
 
 # include "_frame.cpp.incl"
 
+extern "C" void ReturnOffTopOfProcess();
+
 
 frame* frame::nmethod_frame_chain(nmethod* nm) {
   return *nmethod_frame_chain_addr(nm); }
@@ -85,6 +87,11 @@ bool frame::is_first_self_frame() {
   return is_self_frame() && selfSender() == NULL;
 }
 
+// See declaration for clarification. -- dmu 5/26
+bool frame::is_bottom_of_process_sentinel() {
+  return real_return_addr() == (char*)&ReturnOffTopOfProcess;
+}
+
 
 frame* frame::sendee(frame* startFrameHint) {
   // search for full frame starting at the given frame; do full stack search
@@ -150,7 +157,8 @@ interpreter* frame::get_interpreter() {
   frame* f= block_scope_of_home_frame();
   if (f == NULL)
     return NULL;
-  return f->get_interpreter_of_block_scope();
+  auto i = f->get_interpreter_of_block_scope();
+  return i && i->magic_number == interpreter::expected_magic_number ? i : NULL;
 }
 
 
@@ -162,7 +170,14 @@ bool frame::is_interpreted_self_frame() {
   if (Interpret) fatal("Interpreter does not work on OSX");
   return false;
 # else
-  return get_interpreter() != NULL;
+  if (get_interpreter() == NULL) return false;
+  // The bottom-of-process sentinel has a non-NULL interpreter pointer (the
+  // process starts in the interpreter), so without this guard it would be
+  // misclassified as a Self frame and leak through Stack::first_VM_frame /
+  // last_self_frame into HandleReturnTrap, killVFrameOops*, frame::patch,
+  // etc. -- dmu 5/26
+  if (is_bottom_of_process_sentinel()) return false;
+  return true;
 # endif
 }
   
@@ -571,6 +586,8 @@ void HandleReturnTrap(oop result, char* sp_of_patched_frame,
                       bool nlr, frame* nlrHome, int32 nlrHomeID) {
   // called by assembly glue when returning into a marked frame
   // first, make it look as if assembly glue was called from Self
+  
+  lprintf("enter HRT\n");
 
   assert(nlr == true || nlr == false, "assembly glue passed bogus values 2");
 
@@ -581,38 +598,49 @@ void HandleReturnTrap(oop result, char* sp_of_patched_frame,
   // Remember, patched_self_frame is frame that would have been RETURNED INTO
   // had not the patching happened. -- dmu 1/03
   frame* patched_self_frame = currentFrame()->get_patched_self_frame(sp_of_patched_frame);
+  
+  lprintf("in HRT 588\n");
+
 
   char* selfPC;
   frame* convertFrame;
   unpatch_the_convertFrame_and_get_returnTrap_info(sp_of_patched_frame, patched_self_frame,
                                                    convertFrame, selfPC);
-
+  lprintf("in HRT 595\n");
   if (traceV)
     lprintf("*** HandleReturnTrap: sp_of_patched_frame = 0x%x, nlr = %d, nlrHome = 0x%x, nlrHomeID = %d patched_self_frame = 0x%x\n",
             sp_of_patched_frame, nlr, nlrHome, nlrHomeID, patched_self_frame);
 
   LOG_EVENT3("HandleReturnTrap res=%#lx sp_of_patched_frame=%#lx pc=%#lx", result, sp_of_patched_frame, selfPC);
+  lprintf("in HRT 598\n");
 
   currentProcess->killVFrameOopsAndSetWatermark(convertFrame);  // kill extra vframes
-  
+  lprintf("in HRT 604\n");
+
   // figure out why the frame was marked & exit appropriately
 
   if ( return_trap_was_just_for_vframeOops(selfPC, convertFrame)) {
+    lprintf("in HRT 609\n");
     trivial_exit_from_return_trap(result, sp_of_patched_frame,
                                   nlr, nlrHome, nlrHomeID,
                                   selfPC, patched_self_frame);
-    if (selfPC == 0) return; // interpreter-only: normal return through C stack
+    if (selfPC == 0) {lprintf("return HRT 613\n"); return;} // interpreter-only: normal return through C stack
     ShouldNotReachHere();
   }
+  lprintf("in HRT 616\n");
+
+  if (selfPC == 0) lprintf("bad in HRT\n");
   // programming conversion / single-stepping trap / stop trap / unc. trap
   if (  conversion_needed_for_return_trap(nlr, nlrHome, nlrHomeID, convertFrame)) {
     ConvertFrame(result, sp_of_patched_frame, nlr, nlrHome, nlrHomeID,  selfPC == 0);
-    if (selfPC == 0) return; // interpreter-only: normal return through C stack
+    if (selfPC == 0) {lprintf("return 624 HRT\n");  return; } // interpreter-only: normal return through C stack
     ShouldNotReachHere();
   }
+  lprintf("in HRT 625\n");
   // just return through this frame, don't need to convert
   NLR_exit_from_return_trap(result, sp_of_patched_frame, nlrHome, nlrHomeID, convertFrame, selfPC);
-}  
+  lprintf("end HRT\n");
+}
 
 
 objVectorOop OutgoingArgsOfReturnTrapOrRecompileFrame = NULL;
@@ -622,6 +650,7 @@ void  unpatch_the_convertFrame_and_get_returnTrap_info(
         frame*  patched_self_frame, 
         frame*& convertFrame, 
         char* & selfPC) {
+  lprintf("enter unpatch_the_convertFrame_and_get_returnTrap_info\n");
   selfPC = patched_self_frame->currentPC();
   
   if ( Memory->code->contains(selfPC) ) {
@@ -658,10 +687,51 @@ void  unpatch_the_convertFrame_and_get_returnTrap_info(
     OutgoingArgsOfReturnTrapOrRecompileFrame = convertFrame->patched_frame_saved_outgoing_args();
     convertFrame->remove_patch();
   }
+  lprintf("exit unpatch_the_convertFrame_and_get_returnTrap_info\n");
 }
 
 
 bool return_trap_was_just_for_vframeOops(char* selfPC, frame* convertFrame) {
+  auto would = currentProcess->isKillingOrDeoptimizing()
+  && !currentProcess->isUncommon()
+#     if defined(FAST_COMPILER) || defined(SIC_COMPILER)
+  && !(selfPC && nmethod::findNMethod(selfPC)->isInvalid())
+#     endif
+  && !currentProcess->isSingleStepping()
+  && !currentProcess->isStopping()
+  && currentProcess->stopFrame() != convertFrame->vfo_locals_of_home_frame();
+  
+  if (!would && selfPC == 0) {
+    lprintf("catching the problem, pc: %d, isKorD: %d, !isUnc: %d, !isSS: %d, !isStop: %d, frame not vfo: %d\n",
+            selfPC,
+            currentProcess->isKillingOrDeoptimizing(),
+            !currentProcess->isUncommon(),
+            !currentProcess->isSingleStepping(),
+            !currentProcess->isStopping(),
+            currentProcess->stopFrame() != convertFrame->vfo_locals_of_home_frame());
+    
+  }
+  else if (would && selfPC == 0) {
+    lprintf("catching the NON problem, pc: %d, isKorD: %d, !isUnc: %d, !isSS: %d, !isStop: %d, frame not vfo: %d\n",
+            selfPC,
+            currentProcess->isKillingOrDeoptimizing(),
+            !currentProcess->isUncommon(),
+            !currentProcess->isSingleStepping(),
+            !currentProcess->isStopping(),
+            currentProcess->stopFrame() != convertFrame->vfo_locals_of_home_frame());
+  }
+  else {
+    lprintf("catching non zero pc, would: %d, pc: %d, isKorD: %d, !isUnc: %d, !isSS: %d, !isStop: %d, frame not vfo: %d\n",
+            would,
+            selfPC,
+            currentProcess->isKillingOrDeoptimizing(),
+            !currentProcess->isUncommon(),
+            !currentProcess->isSingleStepping(),
+            !currentProcess->isStopping(),
+            currentProcess->stopFrame() != convertFrame->vfo_locals_of_home_frame());
+  }
+  
+  
   return !currentProcess->isKillingOrDeoptimizing()
       && !currentProcess->isUncommon()
 #     if defined(FAST_COMPILER) || defined(SIC_COMPILER)
@@ -676,6 +746,7 @@ void trivial_exit_from_return_trap(oop result, char* sp_of_patched_frame, bool n
                                    frame* nlrHome, int32 nlrHomeID, char* selfPC,
                                    frame* patched_self_frame) {
   // trap was for vframeOops; continue
+  lprintf("enter trivial_exit_from_return_trap\n");
   conversion = NULL;
   // returnToSelf will clear processSemaphore
   conversion->returnToSelf(result, sp_of_patched_frame, nlr, nlrHome, nlrHomeID,
@@ -683,7 +754,7 @@ void trivial_exit_from_return_trap(oop result, char* sp_of_patched_frame, bool n
                               ?  NULL
                               :  patched_self_frame->send_desc(),
                             selfPC == 0);
-  if (selfPC == 0) return; // interpreter-only: normal return through C stack
+  if (selfPC == 0) {lprintf("exit trivial_exit_from_return_trap\n"); return;} // interpreter-only: normal return through C stack
   ShouldNotReachHere();
 }
 

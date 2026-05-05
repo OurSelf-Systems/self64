@@ -202,6 +202,21 @@ private:
   bool is_self_frame();
     
   bool is_first_self_frame();
+
+  // The bottom-of-process sentinel is the synthetic frame pushed by
+  // Process::start (runtime_stubs_{aarch64,x86_64}.cpp) so that the
+  // topmost real Self frame has somewhere to "return into". It is not a
+  // Self frame for any purpose: do not patch it, do not wrap it in a
+  // vframe, do not pass it to killVFrameOops* / setWatermark /
+  // frame_for_check_vfo_locals. Stack::first_VM_frame() and
+  // Stack::last_self_frame() are responsible for filtering it out, since
+  // is_interpreted_self_frame() currently returns true on it.
+  //
+  // Added to catch a bug I created when I implemented single-stepping for Apple 64-bit.
+  // Happens in optimized builds when a send bytecode ends up in HandleReturnTrap.
+  //
+  // -- dmu 5/26
+  bool is_bottom_of_process_sentinel();
     
   fint vdepth(bool includePrologueVframe = false);
 

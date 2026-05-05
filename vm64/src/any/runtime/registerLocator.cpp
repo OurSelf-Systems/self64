@@ -118,6 +118,8 @@ RegisterLocator* RegisterLocator::for_sender_of(frame* f) {
 
 
 RegisterLocator* RegisterLocator::for_copied_frame(frame* copied_frame) {
+  abort();
+  *(int*)0 = 1;
   // when copying a frame for conversion, need to copy the saved registers
   oop* regs = NEW_RESOURCE_ARRAY(oop, NumLocalNonVolRegisters);
   RegisterLocator* r = new RegisterLocator(false);

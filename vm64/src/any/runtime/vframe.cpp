@@ -812,6 +812,7 @@ bool abstract_vframe::is_prologue() {
 
 
 abstract_vframe* abstract_vframe::get_sender(bool skipC) {
+  verify_magic();
   frame* f = skipC ? fr->selfSender() : fr->sender();
   if ( f == NULL  ||  !f->is_self_frame() )
     return NULL;
@@ -943,10 +944,12 @@ void interpreted_vframe::get_expr_stack(oop*& stack,
 
 
 bool abstract_vframe::print_frame(fint curFrame) {
+  lprintf("abstract_vframe::print_frame %d\n", __LINE__);
   oop meth = method();
   methodMap* mm = (methodMap*) meth->map();
   print_code(curFrame);
-  
+  lprintf("abstract_vframe::print_frame %d\n", __LINE__);
+
   stringOop file = mm->file();
   if (file->length() > 0) {
     lprintf(" (");
@@ -955,23 +958,29 @@ bool abstract_vframe::print_frame(fint curFrame) {
   } else {
     lprintf(" ");
   }
-  
+  lprintf("abstract_vframe::print_frame %d\n", __LINE__);
+
   if (selector()->is_string()) {
     stringOop(this->selector())->string_print();
   } else {
-    selector()->print_oop();
+    lprintf("abstract_vframe::print_frame %d\n", __LINE__);
+  selector()->print_oop();
   }
-  
+  lprintf("abstract_vframe::print_frame %d\n", __LINE__);
+
   lprintf(" = ");
 
   print_contents();
-  
+  lprintf("abstract_vframe::print_frame %d\n", __LINE__);
+
   if ( WizardMode
       && (    is_interpreted()  
 #       if defined(FAST_COMPILER) || defined(SIC_COMPILER)
            || !as_compiled()->desc->is_lite()
 #       endif
      )) {
+    lprintf("abstract_vframe::print_frame %d\n", __LINE__);
+
     smi len;
     oop* stack;
     get_expr_stack(stack, len);
@@ -1052,7 +1061,9 @@ void abstract_vframe::print_contents() {
             first= false;
             lprintf("| ");
           }
-          print_slot(s, method());
+          lprintf("print_contents %d", __LINE__);
+          print_slot(s, method()); // THIS ONE
+          lprintf("print_contents %d", __LINE__);
           break;
         }
       }
@@ -1064,7 +1075,9 @@ void abstract_vframe::print_contents() {
         first = false;
         lprintf("| ");
       }
+      lprintf("print_contents %d", __LINE__);
       print_slot(s, method());
+      lprintf("print_contents %d", __LINE__);
     }
     if (! first) lprintf("| ");
   }
@@ -1084,12 +1097,16 @@ void abstract_vframe::print_slot(slotDesc* s, oop meth) {
   s->printAugmentedName();
   lprintf(s->is_obj_slot() ? " <- " : " = ");
   oop p = get_slot(s);
-  p->print_oop();
+  lprintf("print_slot %d 0x%p\n", __LINE__, p);
+  p->print_oop(); // HERE
+  lprintf("print_slot %d 0x%p\n", __LINE__, p);
   if (s->is_obj_slot()) {
     oop orig_p = meth->get_slot(s);
     if (orig_p != p) {
       lprintf(" \"");
+      lprintf("print_slot %d 0x%p\n", __LINE__, orig_p);
       orig_p->print_oop();
+      lprintf("print_slot %d 0x%p\n", __LINE__, orig_p);
       lprintf("\"");
     }
   }

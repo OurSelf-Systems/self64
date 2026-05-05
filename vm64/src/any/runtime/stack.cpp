@@ -44,6 +44,9 @@ frame* Stack::callee_of(const frame* f) {
 
 
 
+// Returns the first C frame whose sender is a *real* Self frame, or NULL
+// if no Self frame exists on the stack. Never returns a frame whose sender
+// is the bottom-of-process sentinel (see frame::is_bottom_of_process_sentinel).
 frame* Stack::first_VM_frame() {
   if (process->nesting == 0)
     return NULL;
@@ -55,8 +58,11 @@ frame* Stack::first_VM_frame() {
     senderFrame = res->sender();
     if (senderFrame == NULL)
       return NULL;
-    if (senderFrame->is_self_frame())
+    if (senderFrame->is_self_frame()) {
+      assert(!senderFrame->is_bottom_of_process_sentinel(),
+             "first_VM_frame leaked sentinel as Self frame");
       return res;
+    }
     res = senderFrame;
   }
 }
@@ -65,11 +71,14 @@ frame* Stack::first_VM_frame() {
 // May not work if this frame is the first_VM_frame,
 //  but I don't know why -- dmu
 // Also returns corresponding RegisterLocator if rl is non null
-
+//
+// Returns the topmost real Self frame on the stack, or NULL if there is
+// none. Never returns the bottom-of-process sentinel (see
+// frame::is_bottom_of_process_sentinel).
 frame* Stack::last_self_frame(bool includePrologue, RegisterLocator** rl) {
   frame* ff = first_VM_frame(); // sets senderFrame as side-effect
   if (ff == NULL) return NULL;
-  
+
   frame* senderFrame = ff->sender();
   frame* result = !includePrologue  &&  senderFrame->is_in_prologue()
     ?  senderFrame->selfSender()    // if in prologue. sender is the first real frame
@@ -81,7 +90,9 @@ frame* Stack::last_self_frame(bool includePrologue, RegisterLocator** rl) {
     *rl = first_rl->climb_to_frame(result);
     assert(*(int32*)(*rl)->fr() || true,  "ensure frame is valid");
   }
-  
+
+  assert(result == NULL || !result->is_bottom_of_process_sentinel(),
+         "last_self_frame leaked sentinel as Self frame");
   return result;
 }
 

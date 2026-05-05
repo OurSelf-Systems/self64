@@ -1,0 +1,23 @@
+digraph for_copied_frame_callers {
+  rankdir=LR;
+  node [shape=box, fontname="Helvetica"];
+
+  HandleReturnTrap     [label="HandleReturnTrap\n(frame.cpp:~600)"];
+  ConvertFrame         [label="ConvertFrame\n(frame.cpp:528)"];
+  Conversion_ctor      [label="Conversion::Conversion\n(new at frame.cpp:535)"];
+  ConvertFrame_cont    [label="ConvertFrame_cont\n(frame.cpp:526)"];
+  Conversion_doit      [label="Conversion::doit"];
+  Conversion_init      [label="Conversion::init\n(conversion.cpp:144)"];
+  Conversion_copyCaller[label="Conversion::copy_caller\n(conversion.cpp:122)"];
+  for_copied_frame     [label="RegisterLocator::for_copied_frame\n(registerLocator.cpp:120)",
+                        style=filled, fillcolor="#ffd9b3"];
+
+  HandleReturnTrap      -> ConvertFrame;
+  ConvertFrame          -> Conversion_ctor;
+  ConvertFrame          -> ConvertFrame_cont      [label="switchToVMStack"];
+  ConvertFrame_cont     -> Conversion_doit;
+  Conversion_doit       -> Conversion_init        [style=dashed, label="(via doit)"];
+  Conversion_init       -> Conversion_copyCaller  [label="conversion.cpp:167"];
+  Conversion_init       -> for_copied_frame       [label="conversion.cpp:153"];
+  Conversion_copyCaller -> for_copied_frame       [label="conversion.cpp:132,138"];
+}

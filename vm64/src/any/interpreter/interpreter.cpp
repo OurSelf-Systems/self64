@@ -10,6 +10,8 @@
 oop sneaky_method_argument_to_interpret;
 
 interpreter* interpreter::_active_interp_list = NULL;
+fint interpreter::expected_magic_number = 0x1A7E11EC; // sentinel for interpreter validity
+
 
 interpreter* interpreter::find_interpreter_for_frame(frame* f) {
 # if TARGET_IS_64BIT
@@ -117,7 +119,8 @@ inline interpreter::interpreter( oop rcv,
   _my_frame = NULL;
   _prev_interp = NULL;
   _block_scope_or_NLR_target = NULL;
-  
+  magic_number = interpreter::expected_magic_number;
+
   if (mi.map()->kind() == OuterMethodType) {
     setup_for_method();
   } 

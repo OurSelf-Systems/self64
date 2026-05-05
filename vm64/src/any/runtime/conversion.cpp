@@ -120,6 +120,7 @@ void Conversion::retarget_vfs_to_convert(frame* copiedFrame, RegisterLocator* co
 
 
 void Conversion::copy_caller() {
+  fatal("in cc??");
   frame* callerFrame = convertFrame->immediateSelfSender();
   // callerFrame can be NULL e.g. when convertNM = doIt
   // also, callerFrame is only a piece of a frame because we popped the
@@ -129,12 +130,14 @@ void Conversion::copy_caller() {
   
   if (callerFrame == NULL) {
     sd = sendDesc::first_sendDesc();
+    fatal();
     nonvols_for_caller = convertFrame_rl->sender()->for_copied_frame(convertFrame->sender());
     vf[0] = NULL;
   }
   else {
     sd = callerFrame->send_desc();
     frame* copied_callerFrame = callerFrame->copy();
+    fatal();
     nonvols_for_caller = convertFrame_rl->sender()->for_copied_frame(copied_callerFrame);
     vf[0] = new_vframe(copied_callerFrame, nonvols_for_caller)->as_compiled();
   }
@@ -150,6 +153,8 @@ void Conversion::init() {
 
   // copy the frame to convert
   frame*           copiedFrame    = convertFrame   ->copy();
+  
+  fatal("for_copied_frame???");
   RegisterLocator* copiedFrame_rl = convertFrame_rl->for_copied_frame(copiedFrame);
   
   # if TARGET_ARCH != PPC_ARCH  // vdepth fails for copiedFrame on PPC because it has no register locator -- dmu 12/02
@@ -163,6 +168,8 @@ void Conversion::init() {
   sp += copiedFrame->frame_size() * oopSize;    // assume stack grows downwards
   
   retarget_vfs_to_convert(copiedFrame, copiedFrame_rl);
+  
+  fatal("copy_caller???");
 
   copy_caller();
 
@@ -405,12 +412,14 @@ void Conversion::returnToSelf(oop res, char* self_sparc_fp_or_ppc_sp,
 // this may be NULL
 void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSend,
                                                    char* self_sparc_fp_or_ppc_sp, oop res, frame* nlrHome_arg, int32 nlrHomeID_arg) {
+  lprintf("enter return_to_interpreted_self\n");
 # if !(TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER))
    // a bit slow, for sparc f is just callee of self_sparc_fp_or_ppc_sp, same frame on ppc
     frame* f= currentProcess->stack()
                 ->interpreter_frame_for_continuing_from_return_trap();
     assert(f, "must have frame to return to");
     char* continuationPC = f->c_return_pc();
+  lprintf("422 return_to_interpreted_self\n");
 # endif
     // Skip the HandleReturnTrap-frame lookup on 64-bit interpreter-only
     // builds: continuationPC is unused below (no ContinueNLRAfterReturnTrap),
@@ -426,7 +435,10 @@ void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSen
     ConversionInProgress = false;
     if (this) delete rm; // free all resources
     OutgoingArgsOfReturnTrapOrRecompileFrame = NULL; // done
+  lprintf("438 return_to_interpreted_self\n");
+
 # if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+  lprintf("441 return_to_interpreted_self\n");
     // Interpreter-only builds: ContinueNLRAfterReturnTrap is a JIT assembly
     // routine that doesn't exist.  Only fake an NLR-through-C when the
     // return really was an NLR.  For a normal trapped return (e.g. during
@@ -436,11 +448,14 @@ void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSen
     if (wasNLR)
       NLRSupport::save_NLR_results(res, (smi)nlrHome_arg, nlrHomeID_arg);
     processSemaphore = false;
+  lprintf("exit return_to_interpreted_self 447\n");
     return;
 # else
-    ContinueNLRAfterReturnTrap( continuationPC, self_sparc_fp_or_ppc_sp, res, nlrHome_arg, nlrHomeID_arg );
+  lprintf("454 return_to_interpreted_self\n");
+   ContinueNLRAfterReturnTrap( continuationPC, self_sparc_fp_or_ppc_sp, res, nlrHome_arg, nlrHomeID_arg );
     ShouldNotReachHere();
 # endif
+  lprintf("exit return_to_interpreted_self\n");
 }
  
 // this may be NULL

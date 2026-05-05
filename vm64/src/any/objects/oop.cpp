@@ -61,6 +61,10 @@ void oopClass::print_oop() {
   if (t == Int_Tag) {
     smiOop(this)->print_oop();
   } else if (t == Mem_Tag) {
+//    if (!Memory->is_obj_heap((oop*)this)) {
+//      lprintf("<bad oop %#lx: Mem_Tag but not in heap>", (unsigned long)this);
+//      return;
+//    }
     memOop(this)->print_oop();
   } else if (t == Float_Tag) {
     floatOop(this)->print_oop();
