@@ -1003,47 +1003,35 @@ vframeOop Process::insertVFrameOop(vframeOop vfm) {
 void Process::killVFrameOops(abstract_vframe* currentVF) {
   ResourceMark rm;
   vframeOop lastToKill;
-  lprintf("killVFrameOops 1003\n");
   if (currentVF) {
     lastToKill = findInsertionPoint(currentVF);
-    lprintf("killVFrameOops 1006\n");
     if (traceV)
       lprintf("*** killVFrameOops(currentVF = 0x%x, fr = 0x%x, lastToKill 0x%x)\n",
               currentVF, currentVF->fr, lastToKill);
   } else {
     // was last self frame - kill all vframes
     lastToKill = NULL;
-    lprintf("killVFrameOops 1013\n");
   }
   vframeOop sentinel = procObj->vframeList();
   if (lastToKill != sentinel) {
     vframeOop l;
-    lprintf("killVFrameOops 1018\n");
     for (l = sentinel->next(); l != lastToKill; l = l->next()) {
       l->kill(); 
     }
     if (l) l->kill();
     sentinel->set_next(l ? l->next() : NULL);
-    lprintf("killVFrameOops 1026\n");
   }
 
   if (check_vfo_locals) {
-    lprintf("killVFrameOops 1028\n"); // LAST ONE
-
     killVFrameOopsInCurrentFrame(currentVF); // IN HERE?
-    lprintf("killVFrameOops 1031\n");
     clear_check_vfo_locals();
-    lprintf("killVFrameOops 1032\n");
-
   }
   
   // check if we returned from stopActivation
   if (stopActivation && !stopActivation->is_live()) {
     stopping = true;
     if (preemptCause == cNoCause) preemptCause = cFinishedActivation;
-    lprintf("killVFrameOops 1040\n");
   }
-  lprintf("killVFrameOops 1043\n");
   if (traceV) verifyVFrameList();
 }
 
@@ -1052,30 +1040,19 @@ void Process::killVFrameOops(abstract_vframe* currentVF) {
 //  but have since died
 
 void Process::killVFrameOopsInCurrentFrame(abstract_vframe* currentVF) {
-  lprintf("killVFrameOopsInCurrentFrame %d\n", __LINE__); // LAST ONE
   frame* f = frame_for_check_vfo_locals(currentVF);
-  lprintf("killVFrameOopsInCurrentFrame %d\n", __LINE__);
   if (f == NULL) {
-    lprintf("killVFrameOopsInCurrentFrame %d\n", __LINE__);
     return;
   }
-  lprintf("killVFrameOopsInCurrentFrame %d\n", __LINE__);
 
   vframeOop sentinel = procObj->vframeList();
-  lprintf("killVFrameOopsInCurrentFrame %d\n", __LINE__);
   abstract_vframe* vf = new_vframe(f);
-  lprintf("killVFrameOopsInCurrentFrame %d\n", __LINE__);
   vframeOop lastToKill = findInsertionPoint(vf);
 
-  lprintf("killVFrameOopsInCurrentFrame %d\n", __LINE__);
   trace_killVFrameOopsInCurrentFrame(lastToKill, vf);
-  lprintf("killVFrameOopsInCurrentFrame %d\n", __LINE__);
   if (lastToKill != sentinel) {
-    lprintf("killVFrameOopsInCurrentFrame %d\n", __LINE__);
     vframeOop firstSurvivor = lastToKill->next();       // don't kill this one
-    lprintf("killVFrameOopsInCurrentFrame %d\n", __LINE__);
     vframeOop prev = sentinel;  // prev guy (to delete elems from list)
-    lprintf("killVFrameOopsInCurrentFrame %d\n", __LINE__);
     vframeOop l    = sentinel->next();
     for ( ;
           l  &&  l != firstSurvivor  &&  l->locals() <= check_vfo_locals;
@@ -1088,7 +1065,6 @@ void Process::killVFrameOopsInCurrentFrame(abstract_vframe* currentVF) {
         prev = l;
       }
     }
-    lprintf("killVFrameOopsInCurrentFrame %d\n", __LINE__);
   }
 }
   
@@ -1396,12 +1372,9 @@ void Process::traceAndLog_killVFrameOopsAndSetWatermark( frame* current,
       lprintf("%#lx ", f);
     lprintf("\n");
     if (currentVF) {
-      lprintf("killVFrameOopsAndSetWatermark %d\n", __LINE__);
       currentVF->print_frame(0);
-      lprintf("killVFrameOopsAndSetWatermark %d\n", __LINE__);
-     abstract_vframe* s = currentVF->sender();
+      abstract_vframe* s = currentVF->sender();
       if (s) s->print_frame(1);
-      lprintf("killVFrameOopsAndSetWatermark %d\n", __LINE__);
    }
   }
 }
@@ -1469,9 +1442,7 @@ void Process::printVFrameList(fint howMany) {
     vframeOop l;
     for (l = procObj->vframeList()->next(); l && howMany-- > 0;
          l = l->next()) {
-      lprintf("printVFrameList %d\n", __LINE__);
       lprintf("\t"); l->print();
-      lprintf("printVFrameList %d\n", __LINE__);
     }
     if (l) lprintf("\t...\n");
   }

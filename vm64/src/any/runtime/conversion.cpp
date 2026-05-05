@@ -412,14 +412,12 @@ void Conversion::returnToSelf(oop res, char* self_sparc_fp_or_ppc_sp,
 // this may be NULL
 void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSend,
                                                    char* self_sparc_fp_or_ppc_sp, oop res, frame* nlrHome_arg, int32 nlrHomeID_arg) {
-  lprintf("enter return_to_interpreted_self\n");
 # if !(TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER))
    // a bit slow, for sparc f is just callee of self_sparc_fp_or_ppc_sp, same frame on ppc
     frame* f= currentProcess->stack()
                 ->interpreter_frame_for_continuing_from_return_trap();
     assert(f, "must have frame to return to");
     char* continuationPC = f->c_return_pc();
-  lprintf("422 return_to_interpreted_self\n");
 # endif
     // Skip the HandleReturnTrap-frame lookup on 64-bit interpreter-only
     // builds: continuationPC is unused below (no ContinueNLRAfterReturnTrap),
@@ -435,10 +433,8 @@ void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSen
     ConversionInProgress = false;
     if (this) delete rm; // free all resources
     OutgoingArgsOfReturnTrapOrRecompileFrame = NULL; // done
-  lprintf("438 return_to_interpreted_self\n");
 
 # if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
-  lprintf("441 return_to_interpreted_self\n");
     // Interpreter-only builds: ContinueNLRAfterReturnTrap is a JIT assembly
     // routine that doesn't exist.  Only fake an NLR-through-C when the
     // return really was an NLR.  For a normal trapped return (e.g. during
@@ -448,14 +444,11 @@ void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSen
     if (wasNLR)
       NLRSupport::save_NLR_results(res, (smi)nlrHome_arg, nlrHomeID_arg);
     processSemaphore = false;
-  lprintf("exit return_to_interpreted_self 447\n");
     return;
 # else
-  lprintf("454 return_to_interpreted_self\n");
    ContinueNLRAfterReturnTrap( continuationPC, self_sparc_fp_or_ppc_sp, res, nlrHome_arg, nlrHomeID_arg );
     ShouldNotReachHere();
 # endif
-  lprintf("exit return_to_interpreted_self\n");
 }
  
 // this may be NULL

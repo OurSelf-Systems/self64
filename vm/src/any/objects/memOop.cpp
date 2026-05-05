@@ -27,10 +27,6 @@ void memOopClass::print_string(char* buf) {
 }
 
 void memOopClass::print_oop() {
-  lprintf("\nmem print_oop %p\n", this);
-  if (!Memory->is_obj_heap((oop*)addr()->_map)) {
-    fatal("AHA\n");
-  }
   if (this == memOop(badOop)) {
     lprintf("badOop");
   }

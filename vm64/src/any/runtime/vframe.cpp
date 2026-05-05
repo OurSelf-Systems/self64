@@ -944,11 +944,9 @@ void interpreted_vframe::get_expr_stack(oop*& stack,
 
 
 bool abstract_vframe::print_frame(fint curFrame) {
-  lprintf("abstract_vframe::print_frame %d\n", __LINE__);
   oop meth = method();
   methodMap* mm = (methodMap*) meth->map();
   print_code(curFrame);
-  lprintf("abstract_vframe::print_frame %d\n", __LINE__);
 
   stringOop file = mm->file();
   if (file->length() > 0) {
@@ -958,20 +956,16 @@ bool abstract_vframe::print_frame(fint curFrame) {
   } else {
     lprintf(" ");
   }
-  lprintf("abstract_vframe::print_frame %d\n", __LINE__);
 
   if (selector()->is_string()) {
     stringOop(this->selector())->string_print();
   } else {
-    lprintf("abstract_vframe::print_frame %d\n", __LINE__);
-  selector()->print_oop();
+    selector()->print_oop();
   }
-  lprintf("abstract_vframe::print_frame %d\n", __LINE__);
 
   lprintf(" = ");
 
   print_contents();
-  lprintf("abstract_vframe::print_frame %d\n", __LINE__);
 
   if ( WizardMode
       && (    is_interpreted()  
@@ -979,7 +973,6 @@ bool abstract_vframe::print_frame(fint curFrame) {
            || !as_compiled()->desc->is_lite()
 #       endif
      )) {
-    lprintf("abstract_vframe::print_frame %d\n", __LINE__);
 
     smi len;
     oop* stack;
@@ -1061,9 +1054,7 @@ void abstract_vframe::print_contents() {
             first= false;
             lprintf("| ");
           }
-          lprintf("print_contents %d", __LINE__);
           print_slot(s, method()); // THIS ONE
-          lprintf("print_contents %d", __LINE__);
           break;
         }
       }
@@ -1075,9 +1066,7 @@ void abstract_vframe::print_contents() {
         first = false;
         lprintf("| ");
       }
-      lprintf("print_contents %d", __LINE__);
       print_slot(s, method());
-      lprintf("print_contents %d", __LINE__);
     }
     if (! first) lprintf("| ");
   }
@@ -1097,16 +1086,46 @@ void abstract_vframe::print_slot(slotDesc* s, oop meth) {
   s->printAugmentedName();
   lprintf(s->is_obj_slot() ? " <- " : " = ");
   oop p = get_slot(s);
-  lprintf("print_slot %d 0x%p\n", __LINE__, p);
-  p->print_oop(); // HERE
-  lprintf("print_slot %d 0x%p\n", __LINE__, p);
+  bool oop_outside = p->is_mem() && !Memory->really_contains((void*)p);
+  bool map_outside = p->is_mem() && !oop_outside &&
+                     !Memory->really_contains((void*)memOop(p)->addr()->_map);
+  if (oop_outside || map_outside) {
+    const char* kind = s->is_arg_slot() ? "arg"
+                     : s->is_obj_slot() ? "obj"
+                     : s->is_map_slot() ? "map"
+                     : s->is_vm_slot()  ? "vm"  : "?";
+    int32 off = s->data->is_smi() ? smiOop(s->data)->value() : -999999;
+    lprintf("<bad slot oop %#lx (%s) kind=%s off=%d slot ",
+            (unsigned long)p,
+            oop_outside ? "oop outside heap" : "map outside heap",
+            kind, (int)off);
+    s->printAugmentedName();
+    if (is_interpreted()) {
+      interpreter* ip = ((interpreted_vframe*)this)->interp();
+      if (ip) {
+        oop* slot_addr = s->is_arg_slot() ? &ip->args[off]
+                       : &ip->locals[off - 0];
+        lprintf(" interp=%p args=%p locals=%p &slot=%p",
+                ip, ip->args, ip->locals, slot_addr);
+      } else {
+        lprintf(" interp=NULL");
+      }
+    }
+    lprintf(">");
+  } else {
+    p->print_oop();
+  }
   if (s->is_obj_slot()) {
     oop orig_p = meth->get_slot(s);
     if (orig_p != p) {
       lprintf(" \"");
-      lprintf("print_slot %d 0x%p\n", __LINE__, orig_p);
-      orig_p->print_oop();
-      lprintf("print_slot %d 0x%p\n", __LINE__, orig_p);
+      if (orig_p->is_mem() &&
+          (!Memory->is_obj_heap((oop*)orig_p) ||
+           !Memory->is_obj_heap((oop*)memOop(orig_p)->addr()->_map))) {
+        lprintf("<bad orig_p oop %#lx>", (unsigned long)orig_p);
+      } else {
+        orig_p->print_oop();
+      }
       lprintf("\"");
     }
   }
