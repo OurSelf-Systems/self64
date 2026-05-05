@@ -163,20 +163,27 @@ interpreter* frame::get_interpreter() {
 
 
 
-bool frame::is_interpreted_self_frame() {
+bool frame::is_interpreted_self_frame(SelfFrameQuery q) {
 # if TARGET_OS_VERSION == MACOSX_VERSION && !TARGET_IS_64BIT
   // breaks when scanning stack for spy (32-bit only; 64-bit has no compiler
   // so interpreter must work)
   if (Interpret) fatal("Interpreter does not work on OSX");
+  Unused(q);
   return false;
 # else
   if (get_interpreter() == NULL) return false;
-  // The bottom-of-process sentinel has a non-NULL interpreter pointer (the
-  // process starts in the interpreter), so without this guard it would be
-  // misclassified as a Self frame and leak through Stack::first_VM_frame /
-  // last_self_frame into HandleReturnTrap, killVFrameOops*, frame::patch,
-  // etc. -- dmu 5/26
-  if (is_bottom_of_process_sentinel()) return false;
+# if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+  // The bottom-of-process sentinel has a non-NULL interpreter pointer (it IS
+  // the first interpret() in the process — live receiver/args/locals/stack).
+  // For unwind callers (return-trap patching, NLR, vframe killing), we must
+  // exclude it: it has no meaningful caller above. For GC and other root-scan
+  // callers (the default), we must NOT exclude it — its interpreter holds
+  // live oops that scavenge has to walk. See SelfFrameQuery in frame.hh.
+  if (q == AlsoCanBeUnwoundPast && is_bottom_of_process_sentinel())
+    return false;
+# else
+  Unused(q);
+# endif
   return true;
 # endif
 }

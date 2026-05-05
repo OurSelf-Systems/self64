@@ -191,15 +191,34 @@ private:
 
   // testers
  public:
- 
-  bool is_compiled_self_frame();
+
+  // Plan D enum: refines what "is this a Self frame?" is asking. The default
+  // case names what the predicate plainly promises — a frame holding live Self
+  // execution state, including the bottom-of-process sentinel (which IS the
+  // first interpret() in the process and has live receiver/args/locals/stack).
+  // Unwind callers — return-trap patching, NLR, vframe killing — want a
+  // strictly stronger property: yes AND has a meaningful caller above me /
+  // can be unwound past. Those callers pass AlsoCanBeUnwoundPast.
+  // Cases are #if-fenced so future configurations can introduce their own
+  // distinctions without sharing this config's vocabulary.
+  enum SelfFrameQuery {
+# if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+    HoldsSelfExecutionState,    // default — sentinel YES (GC-correct)
+    AlsoCanBeUnwoundPast,       // refinement — sentinel NO (unwind-correct)
+# else
+    HoldsSelfExecutionState,    // single case; the unwind distinction is
+                                // interp-only-64-bit specific in this VM today.
+# endif
+  };
+
+  bool is_compiled_self_frame   (SelfFrameQuery q = HoldsSelfExecutionState);
   bool is_self_stub_frame();
-  bool is_interpreted_self_frame();
-  
+  bool is_interpreted_self_frame(SelfFrameQuery q = HoldsSelfExecutionState);
+
   interpreter* get_interpreter();
   interpreter* get_interpreter_of_block_scope();
-    
-  bool is_self_frame();
+
+  bool is_self_frame            (SelfFrameQuery q = HoldsSelfExecutionState);
     
   bool is_first_self_frame();
 

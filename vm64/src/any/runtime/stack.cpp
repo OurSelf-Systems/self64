@@ -58,7 +58,7 @@ frame* Stack::first_VM_frame() {
     senderFrame = res->sender();
     if (senderFrame == NULL)
       return NULL;
-    if (senderFrame->is_self_frame()) {
+    if (senderFrame->is_self_frame(frame::AlsoCanBeUnwoundPast)) {
       assert(!senderFrame->is_bottom_of_process_sentinel(),
              "first_VM_frame leaked sentinel as Self frame");
       return res;
@@ -190,7 +190,11 @@ void Stack::frames_do(framesDoFn fn, primDoFn pfn) {
   for ( ; f != NULL;  
           f = f->sender()) {
           
-    if (f->is_self_frame()) {
+    // Use AlsoCanBeUnwoundPast for the climb_to_frame path: RegisterLocator
+    // machinery isn't designed to climb into the bottom-of-process sentinel.
+    // The sentinel still receives (*fn)(f, NULL) below, and its interpreter
+    // gets iterated by FrameIterator::do_all via the default predicate.
+    if (f->is_self_frame(frame::AlsoCanBeUnwoundPast)) {
       reg_locs = reg_locs->climb_to_frame(f);
       (*fn)(f, reg_locs);
     }
@@ -229,7 +233,10 @@ int32 Stack::depth() {
   return d;
 }
 
-static void frame_remove_patch(frame* f, RegisterLocator*) { if (f->is_self_frame())  f->remove_patch(); }
+static void frame_remove_patch(frame* f, RegisterLocator*) {
+  // Patch removal is an unwind-side operation: the sentinel has no patch slot.
+  if (f->is_self_frame(frame::AlsoCanBeUnwoundPast))  f->remove_patch();
+}
 
 void Stack::remove_patches() {
   // remove all return address patches
