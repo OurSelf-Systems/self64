@@ -37,7 +37,9 @@ void Conversion::convert() {
   if (isInterpreting) {
     // already interpreted frame
     vdepth = 0;
-    sd = convertFrame->send_desc();
+    // Cascade-unwind can leave only the bottom-of-process sentinel above,
+    // in which case last_self_frame returns NULL — no convert frame exists.
+    sd = convertFrame ? convertFrame->send_desc() : NULL;
     convertFrame_rl = NULL; // deallocating it
     return;
   }
@@ -424,7 +426,11 @@ void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSen
     // and frame::c_entry_point() is unreliable here because the BL-decoding
     // it does fails when the optimizer shuffles call sites or the linker
     // routes the call through a stub (see frame.cpp ~line 134).
-    dest_self_fr->get_interpreter()->set_restartSend(restartSend);
+    // dest_self_fr may be NULL when the cascade has unwound past every real
+    // Self frame and only the bottom-of-process sentinel remains above; in
+    // that case there's no interp to inform about restartSend.
+    if (dest_self_fr != NULL)
+      dest_self_fr->get_interpreter()->set_restartSend(restartSend);
     if (restartSend)
       NLRSupport::reset_have_NLR_through_C();
     // Capture nlr before deleting the resource area below: this->nlr

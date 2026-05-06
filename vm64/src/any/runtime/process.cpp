@@ -233,6 +233,13 @@ void Process::start() {
   // be deallocated either by TWAINS or during the next scavenge.
   
   state = aborting;
+# if TARGET_IS_64BIT
+  // The process's interpret() C frames have just been unwound by
+  // unwind_stack_to_kill_process; their alloca'd interp structs are
+  // gone, so any pointers still on active_interp_list are dangling.
+  // Clear the list so frame::get_interpreter doesn't return them.
+  active_interp_list = NULL;
+# endif
   processOop cpo = processObj();
   cpo->kill();
   

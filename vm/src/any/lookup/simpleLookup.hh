@@ -8,6 +8,8 @@
 # endif
 
 
+class OopClosure;
+
 enum LookupStatus {
   foundNone,
   foundOne,
@@ -148,6 +150,19 @@ class simpleLookup: public ResourceObj {
                                  slotDesc* sd);
   
   virtual void print();
+
+  // Walk every captured oop so a scavenge / mark / enumeration can update
+  // them in place. See interpreter::lookup_in_progress for why.
+  //
+  // Two overloads:
+  //   - oopsDoFn version mirrors NMethodLookupKey::oops_do — a free-
+  //     function-per-oop callback; used by markers/enumerators. Virtual
+  //     so subclasses with additional captured oops can override.
+  //   - OopClosure* version is used by InterpreterIterator and other
+  //     closure-style walkers (scavenge, GC mark, etc.); non-virtual,
+  //     walks the same fields via the closure.
+  virtual void oops_do(oopsDoFn f);
+  void         oops_do(OopClosure* c);
 
  protected:
   void assert_static_selector();

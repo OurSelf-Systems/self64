@@ -1273,6 +1273,7 @@ key.cpp                       codeTable.hh
 key.cpp                       key.hh
 key.cpp                       label_inline.hh
 key.cpp                       nmethod.hh
+key.cpp                       oopClosures.hh
 key.cpp                       sendDesc.hh
 
 key.hh                        kinds.hh
@@ -2702,6 +2703,7 @@ simpleLookup.cpp              cacheStub_inline.hh
 simpleLookup.cpp              codeSlotsMap.hh
 simpleLookup.cpp              debug.hh
 simpleLookup.cpp              label_inline.hh
+simpleLookup.cpp              oopClosures.hh
 simpleLookup.cpp              print.hh
 simpleLookup.cpp              process.hh
 simpleLookup.cpp              selfMonitor.hh

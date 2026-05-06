@@ -71,7 +71,10 @@ Stack* frame::my_stack()   {
   return s;
 }
 
-bool frame::is_compiled_self_frame() {
+bool frame::is_compiled_self_frame(SelfFrameQuery q) {
+  // Compiled bottom-of-process distinction is not introduced in this VM today;
+  // the parameter is accepted for symmetry with is_interpreted_self_frame().
+  Unused(q);
   return Memory->code->contains(return_addr());
 }
 
@@ -79,8 +82,8 @@ bool frame::is_self_stub_frame() {
   return Memory->code->sZone->contains(return_addr());
 }
 
-bool frame::is_self_frame() {
-  return is_compiled_self_frame() || is_interpreted_self_frame();
+bool frame::is_self_frame(SelfFrameQuery q) {
+  return is_compiled_self_frame(q) || is_interpreted_self_frame(q);
 }
     
 bool frame::is_first_self_frame() {
@@ -689,6 +692,13 @@ void  unpatch_the_convertFrame_and_get_returnTrap_info(
     // must be in interpreter, find the frame
     // skip C interp frames
     convertFrame = currentProcess->last_self_frame(true);
+    // The cascade can unwind past every real Self frame, leaving only the
+    // bottom-of-process sentinel above; last_self_frame then returns NULL.
+    // No convert frame to unpatch — bail.
+    if (convertFrame == NULL) {
+      lprintf("unpatch_the_convertFrame: no Self frame above sentinel; bailing\n");
+      return;
+    }
     // Don't know if the following line works, not supporting the interp these days...dmu 2/03
     OutgoingArgsOfReturnTrapOrRecompileFrame = convertFrame->patched_frame_saved_outgoing_args();
     convertFrame->remove_patch();
