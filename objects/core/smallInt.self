@@ -10,13 +10,13 @@ See the LICENSE file for license information.
  bootstrap addSlotsTo: bootstrap stub -> 'globals' -> () From: ( | {
          'Category: core\x7fCategory: numbers\x7fComment: largest small integer\x7fModuleInfo: Module: smallInt InitialContents: FollowSlot\x7fVisibility: public'
         
-         maxSmallInt = 536870911.
+         maxSmallInt = (-1 >> 1).
         } | ) 
 
  bootstrap addSlotsTo: bootstrap stub -> 'globals' -> () From: ( | {
          'Category: core\x7fCategory: numbers\x7fComment: smallest small integer\x7fModuleInfo: Module: smallInt InitialContents: FollowSlot\x7fVisibility: public'
         
-         minSmallInt = -536870912.
+         minSmallInt = (maxSmallInt complement).
         } | ) 
 
  bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'modules' -> () From: ( | {
