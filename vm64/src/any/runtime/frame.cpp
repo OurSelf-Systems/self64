@@ -708,46 +708,6 @@ void  unpatch_the_convertFrame_and_get_returnTrap_info(
 
 
 bool return_trap_was_just_for_vframeOops(char* selfPC, frame* convertFrame) {
-  auto would = currentProcess->isKillingOrDeoptimizing()
-  && !currentProcess->isUncommon()
-#     if defined(FAST_COMPILER) || defined(SIC_COMPILER)
-  && !(selfPC && nmethod::findNMethod(selfPC)->isInvalid())
-#     endif
-  && !currentProcess->isSingleStepping()
-  && !currentProcess->isStopping()
-  && currentProcess->stopFrame() != convertFrame->vfo_locals_of_home_frame();
-  
-  if (!would && selfPC == 0) {
-    lprintf("catching the problem, pc: %d, isKorD: %d, !isUnc: %d, !isSS: %d, !isStop: %d, frame not vfo: %d\n",
-            selfPC,
-            currentProcess->isKillingOrDeoptimizing(),
-            !currentProcess->isUncommon(),
-            !currentProcess->isSingleStepping(),
-            !currentProcess->isStopping(),
-            currentProcess->stopFrame() != convertFrame->vfo_locals_of_home_frame());
-    
-  }
-  else if (would && selfPC == 0) {
-    lprintf("catching the NON problem, pc: %d, isKorD: %d, !isUnc: %d, !isSS: %d, !isStop: %d, frame not vfo: %d\n",
-            selfPC,
-            currentProcess->isKillingOrDeoptimizing(),
-            !currentProcess->isUncommon(),
-            !currentProcess->isSingleStepping(),
-            !currentProcess->isStopping(),
-            currentProcess->stopFrame() != convertFrame->vfo_locals_of_home_frame());
-  }
-  else {
-    lprintf("catching non zero pc, would: %d, pc: %d, isKorD: %d, !isUnc: %d, !isSS: %d, !isStop: %d, frame not vfo: %d\n",
-            would,
-            selfPC,
-            currentProcess->isKillingOrDeoptimizing(),
-            !currentProcess->isUncommon(),
-            !currentProcess->isSingleStepping(),
-            !currentProcess->isStopping(),
-            currentProcess->stopFrame() != convertFrame->vfo_locals_of_home_frame());
-  }
-  
-  
   return !currentProcess->isKillingOrDeoptimizing()
       && !currentProcess->isUncommon()
 #     if defined(FAST_COMPILER) || defined(SIC_COMPILER)
