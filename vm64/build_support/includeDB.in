@@ -99,6 +99,7 @@ abstract_interpreter.cpp      oop_inline.hh
 abstract_interpreter.cpp      space_inline.hh
 
 abstract_interpreter.hh       byteCodes.hh
+abstract_interpreter.hh       diag_toggles.hh
 abstract_interpreter.hh       mapOop.hh
 abstract_interpreter.hh       oop.hh
 
@@ -664,6 +665,11 @@ diDesc.hh                     runtime.hh
 diDesc_${platform_processor}.cpp             diDesc.hh
 diDesc_${platform_processor}.cpp             fields.hh
 
+diag_toggles.cpp              diag_toggles.hh
+diag_toggles.cpp              os_includes.hh
+
+diag_toggles.hh               top_includes.hh
+
 disasm.cpp                    disasm.hh
 
 disasm.hh                     top.hh
@@ -1179,6 +1185,7 @@ interpreter.cpp               abstract_interpreter_inline.hh
 interpreter.cpp               byteCodes.hh
 interpreter.cpp               codeSlotsMap.hh
 interpreter.cpp               complexLookup.hh
+interpreter.cpp               diag_toggles.hh
 interpreter.cpp               interpreter.hh
 interpreter.cpp               interpreterPICTable.hh
 interpreter.cpp               interruptedCtx.hh
@@ -1193,6 +1200,7 @@ interpreter.cpp               shell.hh
 interpreter.cpp               sig.hh
 
 interpreter.hh                abstract_interpreter_inline.hh
+interpreter.hh                diag_toggles.hh
 interpreter.hh                objVectorOop.hh
 interpreter.hh                oopClosures.hh
 interpreter.hh                oop_inline.hh
@@ -1347,6 +1355,8 @@ longRegString_${platform_processor}.cpp      label_inline.hh
 longRegString_${platform_processor}.cpp      longRegString.hh
 longRegString_${platform_processor}.cpp      sic.hh
 
+lprintf.cpp                   diag_toggles.hh
+lprintf.cpp                   interpreter.hh
 lprintf.cpp                   lprintf.hh
 lprintf.cpp                   os.hh
 lprintf.cpp                   sig.hh
@@ -2537,6 +2547,7 @@ sendDesc_${platform_processor}.cpp           space_inline.hh
 shell.cpp                     ${platform_kind}Prims.hh
 shell.cpp                     allocation.hh
 shell.cpp                     codeSlotsMap.hh
+shell.cpp                     diag_toggles.hh
 shell.cpp                     dynLink.hh
 shell.cpp                     expr.hh
 shell.cpp                     files.hh
@@ -2939,6 +2950,7 @@ space_inline.hh               universe.hh
 sparc.hh                      types.hh
 
 stack.cpp                     allocation.hh
+stack.cpp                     diag_toggles.hh
 stack.cpp                     enumeration.hh
 stack.cpp                     frame.hh
 stack.cpp                     interpreter.hh
@@ -3192,6 +3204,7 @@ universe.more.cpp             byteVectorMap.hh
 universe.more.cpp             cacheStub_inline.hh
 universe.more.cpp             codeSlotsMap.hh
 universe.more.cpp             debug.hh
+universe.more.cpp             diag_toggles.hh
 universe.more.cpp             disasm.hh
 universe.more.cpp             fctProxyMap.hh
 universe.more.cpp             floatMap.hh
@@ -3240,6 +3253,7 @@ vframe.cpp                    allocation.hh
 vframe.cpp                    byteCodes.hh
 vframe.cpp                    codeSlotsMap.hh
 vframe.cpp                    debug.hh
+vframe.cpp                    diag_toggles.hh
 vframe.cpp                    enumeration.hh
 vframe.cpp                    fields.hh
 vframe.cpp                    generation_inline.hh
