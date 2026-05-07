@@ -22,6 +22,38 @@ void debug_init() {
   DirPath = copy_c_heap_string("");   // so we can use free() when changing it
   SpyDisplay = copy_c_heap_string("");
   SpyFont = copy_c_heap_string("");
+
+  // Warn about VM debug flags that are currently on. These flags slow the VM,
+  // perturb timing, or force extra invariant checks — handy when you want
+  // them, surprising when you don't. Reports only flags whose runtime value
+  // is true at this point, so a clean run prints nothing. Flags can be flipped
+  // later from Self code; this only catches the initial state.
+  // -- claude & dmu May 2026
+  bool any = false;
+# define WARN_IF_ON(f) \
+    do { if (f) { \
+      if (!any) { fprintf(stderr, "[VM] active debug flags:"); any = true; } \
+      fprintf(stderr, " " #f); \
+    } } while (0)
+  WARN_IF_ON(SpendTimeForDebugging);
+  WARN_IF_ON(CheckAssertions);
+  WARN_IF_ON(ZapResourceArea);
+  WARN_IF_ON(VerifyBeforeScavenge);
+  WARN_IF_ON(VerifyAfterScavenge);
+  WARN_IF_ON(VerifyBeforeGC);
+  WARN_IF_ON(VerifyAfterGC);
+  WARN_IF_ON(VerifyBeforeConversion);
+  WARN_IF_ON(VerifyAfterConversion);
+  WARN_IF_ON(VerifyAfterRecompilation);
+  WARN_IF_ON(VerifyZoneOften);
+  WARN_IF_ON(ScavengeAfterRecompilation);
+  WARN_IF_ON(PrintScavenge);
+  WARN_IF_ON(PrintGC);
+  WARN_IF_ON(ForceFrequentScavengesViaSmallNewSpace);
+  WARN_IF_ON(traceP);
+  WARN_IF_ON(traceV);
+# undef WARN_IF_ON
+  if (any) fprintf(stderr, "\n");
 }
 
 # undef DefineFlags
