@@ -129,6 +129,15 @@ class newGeneration: public generation {
   // constructor, called by Memory
   newGeneration(smi &eden_size, smi &surv_size, FILE *snap = NULL);
 
+ public:
+  // Logically shrink the three new spaces in place after they have been
+  // emptied (e.g., by a tenure-everything scavenge). Each new size is rounded
+  // up to idealized_page_size and clamped to the existing physical extent.
+  // The unused tail of each space's mmap region is left allocated but unused.
+  void shrink_to(smi new_eden_bytes, smi new_surv_bytes);
+
+ private:
+
   // scavenger-related items
   // these are actually called by Memory
   void prepare_for_scavenge(); 

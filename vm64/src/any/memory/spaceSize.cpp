@@ -71,3 +71,12 @@ void spaceSizes::cleanup()
 {
   APPLY_TO_SPACE_SIZES(ROUND_TO_IDEALIZED_PAGE_SIZE_TEMPLATE);
 }
+
+void spaceSizes::apply_force_frequent_scavenges_clamp()
+{
+  if (!ForceFrequentScavengesViaSmallNewSpace) return;
+  const smi tiny_eden = roundTo(default_eden_size / 10, idealized_page_size);
+  const smi tiny_surv = roundTo(default_surv_size / 10, idealized_page_size);
+  if (eden_size > tiny_eden) eden_size = tiny_eden;
+  if (surv_size > tiny_surv) surv_size = tiny_surv;
+}

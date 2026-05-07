@@ -72,6 +72,7 @@ static char* spyLogFile= NULL;
 char* startUpSelfFile= NULL;
 static bool run_vm_tests_flag = false;
 bool print_vm_version = false;
+bool ForceFrequentScavengesViaSmallNewSpace = false;
 
 const char **prog_argv;
 int    prog_argc;
@@ -93,6 +94,9 @@ static void processArguments(int argc, const char *argv[]) {
     }
     if (strcmp(argv[i], "--vm-version") == 0) {
       print_vm_version = true;
+    }
+    if (strcmp(argv[i], "--force-frequent-scavenges-via-small-new-space") == 0) {
+      ForceFrequentScavengesViaSmallNewSpace = true;
     }
   }
 
@@ -136,6 +140,7 @@ static void processArguments(int argc, const char *argv[]) {
       lprintf("  -a\t\tTest the Assembler (added for Intel)\n");
       lprintf("  --vm-run-tests\tRun C++ VM unit tests and exit\n");
       lprintf("  --vm-version\tPrint VM version and platform info at startup\n");
+      lprintf("  --force-frequent-scavenges-via-small-new-space\tClamp eden/surv to 1/10 of defaults; cap Self attempts to grow them\n");
       lprintf("Other command line switches may be interpreted by the Self world\n");
       ::exit(0);
       break;
@@ -206,6 +211,7 @@ void abortSelf() {
 
 void run_the_VM() {
   assert(! bootstrapping, "don't get screwed again by this");
+  Memory->apply_force_frequent_scavenges_post_load();
   Memory->scavenge();
   SignalInterface::initialize();
   initHProfiler();

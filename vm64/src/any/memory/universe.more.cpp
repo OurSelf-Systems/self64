@@ -48,6 +48,19 @@ oop universe::tenure(oop p) {
   return r;
 }
 
+void universe::apply_force_frequent_scavenges_post_load() {
+  if (!ForceFrequentScavengesViaSmallNewSpace) return;
+  tenure();
+  const smi tiny_eden = default_eden_size / 10;
+  const smi tiny_surv = default_surv_size / 10;
+  new_gen->shrink_to(tiny_eden, tiny_surv);
+  current_sizes.eden_size = roundTo(tiny_eden, idealized_page_size);
+  current_sizes.surv_size = roundTo(tiny_surv, idealized_page_size);
+  lprintf("ForceFrequentScavengesViaSmallNewSpace: tenured all and shrank "
+          "eden to %ld, surv to %ld bytes\n",
+          (long)current_sizes.eden_size, (long)current_sizes.surv_size);
+}
+
 oop universe::default_low_space_handler(oop p)
 {
   if (MemoryAutomaticGC)

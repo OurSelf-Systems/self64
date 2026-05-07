@@ -26,6 +26,9 @@ public:
   APPLY_TO_SPACE_SIZES(SIZE_DECLARATION_TEMPLATE)
   void set_from_defaults();
   void cleanup();
+  // If ForceFrequentScavengesViaSmallNewSpace is set, clamp eden_size/surv_size
+  // to 1/10 of the defaults so scavenges happen far more often.
+  void apply_force_frequent_scavenges_clamp();
 };
 
 oop get_current_space_sizes_prim(oop ignored, slotsOop proto, void *FH);
