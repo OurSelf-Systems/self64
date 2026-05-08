@@ -10,15 +10,15 @@
   || (  TARGET_OS_VERSION == SOLARIS_VERSION  && TARGET_ARCH == I386_ARCH))
   # define FD_SETSIZE     256             /* max. number of open files */
 # endif
-
+  
   // not defined in usr/include/CC/fcntl.h
-
+  
 # define STDIN     0
-
+  
 # pragma implementation "unixPrims.hh"
 # include "_unixPrims.cpp.incl"
 
-
+  
 
 
 # if  TARGET_OS_VERSION == SOLARIS_VERSION
@@ -58,7 +58,7 @@ extern "C" {
 # endif
 
 
-# if  COMPILER != GCC_COMPILER  ||  TARGET_OS_VERSION == SOLARIS_VERSION
+# if  COMPILER != GCC_COMPILER  ||  TARGET_OS_VERSION == SOLARIS_VERSION 
 extern "C" {
   int syscall(int number, /* arg */ ...);
 }
@@ -82,7 +82,7 @@ class IOCleanup {
     if (isatty(STDIN))
       tcgetattr(STDIN, &normalSettings);
 # endif
-    FD_SET(0, &activeFDs); FD_SET(1, &activeFDs); FD_SET(2, &activeFDs);
+    FD_SET(0, &activeFDs); FD_SET(1, &activeFDs); FD_SET(2, &activeFDs); 
   }
   ~IOCleanup() { resetTerminal(); }
 };
@@ -134,13 +134,13 @@ void resetTerminal() {
   }
 
   typedef long unsigned int nbytes_t;
-
-
+  
+  
 # elif  TARGET_OS_VERSION == MACOSX_VERSION
 
   // Emulate blocking write on a possibly non-blocking filedescriptor; this
   // is necessary because e.g. lprintf doesn't expect non-blocking files.
-
+  
   // next statement is why we lose output from console, I bet -- dmu 12/02
   # if 0 // don't use WRITE for now, seems to work, WRITE is commented in runtime_asm_i386.S
     extern "C" {
@@ -153,19 +153,19 @@ void resetTerminal() {
     extern "C"  int  _write(int fd, const void* b, nbytes_t nbytes) { return write(fd, b, nbytes); }
     extern "C" int _libc_write(int fd, const void* b, unsigned int nbytes) {
       return _write(fd, b, nbytes); }
-
+      
   # else
     static int c_lib_write(int fd, const char* buf, int nbytes) {
       return write(fd, buf, nbytes);
     }
-  # endif
+  # endif  
 
 # elif  TARGET_OS_VERSION ==   LINUX_VERSION \
     ||  TARGET_OS_VERSION ==  NETBSD_VERSION \
     ||  TARGET_OS_VERSION == FREEBSD_VERSION
     static int c_lib_write(int fd, const char* buf, int nbytes) {
       return write(fd, buf, nbytes);
-    }
+    }    
 # else
   # error what?
 # endif
@@ -211,8 +211,8 @@ extern "C" int write(int fd, const void* b, nbytes_t nbytes) {
 // s = socket_wrap(PF_INET, SOCK_STREAM, 0)
 // bind_wrap(s, AF_INET, 0 /* any port in a storm*/, INADDR_ANY)
 // connect(s, AF_INET, 0, INADDR_ANY)
-
-
+  
+  
 // example: socket_wrap(PF_INET, SOCK_STREAM, 0);
 
 int socket_wrap(int domain, int type, int protocol) {
@@ -255,7 +255,7 @@ static void set_sockaddr_in(struct sockaddr_in &a,
     ||  TARGET_OS_VERSION == MACOSX_VERSION   \
     ||  TARGET_OS_VERSION == LINUX_VERSION \
     ||  TARGET_OS_VERSION == FREEBSD_VERSION \
-    ||  TARGET_OS_VERSION == NETBSD_VERSION
+    ||  TARGET_OS_VERSION == NETBSD_VERSION 
     memcpy((char*) &aLong, address, sizeof(long));
     memset(a.sin_zero, 0, sizeof(a.sin_zero));
 # elif  TARGET_OS_VERSION == SUNOS_VERSION
@@ -268,7 +268,7 @@ static void set_sockaddr_in(struct sockaddr_in &a,
      a.sin_addr.s_addr   = aLong;
 }
 
-
+  
 // bind, see /usr/include/netinet/in.h
 // example (socket, port_no (1275), AF_INET, INADDR_ANY)
 
@@ -287,12 +287,12 @@ int bind_wrap(int socket,
   if (port != 0) return port;
 
   /* We requested port 0, so the system chose a port number for us.
-     As a favor to the caller, return this port number.
+     As a favor to the caller, return this port number. 
      Yes, this is overloading of a single primitive. Agesen, June 1996.*/
   socklen_t len = sizeof(a);
   if (getsockname(socket, (sockaddr*)&a, &len) == -1) return -1;
   return ntohs(a.sin_port);
-
+  
 }
 
 
@@ -310,7 +310,7 @@ oop gethostbyname_wrap(char* name, void* FH) {
   hostent* h = gethostbyname(name);
 
   if (h == NULL) { unix_failure(FH); return NULL; }
-  for (char **p = h->h_addr_list; *p; p++)
+  for (char **p = h->h_addr_list; *p; p++) 
     addrCount++;
   objVectorOop res = Memory->objVectorObj->cloneSize(addrCount);
 
@@ -327,7 +327,7 @@ oop gethostbyname_wrap(char* name, void* FH) {
 char *gethostbyaddr_wrap(char *addr, int addrlen, int addrtype, void *FH) {
   struct hostent *h = gethostbyaddr(addr, addrlen, addrtype);
   if (!h) { unix_failure(FH, h_errno); return NULL; }
-  return h->h_name;
+  return h->h_name; 
 }
 
 
@@ -353,7 +353,7 @@ int connect_wrap(int socket,
   int r =  connect(socket, (sockaddr*)&a, sizeof(a));
   return r;
 }
-
+      
 
 
 // to get a socket for accepting connections:
@@ -387,7 +387,7 @@ int accept_wrap(int sock, objVectorOop info) {
 
 
 // need to do this whenever we open a file so select will check it
-
+    
 extern "C"
 void register_file_descriptor(int fd) {
     // check if this file will mess up select
@@ -398,19 +398,19 @@ void register_file_descriptor(int fd) {
   timeval nowait;
   nowait.tv_sec = 0;
   nowait.tv_usec = 0;
-
+  
   static fd_set zeroes; // static to initialize to zero
   fd_set r = zeroes, w = zeroes;
   FD_SET(fd, &r);
   FD_SET(fd, &w);
-
+  
   if ( select(FD_SETSIZE, &r, &w, NULL, &nowait) < 0 )
     return;
-
+  
   // end of check
-
+  
   FD_SET(fd, &activeFDs);
-
+  
 }
 
 int open_wrap(char *path, int flags, int mode) {
@@ -435,11 +435,11 @@ int select_wrap(objVectorOop vec, int howMany, void *FH) {
     prim_failure(FH, BADSIZEERROR);
     return 0;
   }
-  if (howMany > FD_SETSIZE)
+  if (howMany > FD_SETSIZE) 
     howMany = FD_SETSIZE;
   fd_set r = activeFDs, w = activeFDs;
   timeval nowait;
-  nowait.tv_sec  = 0;
+  nowait.tv_sec  = 0; 
   nowait.tv_usec = 0;
   if (select(howMany, &r, &w, NULL, &nowait) < 0) {
     unix_failure(FH);
@@ -459,11 +459,11 @@ int select_read_wrap(objVectorOop vec, int howMany, void *FH) {
     prim_failure(FH, BADSIZEERROR);
     return 0;
   }
-  if (howMany > FD_SETSIZE)
+  if (howMany > FD_SETSIZE) 
     howMany = FD_SETSIZE;
   fd_set r = activeFDs;
   timeval nowait;
-  nowait.tv_sec  = 0;
+  nowait.tv_sec  = 0; 
   nowait.tv_usec = 0;
   if (select(howMany, &r, NULL, NULL, &nowait) < 0) {
     unix_failure(FH);
@@ -512,7 +512,7 @@ char *getcwd_wrap(void *FH) {
   return path;
 }
 
-int read_wrap(int fd, char *buf, int buf_len,
+int read_wrap(int fd, char *buf, int buf_len, 
               int offset, int nbytes, void *FH) {
   if (offset < 0 ||  nbytes < 0) {
     prim_failure(FH, BADSIGNERROR);
@@ -526,20 +526,20 @@ int read_wrap(int fd, char *buf, int buf_len,
 }
 
 
-int write_wrap(int fd, char *buf, int buf_len,
+int write_wrap(int fd, char *buf, int buf_len, 
                int offset, int nbytes, void *FH) {
   if (offset < 0 ||  nbytes < 0)
     prim_failure(FH, BADSIGNERROR);
   else if (offset + nbytes > buf_len)
     prim_failure(FH, BADINDEXERROR);
-  else
+  else 
     return c_lib_write(fd, buf + offset, nbytes);
   return 0;
 }
 
 
 
-// Since the result of syscall uses all 32 bits of a long the result is
+// Since the result of syscall uses all 32 bits of a long the result is 
 // converted into a 4 element byteVector instead of a smiOop.
 // Since most system calls return -1 for error, we assume -1 means failure.
 // Self code can tell because errno will be zero if there were no error.
@@ -547,7 +547,7 @@ int write_wrap(int fd, char *buf, int buf_len,
 inline byteVectorOop convertLongToByteVector(long value,  void* FH) {
   if (value == -1)
     unix_failure(FH);
-
+  
   byteVectorOop b = Memory->byteVectorObj->cloneSize(sizeof(long));
   b->byte_at_put(0, char((value & 0xff000000) >> 24));
   b->byte_at_put(1, char((value & 0x00ff0000) >> 16));
@@ -616,3 +616,4 @@ void unixPrims_exit() { delete ioC; }
   char*  version_wrap(void* FH) { return uname(&my_utsname) ? (unix_failure(FH), (char*)NULL) : my_utsname. version; }
   char*  machine_wrap(void* FH) { return uname(&my_utsname) ? (unix_failure(FH), (char*)NULL) : my_utsname. machine; }
 # endif
+    
