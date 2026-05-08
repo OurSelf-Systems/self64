@@ -583,6 +583,12 @@ byteVectorOop syscall6(int n,  void* a0, void* a1, void* a2, void* a3,
   return convertLongToByteVector(syscall(n, a0, a1, a2, a3, a4, a5), FH);}
 
 
+int gethostid_wrap() { return (int)gethostid(); }
+
+int ioctl_wrap(int fd, int request, void* arg) {
+  return ioctl(fd, (unsigned long)request, arg);
+}
+
 void unixPrims_init() { ioC = new IOCleanup; }
 
 void unixPrims_exit() { delete ioC; }

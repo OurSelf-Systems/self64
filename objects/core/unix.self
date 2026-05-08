@@ -99,12 +99,7 @@ The mode should be one of the constants in accessModes.
         
          access: fileName Mode: mode = ( |
             | 
-            syscall: sys_access
-               With: fileName copyNullTerminated
-                And: 0
-               With: mode
-                And: 0
-             IfFail: [|:e| ^e].
+            fileName _Access: mode IfFail: [|:e| ^e].
             '').
         } | ) 
 
@@ -309,12 +304,7 @@ Result is a vector of byte vectors (each byte vector is an IP address).
         
          ioctlFile: file Request: request With: arg IfFail: errBlk = ( |
             | 
-            convertSysCallResultToInt: 
-                syscall: sys_ioctl
-                   With: file              And: 0
-                   With: request low16Bits And: request high16Bits
-                   With: arg               And: 0
-                 IfFail: [|:e| ^ errBlk value: e]).
+            file _Ioctl: request With: arg IfFail: errBlk).
         } | ) 
 
  bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> () From: ( | {
@@ -346,10 +336,7 @@ Result is a vector of byte vectors (each byte vector is an IP address).
         
          mkdir: path Mode: mode IfFail: errBlk = ( |
             | 
-            syscall: sys_mkdir
-               With: path copyNullTerminated And: 0
-               With: mode                    And: 0
-             IfFail: errBlk).
+            path _Mkdir: mode IfFail: errBlk).
         } | ) 
 
  bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> () From: ( | {
@@ -395,7 +382,7 @@ Result is a vector of byte vectors (each byte vector is an IP address).
           Returns a unique identifier of the current host.\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
         
          gethostid = ( |
-            | syscall: sys_gethostid IfFail: raiseError).
+            | _GethostidIfFail: raiseError).
         } | ) 
 
  bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
@@ -417,90 +404,6 @@ Result is a vector of byte vectors (each byte vector is an IP address).
         
          nodename = ( |
             | (utsname copyFrom:  9 UpTo:  18) shrinkwrapped).
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
-         'Category: ptrace interface (OS X)\x7fCategory: controlling\x7fComment: trace some running process\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         pt_attach = 10.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
-         'Category: ptrace interface (OS X)\x7fCategory: controlling\x7fComment: continue the child\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         pt_continue = 7.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
-         'Category: ptrace interface (OS X)\x7fCategory: controlling\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         pt_deny_attach = 31.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
-         'Category: ptrace interface (OS X)\x7fCategory: controlling\x7fComment: stop tracing a process\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         pt_detach = 11.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
-         'Category: ptrace interface (OS X)\x7fComment: for machine-specific requests\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         pt_firstmach = 32.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
-         'Category: ptrace interface (OS X)\x7fCategory: controlling\x7fComment: kill the child process\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         pt_kill = 8.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
-         'Category: ptrace interface (OS X)\x7fCategory: reading\x7fComment: read word in child\'s D space\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         pt_read_d = 2.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
-         'Category: ptrace interface (OS X)\x7fCategory: reading\x7fComment: read word in child\'s I space\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         pt_read_i = 1.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
-         'Category: ptrace interface (OS X)\x7fCategory: reading\x7fComment: read word in child\'s user structure\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         pt_read_u = 3.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
-         'Category: ptrace interface (OS X)\x7fCategory: controlling\x7fComment: single step the child\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         pt_step = 9.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
-         'Category: ptrace interface (OS X)\x7fCategory: controlling\x7fComment: child declares it\'s being traced\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         pt_trace_me = 0.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
-         'Category: ptrace interface (OS X)\x7fCategory: writing\x7fComment: write word in child\'s D space\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         pt_write_d = 5.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
-         'Category: ptrace interface (OS X)\x7fCategory: writing\x7fComment: write word in child\'s I space\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         pt_write_i = 4.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
-         'Category: ptrace interface (OS X)\x7fCategory: writing\x7fComment: write word in child\'s user structure\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         pt_write_u = 6.
         } | ) 
 
  bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
@@ -550,12 +453,6 @@ Result is a vector of byte vectors (each byte vector is an IP address).
          'Category: syscall constants\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
         
          sys_mkdir = 136.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
-         'Category: syscall constants\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         sys_ptrace = 26.
         } | ) 
 
  bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'bsd' -> () From: ( | {
@@ -670,12 +567,6 @@ Result is a vector of byte vectors (each byte vector is an IP address).
          'Category: syscall constants\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
         
          sys_mkdir = 136.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'freebsd' -> () From: ( | {
-         'Category: syscall constants\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         sys_ptrace = 26.
         } | ) 
 
  bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'freebsd' -> () From: ( | {
@@ -1827,12 +1718,6 @@ Result is a vector of byte vectors (each byte vector is an IP address).
  bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'linux' -> () From: ( | {
          'Category: syscall constants\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
         
-         sys_ptrace = 26.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'linux' -> () From: ( | {
-         'Category: syscall constants\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
          sys_putpmsg = 189.
         } | ) 
 
@@ -2792,12 +2677,6 @@ Result is a vector of byte vectors (each byte vector is an IP address).
  bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'netbsd' -> () From: ( | {
          'Category: syscall constants\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
         
-         sys_ptrace = 26.
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> 'osVariants' -> 'netbsd' -> () From: ( | {
-         'Category: syscall constants\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
          sys_rename = 128.
         } | ) 
 
@@ -3089,43 +2968,11 @@ Result is a vector of byte vectors (each byte vector is an IP address).
         } | ) 
 
  bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> () From: ( | {
-         'Category: debugging\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         ptraceRequest: request PID: pid Address: address Data: dataBytes = ( |
-            | 
-            ptraceRequest: request
-                      PID: pid
-                  Address: address
-                     Data: dataBytes
-                   IfFail: [|:e| error: e]).
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> () From: ( | {
-         'Category: debugging\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
-        
-         ptraceRequest: request PID: pid Address: address Data: dataBytes IfFail: errBlk = ( |
-            | 
-            "untested"
-            "request is e.g. pt_attach"
-            convertSysCallResultToInt: 
-                syscall: sys_ptrace
-                   With: request low16Bits    And: request high16Bits
-                   With: pid     low16Bits    And: pid     high16Bits
-                   With: address low16Bits    And: address high16Bits
-                   With: dataBytes            And: 0  "in/out"
-                 IfFail: [|:e| ^ errBlk value: e]).
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> () From: ( | {
          'Category: file operations\x7fCategory: file naming\x7fModuleInfo: Module: unix InitialContents: FollowSlot\x7fVisibility: public'
         
          rename: path1 To: path2 IfFail: failBlk = ( |
             | 
-            "rename(2V) returns 0 for success and -1 for failure."
-                syscall: sys_rename 
-                   With: path1 copyNullTerminated And: 0 
-                   With: path2 copyNullTerminated And: 0
-                 IfFail: failBlk).
+            path1 _Rename: path2 IfFail: failBlk).
         } | ) 
 
  bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> () From: ( | {
@@ -3133,9 +2980,7 @@ Result is a vector of byte vectors (each byte vector is an IP address).
         
          rmdir: path IfFail: errBlk = ( |
             | 
-            syscall: sys_rmdir
-               With: path copyNullTerminated And: 0
-             IfFail: errBlk).
+            path _RmdirIfFail: errBlk).
         } | ) 
 
  bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> () From: ( | {
@@ -3245,17 +3090,6 @@ convertSysCallresultToInt:.\x7fModuleInfo: Module: unix InitialContents: FollowS
                                               With: arg3 And: off3
                                             IfFail: errBlk
             ] IfFail: errBlk).
-        } | ) 
-
- bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> () From: ( | {
-         'Category: debugging\x7fModuleInfo: Module: unix InitialContents: FollowSlot'
-        
-         testPtrace = ( |
-            | 
-            ptraceRequest: pt_attach
-                      PID: 1234
-                  Address: 1234
-                     Data: int32).
         } | ) 
 
  bootstrap addSlotsTo: bootstrap stub -> 'globals' -> 'unixGlobals' -> 'os' -> () From: ( | {
