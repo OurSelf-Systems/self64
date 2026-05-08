@@ -28,11 +28,7 @@ extern "C" {
   int fcntl(int fildes, int cmd, /* arg */ ...);
 }
 
-# elif TARGET_OS_VERSION == MACOSX_VERSION  \
-    || TARGET_OS_VERSION == LINUX_VERSION   \
-    || TARGET_OS_VERSION == FREEBSD_VERSION \
-    || TARGET_OS_VERSION == NETBSD_VERSION
-  # include <sys/ptrace.h>
+# elif TARGET_OS_VERSION == MACOSX_VERSION
 
   // removed for Tiger: (5/05 dmu)
   // typedef int socklen_t;
@@ -591,14 +587,6 @@ int gethostid_wrap() { return (int)gethostid(); }
 
 int ioctl_wrap(int fd, int request, void* arg) {
   return ioctl(fd, (unsigned long)request, arg);
-}
-
-int ptrace_wrap(int request, int pid, void* addr, int data) {
-#ifdef __linux__
-  return (int)ptrace((__ptrace_request)request, (pid_t)pid, (caddr_t)addr, data);
-#else
-  return (int)ptrace(request, (pid_t)pid, (caddr_t)addr, data);
-#endif
 }
 
 void unixPrims_init() { ioC = new IOCleanup; }
