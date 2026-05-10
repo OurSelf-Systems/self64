@@ -665,12 +665,14 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
     //  can call continueNLRAfterReturnTrap which (I think) cuts back the stack
     // -- dmu 2/96
 
+    preserved pres_res(res); // preserved -- dmu 5/26
     SaveNonVolRegsAndCall5( HandleReturnTrap,
                             NLRSupport::have_NLR_through_C() ? NLRSupport::NLR_result_from_C() : stack[sp-1],
                             (char*)currentFrame(),
                             NLRSupport::have_NLR_through_C(),
                             (frame*)NLRSupport::NLR_home_from_C(),
                             NLRSupport::NLR_home_ID_from_C());
+    res = pres_res.value;
     if (!restartSend)
       break;
 #if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
@@ -786,6 +788,7 @@ bool interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
                          holder,
                          &stack[sp - arg_count],
                          arg_count );
+      // push res before return trap in case of GC -- dmu 5/26
       stack[resSP] = res;
       sp = resSP + 1;
       handleReturnTrapAfterSendIfNeeded();
@@ -796,6 +799,9 @@ bool interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
 }
 
 void interpreter::handleReturnTrapAfterSendIfNeeded() {
+  // save non vol regs because HandleReturnTrap can call convert which
+  //  can call continueNLRAfterReturnTrap which (I think) cuts back the stack
+  // -- dmu 2/96
   if (is_return_patched() && get_return_patch_reason() != patched_for_profiling) {
     SaveNonVolRegsAndCall5( HandleReturnTrap,
                            NLRSupport::have_NLR_through_C() ? NLRSupport::NLR_result_from_C() : stack[sp-1],
