@@ -1024,35 +1024,15 @@ void interpreter::transfer_back_to_twains_process_if_stepping_or_stopping_pre() 
   const auto length_codes = mi.length_codes;
   const auto relevant_pc = pc;
   const auto relevant_code = mi.codes[relevant_pc];
-  const auto p = false;
   assert(!is_skipped_even_for_preemption_checks(relevant_code), "should not be here");
   if (currentProcess
       && (currentProcess->isSingleStepping() || currentProcess->isStopping())
       && twainsProcess
       && !processSemaphore) {
-    if (p) {
-      lprintf("__FUNCTION__" ": step %s, stopping %s, pc %d, len %d, bc.op %d\n",
-              currentProcess->isSingleStepping() ? "y" : "n",
-              currentProcess->isStopping() ? "y" : "n",
-              relevant_pc,
-              length_codes, bc.op);
-      lprintf("transfer_back_to_twains_process_if_stepping_or_stopping_pre: source: ");
-      //mi.map()->print_source();
-      lprintf("\n");
-    }
     if (preemptCause == cNoCause)
       preemptCause = currentProcess->isSingleStepping()
       ? cSingleStepped : cFinishedActivation;
-    if (p) {
-      if (relevant_pc >= length_codes) {
-        lprintf("transfer_back_to_twains_process_if_stepping_or_stopping_pre: %s", "about to transfer when off the end");
-      }
-      else {
-        lprintf("transfer_back_to_twains_process_if_stepping_or_stopping_pre: %s", "about to transfer when NOT off the end");
-      }
-    }
     // caller will increment pc, scheduler expects an incremented pc
-    lprintf("transferring from pre pc: %d", pc);
     twainsProcess->transfer();
   }
 }

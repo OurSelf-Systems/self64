@@ -596,8 +596,6 @@ void HandleReturnTrap(oop result, char* sp_of_patched_frame,
                       bool nlr, frame* nlrHome, int32 nlrHomeID) {
   // called by assembly glue when returning into a marked frame
   // first, make it look as if assembly glue was called from Self
-  
-  lprintf("enter HRT\n");
 
   assert(nlr == true || nlr == false, "assembly glue passed bogus values 2");
 
@@ -608,47 +606,37 @@ void HandleReturnTrap(oop result, char* sp_of_patched_frame,
   // Remember, patched_self_frame is frame that would have been RETURNED INTO
   // had not the patching happened. -- dmu 1/03
   frame* patched_self_frame = currentFrame()->get_patched_self_frame(sp_of_patched_frame);
-  
-  lprintf("in HRT 588\n");
-
 
   char* selfPC;
   frame* convertFrame;
   unpatch_the_convertFrame_and_get_returnTrap_info(sp_of_patched_frame, patched_self_frame,
                                                    convertFrame, selfPC);
-  lprintf("in HRT 595\n");
   if (traceV)
     lprintf("*** HandleReturnTrap: sp_of_patched_frame = 0x%x, nlr = %d, nlrHome = 0x%x, nlrHomeID = %d patched_self_frame = 0x%x\n",
             sp_of_patched_frame, nlr, nlrHome, nlrHomeID, patched_self_frame);
 
   LOG_EVENT3("HandleReturnTrap res=%#lx sp_of_patched_frame=%#lx pc=%#lx", result, sp_of_patched_frame, selfPC);
-  lprintf("in HRT 598\n");
 
   currentProcess->killVFrameOopsAndSetWatermark(convertFrame);  // kill extra vframes
-  lprintf("in HRT 604\n");
 
   // figure out why the frame was marked & exit appropriately
 
   if ( return_trap_was_just_for_vframeOops(selfPC, convertFrame)) {
-    lprintf("in HRT 609\n");
     trivial_exit_from_return_trap(result, sp_of_patched_frame,
                                   nlr, nlrHome, nlrHomeID,
                                   selfPC, patched_self_frame);
-    if (selfPC == 0) {lprintf("return HRT 613\n"); return;} // interpreter-only: normal return through C stack
+    if (selfPC == 0) return; // interpreter-only: normal return through C stack
     ShouldNotReachHere();
   }
-  lprintf("in HRT 616\n");
 
   // programming conversion / single-stepping trap / stop trap / unc. trap
   if (  conversion_needed_for_return_trap(nlr, nlrHome, nlrHomeID, convertFrame)) {
     ConvertFrame(result, sp_of_patched_frame, nlr, nlrHome, nlrHomeID,  selfPC == 0);
-    if (selfPC == 0) {lprintf("return 624 HRT\n");  return; } // interpreter-only: normal return through C stack
+    if (selfPC == 0) return; // interpreter-only: normal return through C stack
     ShouldNotReachHere();
   }
-  lprintf("in HRT 625\n");
   // just return through this frame, don't need to convert
   NLR_exit_from_return_trap(result, sp_of_patched_frame, nlrHome, nlrHomeID, convertFrame, selfPC);
-  lprintf("end HRT\n");
 }
 
 
@@ -659,7 +647,6 @@ void  unpatch_the_convertFrame_and_get_returnTrap_info(
         frame*  patched_self_frame, 
         frame*& convertFrame, 
         char* & selfPC) {
-  lprintf("enter unpatch_the_convertFrame_and_get_returnTrap_info\n");
   selfPC = patched_self_frame->currentPC();
   
   if ( Memory->code->contains(selfPC) ) {
@@ -703,7 +690,6 @@ void  unpatch_the_convertFrame_and_get_returnTrap_info(
     OutgoingArgsOfReturnTrapOrRecompileFrame = convertFrame->patched_frame_saved_outgoing_args();
     convertFrame->remove_patch();
   }
-  lprintf("exit unpatch_the_convertFrame_and_get_returnTrap_info\n");
 }
 
 
@@ -722,7 +708,6 @@ void trivial_exit_from_return_trap(oop result, char* sp_of_patched_frame, bool n
                                    frame* nlrHome, int32 nlrHomeID, char* selfPC,
                                    frame* patched_self_frame) {
   // trap was for vframeOops; continue
-  lprintf("enter trivial_exit_from_return_trap\n");
   conversion = NULL;
   // returnToSelf will clear processSemaphore
   conversion->returnToSelf(result, sp_of_patched_frame, nlr, nlrHome, nlrHomeID,

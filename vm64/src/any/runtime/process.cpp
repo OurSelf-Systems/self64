@@ -40,7 +40,7 @@ void process_init() {
 }
 
 bool traceP = false;
-bool traceV = true;
+bool traceV = false;
 
 # if GENERATE_DEBUGGING_AIDS
   void printP(const char* s, void* p) {

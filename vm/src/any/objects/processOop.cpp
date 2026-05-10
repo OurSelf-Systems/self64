@@ -241,15 +241,6 @@ oop processOopClass::TWAINS_prim(objVectorOop resultArg,
   if (stop_vfo == vframeOop(badOop)) return NULL;
   if (!TWAINS_parallel_check(FH)) return NULL;
 
-  if (stop_vfo) {
-    lprintf("TWAINS: stop_vfo source: ");
-    ((methodMap*) stop_vfo->method()->map())->print_source();
-    lprintf("\n");
-  }
-  if (stepping) {
-    lprintf("TWAINS: stepping\n");
-  }
-
   preemptCause = cNoCause;
   twainsProcess = currentProcess;
   if (PendingSelfSignals::are_any_pending() && !SignalInterface::are_self_signals_blocked()) {
