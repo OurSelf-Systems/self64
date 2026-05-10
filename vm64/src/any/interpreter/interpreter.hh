@@ -103,6 +103,7 @@ class interpreter: public abstract_interpreter {
   static interpreter* _active_interp_list;
 
   static interpreter* find_interpreter_for_frame(frame* f);
+  static interpreter* find_interpreter_for_frame_diag(frame* f);
 
   InterpreterPIC* _pics;       // points into InterpreterPICTable (heap) or NULL
   int32           _num_pics;
@@ -232,7 +233,13 @@ class interpreter: public abstract_interpreter {
                        oop delegatee);
                       
   oop send_prim( );
-  
+
+  bool try_pic(LookupType, oop delOrNameToSend, int32 resSP);
+  // If pic entry i matches rMap, produce its result, update the stack, and
+  // return true; otherwise return false.  -- claude & dmu May 2026
+  bool try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
+                      oop delToSend, fint arg_count, int32 resSP );
+
  public:
   oop try_perform_prim( bool hasFailBlock,
                         bool& is_perform );

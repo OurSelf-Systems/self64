@@ -39,6 +39,35 @@ interpreter* interpreter::find_interpreter_for_frame(frame* f) {
 # endif
 }
 
+interpreter* interpreter::find_interpreter_for_frame_diag(frame* f) {
+# if TARGET_IS_64BIT
+  // On x86_64, interpreter lists are per-process. First check the
+  // current process, then find which process owns the frame.
+  extern interpreter* diag_mostRecentInterpreter;
+  extern frame* diag_mostRecentInterpreterFrame;
+  lprintf("looking for frame %p, most recent interp %p, most recent interp frame %p\n", f, diag_mostRecentInterpreter, diag_mostRecentInterpreterFrame);
+  lprintf("looking in process %p, contains frame: %d\n", currentProcess, currentProcess->contains(f));
+  for (interpreter* i = currentProcess->active_interp_list; i != NULL; i = i->_prev_interp) {
+    lprintf("interp %p, frame %p\n", i, i->_my_frame);
+    if (i->_my_frame == f)
+      return i;
+  }
+  // Frame not found in current process — find its owning process
+  Stack* stk = processes->stackFor(f);
+  if (stk && stk->process != currentProcess) {
+    lprintf("looking in process %p, contains frame: %d\n", stk->process, stk->process->contains(f));
+    for (interpreter* i = stk->process->active_interp_list; i != NULL; i = i->_prev_interp) {
+      lprintf("interp %p, frame %p\n", i, i->_my_frame);
+      if (i->_my_frame == f)
+        return i;
+    }
+  }
+  abort();
+# else
+  assert(false, "ff");
+# endif
+}
+
 # if TARGET_IS_64BIT
 interpreter* interpreter::active_interp() {
   return currentProcess->active_interp_list;
@@ -91,6 +120,8 @@ void InterpreterLookup_cont( simpleLookup *L, int32 arg_count) {
   L->perform_full_lookup_n(arg_count);
 }
 
+interpreter* diag_mostRecentInterpreter = NULL;     // -- claude & dmu May 2026
+frame* diag_mostRecentInterpreterFrame = NULL;
 
 inline interpreter::interpreter( oop rcv,
                                  oop sel,
@@ -155,8 +186,10 @@ inline interpreter::interpreter( oop rcv,
   _pics = NULL;
   _num_pics = 0;
   _pc_to_pic = NULL;
+  
+  diag_mostRecentInterpreter = this;
+  diag_mostRecentInterpreterFrame = currentFrame();
 }
-
 
 void interpreter::attach_pics() {
 # if TARGET_IS_64BIT
@@ -594,12 +627,6 @@ void interpreter::continue_NLR() {
 
 
 void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
-
-  // delOrNameToSend is a C-stack oop parameter. It is read multiple times
-  // (PIC ::interpret call, lookup_and_send, and again on each iteration of
-  // the for(;;) loop after a HandleReturnTrap restart). All of those paths
-  // can scavenge. Preserve it so the GC patches our copy in place.
-  preserved pres_del(delOrNameToSend);
   // Note: do NOT hoist methodHolder() here. _methodHolder is only required
   // to be valid on the lookup_and_send path; PIC-hit and send_prim paths
   // may run with it uninitialized. Re-read it lazily at the call site.
@@ -619,65 +646,14 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
 
   int32 resSP = sp - arg_count - (type == NormalLookupType);
 
-  // --- PIC check (normal non-primitive sends only) ---
-  if ( baseLookupType(type) == NormalBaseLookupType
-       && _pics
-       && !stringOop(selToSend)->is_prim_name() ) {
-    int pic_idx = _pc_to_pic[pc];
-    if (pic_idx >= 0) {
-      InterpreterPIC& pic = _pics[pic_idx];
-      mapOop rMap = rcvToSend->map()->enclosing_mapOop();
-      for (int i = 0; i < pic.count; i++) {
-        if (pic.entries[i].cachedMap == rMap) {
-          oop res;
-          switch (pic.resultType[i]) {
-            case constantResult:
-              // Constant (map slot without code): value cached in cachedMethod
-              res = pic.entries[i].cachedMethod;
-              break;
-            case dataResult: {
-              // Data slot read: read from holder at cached offset
-              oop holder = pic.entries[i].cachedHolder;
-              if (holder == NULL) holder = rcvToSend;
-              res = *oopsOop(holder)->oops(pic.slotOffset[i]);
-              break;
-            }
-            case assignmentResult: {
-              // Assignment: write arg to holder at cached offset, return receiver
-              oop holder = pic.entries[i].cachedHolder;
-              if (holder == NULL) holder = rcvToSend;
-              Memory->store(oopsOop(holder)->oops(pic.slotOffset[i]),
-                            stack[sp - arg_count]);
-              res = rcvToSend;
-              break;
-            }
-            default: { // methodResult
-              oop holder = pic.entries[i].cachedHolder;
-              if (holder == NULL) holder = rcvToSend;
-              res = ::interpret( rcvToSend,
-                                 selToSend,
-                                 pres_del.value,
-                                 pic.entries[i].cachedMethod,
-                                 holder,
-                                 &stack[sp - arg_count],
-                                 arg_count );
-              break;
-            }
-          }
-          stack[resSP] = res;
-          sp = resSP + 1;
-          return;
-        }
-      }
-    }
-  }
+  if (try_pic(type, delOrNameToSend, resSP)) return;
 
   oop res;
   for (;;) {
     res =
         stringOop(selToSend)->is_prim_name()
         ? send_prim()
-        : lookup_and_send( type, methodHolder(), pres_del.value);
+        : lookup_and_send( type, methodHolder(), delOrNameToSend);
 
     if (!is_return_patched())
       break;
@@ -696,11 +672,84 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
                             NLRSupport::NLR_home_ID_from_C());
     if (!restartSend)
       break;
+#if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+    fatal("sends only restart for uncommon traps or recompilation");
+#endif
   }
   stack[resSP] = res;
   sp = resSP + 1; // sp points one past top
 }
 
+bool interpreter::try_pic(LookupType type, oop delOrNameToSend, int32 resSP) {
+  // --- PIC check (normal non-primitive sends only) ---
+  if ( baseLookupType(type) == NormalBaseLookupType
+       && _pics
+       && !stringOop(selToSend)->is_prim_name()
+      ) {
+    int pic_idx = _pc_to_pic[pc];
+    if (pic_idx >= 0) {
+      InterpreterPIC& pic = _pics[pic_idx];
+      mapOop rMap = rcvToSend->map()->enclosing_mapOop();
+      for (int i = 0; i < pic.count; i++) {
+        if (try_pic_entry(pic, i, rMap, delOrNameToSend, arg_count, resSP))
+          return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
+                                 oop delToSend, fint arg_count, int32 resSP ) {
+  if (pic.entries[i].cachedMap != rMap)
+    return false;
+  oop res;
+  switch (pic.resultType[i]) {
+    case constantResult: return false;
+    case dataResult: return false;;
+    case assignmentResult: return false;;
+    case methodResult: break; // THIS IS IT
+  }
+  switch (pic.resultType[i]) {
+    default: fatal1("unknown resultType %d", pic.resultType[i]);
+   case constantResult:
+      // Constant (map slot without code): value cached in cachedMethod
+      res = pic.entries[i].cachedMethod;
+      break;
+    case dataResult: {
+      // Data slot read: read from holder at cached offset
+      oop holder = pic.entries[i].cachedHolder;
+      if (holder == NULL) holder = rcvToSend;
+      res = *oopsOop(holder)->oops(pic.slotOffset[i]);
+      break;
+    }
+    case assignmentResult: {
+      // Assignment: write arg to holder at cached offset, return receiver
+      oop holder = pic.entries[i].cachedHolder;
+      if (holder == NULL) holder = rcvToSend;
+      Memory->store(oopsOop(holder)->oops(pic.slotOffset[i]),
+                    stack[sp - arg_count]);
+      res = rcvToSend;
+      break;
+    }
+    case methodResult: {
+      //lprintf("cached method: ");  ((methodMap*)pic.entries[i].cachedMethod->map())->print_source(); lprintf("\n");
+      oop holder = pic.entries[i].cachedHolder;
+      if (holder == NULL) holder = rcvToSend;
+      res = ::interpret( rcvToSend,
+                         selToSend,
+                         delToSend,
+                         pic.entries[i].cachedMethod,
+                         holder,
+                         &stack[sp - arg_count],
+                         arg_count );
+      break;
+    }
+  }
+  stack[resSP] = res;
+  sp = resSP + 1;
+  return true;
+}
 
 
 oop interpreter::send_prim() {

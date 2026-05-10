@@ -217,6 +217,9 @@ private:
 
   interpreter* get_interpreter();
   interpreter* get_interpreter_of_block_scope();
+  interpreter* get_interpreter_of_block_scope_diag();
+  
+  interpreter* get_interpreter_diag();
 
   bool is_self_frame            (SelfFrameQuery q = HoldsSelfExecutionState);
     

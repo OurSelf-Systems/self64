@@ -19,6 +19,12 @@
 
 frame* vframeOopClass::fr() {
   frame* r = locals()->home_frame_of_vfo_locals();
+  if (!r->is_self_frame()) {
+    assert(r, "r");
+    
+    auto i = r->get_interpreter_diag();
+    assert(i, "I!");
+  }
   assert( r->is_self_frame(), "must be self frame");
   return r;
 }
