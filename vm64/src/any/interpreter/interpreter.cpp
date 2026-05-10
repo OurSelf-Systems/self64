@@ -643,12 +643,8 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
   // Sync member from local (local parameter shadows the member;
   // lookup_and_send and send_prim access the member directly)
   this->arg_count = arg_count;
-
-
   int32 resSP = sp - arg_count - (type == NormalLookupType);
-
-  if (try_pic(type, delOrNameToSend, resSP)) return;
-
+ 
   oop res;
   for (;;) {
     res =
@@ -726,7 +722,7 @@ void dump_step_send_history() {
   lprintf("--- end PIC-hit send history ---\n\n");
 }
 
-bool interpreter::try_pic(LookupType type, oop delOrNameToSend, int32 resSP) {
+oop interpreter::try_pic(LookupType type, oop delOrNameToSend, int32 resSP) {
   // --- PIC check (normal non-primitive sends only) ---
   if ( baseLookupType(type) == NormalBaseLookupType
        && _pics
@@ -737,35 +733,30 @@ bool interpreter::try_pic(LookupType type, oop delOrNameToSend, int32 resSP) {
       InterpreterPIC& pic = _pics[pic_idx];
       mapOop rMap = rcvToSend->map()->enclosing_mapOop();
       for (int i = 0; i < pic.count; i++) {
-        if (try_pic_entry(pic, i, rMap, delOrNameToSend, arg_count, resSP))
-          return true;
+        oop r = try_pic_entry(pic, i, rMap, delOrNameToSend, arg_count, resSP);
+        if (r)
+          return r;
       }
     }
   }
-  return false;
+  return NULL;
 }
 
-bool interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
+oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
                                  oop delToSend, fint arg_count, int32 resSP ) {
   if (pic.entries[i].cachedMap != rMap)
-    return false;
+    return NULL;
   switch (pic.resultType[i]) {
     default: fatal1("unknown resultType %d", pic.resultType[i]);
-    case constantResult: {
+    case constantResult:
       // Constant (map slot without code): value cached in cachedMethod
-      oop res = pic.entries[i].cachedMethod;
-      stack[resSP] = res;
-      sp = resSP + 1;
-      return true;
-    }
+      return pic.entries[i].cachedMethod;
+
     case dataResult: {
       // Data slot read: read from holder at cached offset
       oop holder = pic.entries[i].cachedHolder;
       if (holder == NULL) holder = rcvToSend;
-      oop res = *oopsOop(holder)->oops(pic.slotOffset[i]);
-      stack[resSP] = res;
-      sp = resSP + 1;
-      return true;
+      return *oopsOop(holder)->oops(pic.slotOffset[i]);
     }
     case assignmentResult: {
       // Assignment: write arg to holder at cached offset, return receiver
@@ -773,45 +764,22 @@ bool interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
       if (holder == NULL) holder = rcvToSend;
       Memory->store(oopsOop(holder)->oops(pic.slotOffset[i]),
                     stack[sp - arg_count]);
-      oop res = rcvToSend;
-      stack[resSP] = res;
-      sp = resSP + 1;
-      return true;
+      return rcvToSend;
     }
     case methodResult: {
       oop holder = pic.entries[i].cachedHolder;
       if (holder == NULL) holder = rcvToSend;
-      oop res = ::interpret( rcvToSend,
+      return ::interpret( rcvToSend,
                          selToSend,
                          delToSend,
                          pic.entries[i].cachedMethod,
                          holder,
                          &stack[sp - arg_count],
                          arg_count );
-      // push res before return trap in case of GC -- dmu 5/26
-      stack[resSP] = res;
-      sp = resSP + 1;
-      handleReturnTrapAfterSendIfNeeded();
-      return true;
     }
   }
   fatal("should not get here");
 }
-
-void interpreter::handleReturnTrapAfterSendIfNeeded() {
-  // save non vol regs because HandleReturnTrap can call convert which
-  //  can call continueNLRAfterReturnTrap which (I think) cuts back the stack
-  // -- dmu 2/96
-  if (is_return_patched() && get_return_patch_reason() != patched_for_profiling) {
-    SaveNonVolRegsAndCall5( HandleReturnTrap,
-                           NLRSupport::have_NLR_through_C() ? NLRSupport::NLR_result_from_C() : stack[sp-1],
-                           (char*)currentFrame(),
-                           NLRSupport::have_NLR_through_C(),
-                           (frame*)NLRSupport::NLR_home_from_C(),
-                           NLRSupport::NLR_home_ID_from_C());
-  }
-}
-
 
 oop interpreter::send_prim() {
   
