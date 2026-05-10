@@ -11,7 +11,7 @@
 // Includes: g_interp_diag_buf, diag_interp_event, diag_dump_interp_now,
 //           InterpDiagAtexitInstaller, lprint_fatal dump, CB_BAD/CB_WRITE,
 //           POISON-result detector, vframe.cpp PROBE events.
-#define DIAG_INTERP_RING       1
+#define DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS       1
 
 // Per-activation pc ring + pre_send_*/saved_selector_* capture +
 // print_activation_diag + capture_pre_send_diag + the
@@ -32,7 +32,7 @@
 
 // Note: the `preserved` wraps around interpret()'s parameters are a real
 // GC-root fix and stay unconditional even when this is 0.
-// Producer of DIAG_INTERPRETER_ZAP_VALUE. Consumers (DIAG_INTERP_RING ZAP-result
+// Producer of DIAG_INTERPRETER_ZAP_VALUE. Consumers (DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS ZAP-result
 // detector, DIAG_SHELL_TRACE map=ZAP-ALREADY check) only fire when
 // this is 1; with this 0 the detectors compile but never trigger.
 #define DIAG_ZAP_FREED_INTERPRETERS  1

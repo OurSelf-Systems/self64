@@ -12,7 +12,7 @@ void print_active_diag_toggles_at_startup() {
       fprintf(stderr, " " #name);                                        \
     }                                                                    \
   } while (0)
-  SHOW(DIAG_INTERP_RING);
+  SHOW(DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS);
   SHOW(DIAG_SCAVENGED_INTERPRETER_STACK_RANGES);
   SHOW(DIAG_ACTIVATION_DUMP);
   SHOW(DIAG_ARGS_WATCH);
