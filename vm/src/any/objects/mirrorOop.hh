@@ -76,7 +76,7 @@ class mirrorOopClass: public slotsOopClass {
   oop methodHolder_prim()        { return reflectee()->mirror_methodHolder();}
   oop selector_prim()            { return reflectee()->mirror_selector();     }
   oop bci_prim()                 {
-    lprintf("in bci_prim current %p, vm %p, twains %p, frame %p\n", currentProcess, vmProcess, twainsProcess, currentFrame());
+//    lprintf("in bci_prim current %p, vm %p, twains %p, frame %p\n", currentProcess, vmProcess, twainsProcess, currentFrame());
     return reflectee()->mirror_bci();          }
 };
 

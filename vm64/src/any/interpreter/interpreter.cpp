@@ -48,7 +48,7 @@ interpreter* interpreter::find_interpreter_for_frame_diag(frame* f) {
   lprintf("looking for frame %p, most recent interp %p, most recent interp frame %p\n", f, diag_mostRecentInterpreter, diag_mostRecentInterpreterFrame);
   lprintf("looking in process %p, contains frame: %d\n", currentProcess, currentProcess->contains(f));
   for (interpreter* i = currentProcess->active_interp_list; i != NULL; i = i->_prev_interp) {
-    lprintf("interp %p, frame %p\n", i, i->_my_frame);
+//    lprintf("interp %p, frame %p\n", i, i->_my_frame);
     if (i->_my_frame == f)
       return i;
   }
@@ -57,11 +57,12 @@ interpreter* interpreter::find_interpreter_for_frame_diag(frame* f) {
   if (stk && stk->process != currentProcess) {
     lprintf("looking in process %p, contains frame: %d\n", stk->process, stk->process->contains(f));
     for (interpreter* i = stk->process->active_interp_list; i != NULL; i = i->_prev_interp) {
-      lprintf("interp %p, frame %p\n", i, i->_my_frame);
+//      lprintf("interp %p, frame %p\n", i, i->_my_frame);
       if (i->_my_frame == f)
         return i;
     }
   }
+  dump_step_send_history();
   abort();
 # else
   assert(false, "ff");
@@ -680,6 +681,49 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
   sp = resSP + 1; // sp points one past top
 }
 
+// --- diag: circular log of selectors dispatched at the PIC-hit method site,
+//     populated only while a process is single-stepping; dumped on abort.
+//     -- claude & dmu May 2026
+struct StepSendRecord {
+  char  sel[40];   // selector chars, NUL-terminated, copied at capture time (GC-safe)
+  void* selOop;    // raw selToSend (may be stale by dump time -- for cross-checking)
+  void* rcvMap;    // rcvToSend->map()->enclosing_mapOop() (raw)
+  void* method;    // pic.entries[i].cachedMethod (raw)
+  int32 pc;        // interpreter pc at the send
+};
+static const int kStepSendRingSize = 1024;
+static StepSendRecord step_send_ring[kStepSendRingSize];
+static uint32        step_send_ring_next = 0;   // monotonic; index = n % size
+
+void interpreter::record_step_send(oop sel, oop rcv, oop method, int32 atPC) {
+  StepSendRecord& r = step_send_ring[step_send_ring_next % kStepSendRingSize];
+  fint maxN = (fint)sizeof(r.sel) - 1;
+  fint slen = (fint)stringOop(sel)->length();
+  fint n = slen < maxN ? slen : maxN;
+  memcpy(r.sel, stringOop(sel)->bytes(), n);
+  r.sel[n] = '\0';
+  r.selOop = (void*)sel;
+  r.rcvMap = (void*)rcv->map()->enclosing_mapOop();
+  r.method = (void*)method;
+  r.pc     = atPC;
+  step_send_ring_next++;
+}
+
+void dump_step_send_history() {
+  if (step_send_ring_next == 0) return;   // never recorded anything
+  uint32 count = step_send_ring_next < (uint32)kStepSendRingSize
+                 ? step_send_ring_next : (uint32)kStepSendRingSize;
+  uint32 start = step_send_ring_next - count;
+  lprintf("\n--- last %lu PIC-hit sends while single-stepping (oldest first) ---\n",
+          (unsigned long)count);
+  for (uint32 i = start; i < step_send_ring_next; i++) {
+    StepSendRecord& r = step_send_ring[i % kStepSendRingSize];
+    lprintf("  [%lu] pc=%ld sel='%s' selOop=%p rcvMap=%p method=%p\n",
+            (unsigned long)i, (long)r.pc, r.sel, r.selOop, r.rcvMap, r.method);
+  }
+  lprintf("--- end PIC-hit send history ---\n\n");
+}
+
 bool interpreter::try_pic(LookupType type, oop delOrNameToSend, int32 resSP) {
   // --- PIC check (normal non-primitive sends only) ---
   if ( baseLookupType(type) == NormalBaseLookupType
@@ -703,25 +747,23 @@ bool interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
                                  oop delToSend, fint arg_count, int32 resSP ) {
   if (pic.entries[i].cachedMap != rMap)
     return false;
-  oop res;
-  switch (pic.resultType[i]) {
-    case constantResult: return false;
-    case dataResult: return false;;
-    case assignmentResult: return false;;
-    case methodResult: break; // THIS IS IT
-  }
   switch (pic.resultType[i]) {
     default: fatal1("unknown resultType %d", pic.resultType[i]);
-   case constantResult:
+    case constantResult: {
       // Constant (map slot without code): value cached in cachedMethod
-      res = pic.entries[i].cachedMethod;
-      break;
+      oop res = pic.entries[i].cachedMethod;
+      stack[resSP] = res;
+      sp = resSP + 1;
+      return true;
+    }
     case dataResult: {
       // Data slot read: read from holder at cached offset
       oop holder = pic.entries[i].cachedHolder;
       if (holder == NULL) holder = rcvToSend;
-      res = *oopsOop(holder)->oops(pic.slotOffset[i]);
-      break;
+      oop res = *oopsOop(holder)->oops(pic.slotOffset[i]);
+      stack[resSP] = res;
+      sp = resSP + 1;
+      return true;
     }
     case assignmentResult: {
       // Assignment: write arg to holder at cached offset, return receiver
@@ -729,26 +771,39 @@ bool interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
       if (holder == NULL) holder = rcvToSend;
       Memory->store(oopsOop(holder)->oops(pic.slotOffset[i]),
                     stack[sp - arg_count]);
-      res = rcvToSend;
-      break;
+      oop res = rcvToSend;
+      stack[resSP] = res;
+      sp = resSP + 1;
+      return true;
     }
     case methodResult: {
-      //lprintf("cached method: ");  ((methodMap*)pic.entries[i].cachedMethod->map())->print_source(); lprintf("\n");
       oop holder = pic.entries[i].cachedHolder;
       if (holder == NULL) holder = rcvToSend;
-      res = ::interpret( rcvToSend,
+      oop res = ::interpret( rcvToSend,
                          selToSend,
                          delToSend,
                          pic.entries[i].cachedMethod,
                          holder,
                          &stack[sp - arg_count],
                          arg_count );
-      break;
+      stack[resSP] = res;
+      sp = resSP + 1;
+      handleReturnTrapAfterSendIfNeeded();
+      return true;
     }
   }
-  stack[resSP] = res;
-  sp = resSP + 1;
-  return true;
+  fatal("should not get here");
+}
+
+void interpreter::handleReturnTrapAfterSendIfNeeded() {
+  if (is_return_patched() && get_return_patch_reason() != patched_for_profiling) {
+    SaveNonVolRegsAndCall5( HandleReturnTrap,
+                           NLRSupport::have_NLR_through_C() ? NLRSupport::NLR_result_from_C() : stack[sp-1],
+                           (char*)currentFrame(),
+                           NLRSupport::have_NLR_through_C(),
+                           (frame*)NLRSupport::NLR_home_from_C(),
+                           NLRSupport::NLR_home_ID_from_C());
+  }
 }
 
 

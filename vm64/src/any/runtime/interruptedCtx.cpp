@@ -22,6 +22,8 @@ void InterruptedContext::fatal_menu() {
           Memory ? (void*)Memory->minor_version     : 0,
           Memory ? (void*)Memory->snapshot_version  : 0,
           vmDate);
+  { extern void dump_step_send_history();   // diag: single-stepping PIC-hit send log -- claude & dmu May 2026
+    dump_step_send_history(); }
   // block all interrupts (e.g. timers)
   continuePC = NULL;
   SignalBlocker* sb = new SignalBlocker(SignalBlocker::block_signals_self_uses);

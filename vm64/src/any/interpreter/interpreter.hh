@@ -234,11 +234,17 @@ class interpreter: public abstract_interpreter {
                       
   oop send_prim( );
 
+private:
+  void handleReturnTrapAfterSendIfNeeded();
   bool try_pic(LookupType, oop delOrNameToSend, int32 resSP);
   // If pic entry i matches rMap, produce its result, update the stack, and
   // return true; otherwise return false.  -- claude & dmu May 2026
   bool try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
                       oop delToSend, fint arg_count, int32 resSP );
+
+  // diag: log selectors dispatched at the PIC-hit method site, but only for a
+  // single-stepping process; dumped on abort.  -- claude & dmu May 2026
+  void record_step_send(oop sel, oop rcv, oop method, int32 atPC);
 
  public:
   oop try_perform_prim( bool hasFailBlock,
@@ -281,6 +287,10 @@ public:
  };
 
 extern void InterpreterLookup_cont( simpleLookup *L, int32 arg_count);
+
+// diag: dump the single-stepping PIC-hit send history (see record_step_send).
+// Called from InterruptedContext::fatal_menu on abort.  -- claude & dmu May 2026
+extern void dump_step_send_history();
 
 
 
