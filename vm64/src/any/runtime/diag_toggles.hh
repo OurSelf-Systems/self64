@@ -19,9 +19,9 @@
 #define DIAG_ACTIVATION_DUMP   1
 
 // args[] good->bad watcher inside interpret_method.
-// Depends on DIAG_SCAV_RANGES (uses g_scav_round, g_scav_range_count,
+// Depends on DIAG_SCAVENGED_INTERPRETER_STACK_RANGES (uses g_scav_round, g_scav_range_count,
 // diag_scav_ranges_contains, diag_scav_frames_contains): if you set this to 1,
-// keep DIAG_SCAV_RANGES=1 too.
+// keep DIAG_SCAVENGED_INTERPRETER_STACK_RANGES=1 too.
 #define DIAG_ARGS_WATCH        1
 
 
