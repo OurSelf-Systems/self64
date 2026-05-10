@@ -103,8 +103,7 @@ class interpreter: public abstract_interpreter {
   static interpreter* _active_interp_list;
 
   static interpreter* find_interpreter_for_frame(frame* f);
-  static interpreter* find_interpreter_for_frame_diag(frame* f);
-
+ 
   InterpreterPIC* _pics;       // points into InterpreterPICTable (heap) or NULL
   int32           _num_pics;
   int16_t*        _pc_to_pic;  // points into InterpreterPICTable (heap) or NULL
@@ -241,10 +240,6 @@ private:
   oop try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
                       oop delToSend, fint arg_count, int32 resSP );
 
-  // diag: log selectors dispatched at the PIC-hit method site, but only for a
-  // single-stepping process; dumped on abort.  -- claude & dmu May 2026
-  void record_step_send(oop sel, oop rcv, oop method, int32 atPC);
-
  public:
   oop try_perform_prim( bool hasFailBlock,
                         bool& is_perform );
@@ -286,11 +281,6 @@ public:
  };
 
 extern void InterpreterLookup_cont( simpleLookup *L, int32 arg_count);
-
-// diag: dump the single-stepping PIC-hit send history (see record_step_send).
-// Called from InterruptedContext::fatal_menu on abort.  -- claude & dmu May 2026
-extern void dump_step_send_history();
-
 
 
 // for scavenging, see frame.c

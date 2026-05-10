@@ -154,18 +154,6 @@ interpreter* frame::get_interpreter_of_block_scope() {
 # endif
 }
 
-interpreter* frame::get_interpreter_of_block_scope_diag() {
-# if TARGET_IS_64BIT
-  // On x86_64 interpreter-only builds, c_entry_point() and location_addr()
-  // don't work (call instruction decoding is wrong, and arguments are in
-  // registers not on the stack). Use the interpreter registry instead.
-  return interpreter::find_interpreter_for_frame_diag(this);
-# else
-  assert(false, "f");
-# endif
-}
-
-
 interpreter* frame::get_interpreter() {
   //  on sparc uses sender, on ppc, same frame
   frame* f= block_scope_of_home_frame();
@@ -174,17 +162,6 @@ interpreter* frame::get_interpreter() {
   auto i = f->get_interpreter_of_block_scope();
   return i && i->magic_number == interpreter::expected_magic_number ? i : NULL;
 }
-
-interpreter* frame::get_interpreter_diag() {
-  //  on sparc uses sender, on ppc, same frame
-  frame* f= block_scope_of_home_frame();
-  assert(f, "f!");
-  auto i = f->get_interpreter_of_block_scope_diag();
-  assert(i, "i4");
-  lprintf("real %p, expected %p\n", i->magic_number, interpreter::expected_magic_number );
-  return i && i->magic_number == interpreter::expected_magic_number ? i : NULL;
-}
-
 
 
 bool frame::is_interpreted_self_frame(SelfFrameQuery q) {
@@ -736,7 +713,8 @@ void trivial_exit_from_return_trap(oop result, char* sp_of_patched_frame, bool n
                               ?  NULL
                               :  patched_self_frame->send_desc(),
                             selfPC == 0);
-  if (selfPC == 0) {lprintf("exit trivial_exit_from_return_trap\n"); return;} // interpreter-only: normal return through C stack
+  if (selfPC == 0)
+    return; // interpreter-only: normal return through C stack
   ShouldNotReachHere();
 }
 
