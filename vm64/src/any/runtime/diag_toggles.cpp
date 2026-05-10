@@ -13,7 +13,7 @@ void print_active_diag_toggles_at_startup() {
     }                                                                    \
   } while (0)
   SHOW(DIAG_INTERP_RING);
-  SHOW(DIAG_SCAV_RANGES);
+  SHOW(DIAG_SCAVENGED_INTERPRETER_STACK_RANGES);
   SHOW(DIAG_ACTIVATION_DUMP);
   SHOW(DIAG_ARGS_WATCH);
   SHOW(DIAG_ZAP_FREED_INTERPRETERS);

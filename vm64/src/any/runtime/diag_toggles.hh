@@ -27,7 +27,7 @@
 
 // Per-scavenge range + frame recorders (stack.cpp, universe.more.cpp,
 // interpreter.hh InterpreterIterator).
-#define DIAG_SCAV_RANGES       (0 || DIAG_ARGS_WATCH)
+#define DIAG_SCAVENGED_INTERPRETER_STACK_RANGES       (0 || DIAG_ARGS_WATCH)
 
 
 // Note: the `preserved` wraps around interpret()'s parameters are a real

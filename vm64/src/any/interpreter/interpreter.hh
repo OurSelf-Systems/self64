@@ -30,6 +30,23 @@ void diag_dump_interp_now(FILE* f);  // synchronous dump (for crashes that bypas
 void diag_interp_event(int kind, void* addr, void* frame, void* extra);
 # endif
 
+# if DIAG_SCAVENGED_INTERPRETER_STACK_RANGES /* DIAGNOSTIC: scavenge-range and frames_do recorders. Each scavenge clears the tables; every (start,end) range visited by InterpreterIterator's stack walk and every frame visited by frames_do is appended.  -- claude & dmu May 2026 */
+struct ScavRange { void* start; void* end; };
+extern int g_scav_round;
+extern ScavRange g_scav_ranges[];
+extern int g_scav_range_count;
+void diag_scav_ranges_begin();
+void diag_scav_ranges_add(void* start, void* end);
+bool diag_scav_ranges_contains(void* p);
+bool diag_scav_ranges_overlaps(void* start, void* end);
+extern void* g_scav_frames[];
+extern int g_scav_frames_count;
+void diag_scav_frames_clear();
+void diag_scav_frames_add(void* f);
+bool diag_scav_frames_contains(void* f);
+# endif
+
+
 extern "C" {
   oop interpret( oop rcv,
                  oop sel,
@@ -373,9 +390,12 @@ class InterpreterIterator: public StackObj {
         ++p) { 
       if (*p != NULL) { oop_closure->do_oop(p); } 
     }
-    for (p = (interp)->stack;  p < &(interp)->stack[(interp)->sp];  p++) { 
+#   if DIAG_SCAVENGED_INTERPRETER_STACK_RANGES /* DIAGNOSTIC: record the stack-walk range so we can later test whether a particular address (e.g. &args[i]) was visited by this scavenge.  -- claude & dmu May 2026 */
+    diag_scav_ranges_add((interp)->stack, &(interp)->stack[(interp)->sp]);
+#   endif
+    for (p = (interp)->stack;  p < &(interp)->stack[(interp)->sp];  p++) {
       oop_closure->do_oop(p);
-    } 
+    }
     if (zap) for ( ; p < &(interp)->stack[(interp)->length_stack()]; p++) { 
       *p = badOop;
     }

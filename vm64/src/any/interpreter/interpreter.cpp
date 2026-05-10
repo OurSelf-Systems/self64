@@ -55,6 +55,51 @@ namespace {
   DiagInterpAtexitInstaller g_diag_interp_atexit_installer;
 }
 # endif
+
+# if DIAG_SCAVENGED_INTERPRETER_STACK_RANGES /* DIAGNOSTIC: scavenge-range and frames_do recorders.  -- claude & dmu May 2026 */
+static const int kScavRangesMax = 4096;
+int g_scav_round = 0;
+ScavRange g_scav_ranges[kScavRangesMax];
+int g_scav_range_count = 0;
+void diag_scav_ranges_begin() {
+  ++g_scav_round;
+  g_scav_range_count = 0;
+}
+void diag_scav_ranges_add(void* start, void* end) {
+  if (g_scav_range_count >= kScavRangesMax) return;
+  g_scav_ranges[g_scav_range_count].start = start;
+  g_scav_ranges[g_scav_range_count].end = end;
+  ++g_scav_range_count;
+}
+bool diag_scav_ranges_contains(void* p) {
+  for (int i = 0; i < g_scav_range_count; ++i) {
+    if (p >= g_scav_ranges[i].start && p < g_scav_ranges[i].end) return true;
+  }
+  return false;
+}
+bool diag_scav_ranges_overlaps(void* start, void* end) {
+  for (int i = 0; i < g_scav_range_count; ++i) {
+    if (g_scav_ranges[i].start < end && start < g_scav_ranges[i].end)
+      return true;
+  }
+  return false;
+}
+
+static const int kScavFramesMax = 4096;
+void* g_scav_frames[kScavFramesMax];
+int g_scav_frames_count = 0;
+void diag_scav_frames_clear() { g_scav_frames_count = 0; }
+void diag_scav_frames_add(void* f) {
+  if (g_scav_frames_count >= kScavFramesMax) return;
+  g_scav_frames[g_scav_frames_count++] = f;
+}
+bool diag_scav_frames_contains(void* f) {
+  for (int i = 0; i < g_scav_frames_count; ++i)
+    if (g_scav_frames[i] == f) return true;
+  return false;
+}
+# endif
+
 interpreter* interpreter::_active_interp_list = NULL;
 fint interpreter::expected_magic_number = 0x1A7E11EC; // sentinel for interpreter validity
 

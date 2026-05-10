@@ -380,7 +380,12 @@ void print_stack() {
   currentProcess->stack()->print();
 }
 
-static void frame_scavenge_contents(frame* f, RegisterLocator* rl) { f->scavenge_contents(rl); }
+static void frame_scavenge_contents(frame* f, RegisterLocator* rl) {
+# if DIAG_SCAVENGED_INTERPRETER_STACK_RANGES /* DIAGNOSTIC: record this frame as visited by the scavenge.  -- claude & dmu May 2026 */
+  diag_scav_frames_add(f);
+# endif
+  f->scavenge_contents(rl);
+}
 static void frame_gc_mark_contents(frame* f, RegisterLocator* rl) { f->gc_mark_contents(rl); }
 static void frame_gc_unmark_contents(frame* f, RegisterLocator* rl) { f->gc_unmark_contents(rl); }
 static bool frame_verify_result = true;
