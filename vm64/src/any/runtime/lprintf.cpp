@@ -97,13 +97,6 @@ extern "C" volatile void lprint_fatal(const char* file, int line, lprint_format_
   va_end(ap);
   lprintf("\n");
   PrintVMMessages = saved;
-# if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: dump interpreter ring buffer before the fatal handler takes us into the crash menu (atexit will not run after abort).  -- claude & dmu May 2026 */
-  { char p[64]; snprintf(p, sizeof(p), "/tmp/interp_diag.%d.fatal.log", (int)getpid());
-    FILE* df = fopen(p, "w");
-    if (df) { diag_dump_interp_now(df); fclose(df); }
-    diag_dump_interp_now(stderr);
-  }
-# endif
   fatal_handler();
 }
 

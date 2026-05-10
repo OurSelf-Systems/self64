@@ -118,10 +118,6 @@ oop universe::default_low_space_handler(oop p)
 
 oop universe::scavenge(oop p) {
   BlockProfilerTicks bpt(exclude_scavenging);
-# if DIAG_SCAVENGED_INTERPRETER_STACK_RANGES /* DIAGNOSTIC: clear scavenge-range and frame recorders.  -- claude & dmu May 2026 */
-  diag_scav_ranges_begin();
-  diag_scav_frames_clear();
-# endif
   if (VerifyBeforeScavenge) verify();
 
   FlagSetting fl(GCInProgress, true);

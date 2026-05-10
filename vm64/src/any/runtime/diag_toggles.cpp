@@ -12,15 +12,10 @@ void print_active_diag_toggles_at_startup() {
       fprintf(stderr, " " #name);                                        \
     }                                                                    \
   } while (0)
-  SHOW(DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS);
-  SHOW(DIAG_SCAVENGED_INTERPRETER_STACK_RANGES);
-  SHOW(DIAG_ACTIVATION_DUMP);
-  SHOW(DIAG_ARGS_WATCH);
-  SHOW(DIAG_ZAP_FREED_INTERPRETERS);
-  SHOW(DIAG_SHELL_TRACE);
+ //  SHOW(DIAG_wHATEVER);
 # undef SHOW
   if (any) fprintf(stderr, "\n");
-  else     fprintf(stderr, "[DIAG] no toggles active\n");
+ // else     fprintf(stderr, "[DIAG] no toggles active\n");
 }
 
 namespace {

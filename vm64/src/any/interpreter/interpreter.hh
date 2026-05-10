@@ -10,43 +10,6 @@
 
 extern oop sneaky_method_argument_to_interpret;
 
-# if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: interpreter lifecycle ring buffer (stale-interp investigation). PROBE events fire from print_slot's bad-oop guard.  -- claude & dmu May 2026 */
-enum {
-  InterpDiag_PROBE_FOUND_INTERPRETER_OF_VFRAME = 1,
-  InterpDiag_PROBE_MISSING_INTERPRETER_OF_VFRAME = 2,
-  InterpDiag_CLONED_BLOCK_FOR_LITERAL_CODE = 3,    // cloned_blocks[i] assigned. addr=&slot, frame=interp, extra=value
-  InterpDiag_CB_BAD_CLONED_BLOCK_WHEN_ZAPPING   = 4,    // zap-blocks saw non-memOop. addr=&slot, frame=interp, extra=value
-};
-struct InterpDiagEvent {
-  int kind;
-  void* addr;
-  void* frame;
-  void* extra;
-  unsigned long seq;
-};
-extern InterpDiagEvent g_interp_diag_buf[];
-extern unsigned long g_interp_diag_count;
-void diag_dump_interp_now(FILE* f);  // synchronous dump (for crashes that bypass atexit)
-void diag_interp_event(int kind, void* addr, void* frame, void* extra);
-# endif
-
-# if DIAG_SCAVENGED_INTERPRETER_STACK_RANGES /* DIAGNOSTIC: scavenge-range and frames_do recorders. Each scavenge clears the tables; every (start,end) range visited by InterpreterIterator's stack walk and every frame visited by frames_do is appended.  -- claude & dmu May 2026 */
-struct ScavRange { void* start; void* end; };
-extern int g_scav_round;
-extern ScavRange g_scav_ranges[];
-extern int g_scav_range_count;
-void diag_scav_ranges_begin();
-void diag_scav_ranges_add(void* start, void* end);
-bool diag_scav_ranges_contains(void* p);
-bool diag_scav_ranges_overlaps(void* start, void* end);
-extern void* g_scav_frames[];
-extern int g_scav_frames_count;
-void diag_scav_frames_clear();
-void diag_scav_frames_add(void* f);
-bool diag_scav_frames_contains(void* f);
-# endif
-
-
 extern "C" {
   oop interpret( oop rcv,
                  oop sel,
@@ -90,9 +53,6 @@ class interpreter: public abstract_interpreter {
   friend class InterpreterIterator;
 
  public:
-# if DIAG_ACTIVATION_DUMP /* DIAGNOSTIC  -- claude & dmu May 2026 */
-  oop diag_invocation_selector() const override { return selector; }
-# endif
 
   // WARNING all oops here must appear in ITERATOR below
   oop receiver;
@@ -234,16 +194,7 @@ class interpreter: public abstract_interpreter {
   void  attach_pics();  // look up or create PICs in the persistent table
 
   void interpret_method();
-# if DIAG_ARGS_WATCH /* DIAGNOSTIC: hand-inlined bytecode loop with args[] good->bad watcher. Top-level diag_interpret_method_with_args_watch() replaces abstract_interpreter::interpret_method() when on; the helpers below decompose entry-time checking and per-flip reporting.  -- claude & dmu May 2026 */
-  void diag_interpret_method_with_args_watch();
-  void diag_dump_args(FILE* lf, const char* tag);
-  void diag_check_args_bad_at_entry();
-  interpreter* diag_find_caller_owning_args() const;
-  void diag_report_caller(FILE* lf, int ai, interpreter* caller);
-  void diag_report_arg_flipped(int ai,
-                               int pc_just_ran, int op_just_ran, int x_just_ran,
-                               int gc_before, int gc_after);
-# endif
+
   frame* my_frame() {return _my_frame; }
 
 
@@ -404,9 +355,6 @@ class InterpreterIterator: public StackObj {
         ++p) { 
       if (*p != NULL) { oop_closure->do_oop(p); } 
     }
-#   if DIAG_SCAVENGED_INTERPRETER_STACK_RANGES /* DIAGNOSTIC: record the stack-walk range so we can later test whether a particular address (e.g. &args[i]) was visited by this scavenge.  -- claude & dmu May 2026 */
-    diag_scav_ranges_add((interp)->stack, &(interp)->stack[(interp)->sp]);
-#   endif
     for (p = (interp)->stack;  p < &(interp)->stack[(interp)->sp];  p++) {
       oop_closure->do_oop(p);
     }

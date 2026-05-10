@@ -51,23 +51,6 @@ oop evalExpressions(Scanner* scanner) {
         // method (or its map) out of new-gen.
         preserved pres_method((oop)evalMethod);
         preserved pres_rcv(Memory->lobbyObj);
-#       if DIAG_SHELL_TRACE /* DIAGNOSTIC: print evalMethod's map (or ZAP marker) before runDoItMethod, to catch a method whose backing storage was already zapped by a previous interpret() exit. goodScavengeCount snapshots the pre-call scavenge counter so a follow-up site can detect whether a scavenge fired during runDoItMethod.  -- claude & dmu May 2026 */
-        auto goodScavengeCount = Memory->scavengeCount; (void)goodScavengeCount;
-        if (pres_method.value == NULL) {
-          lprintf("(NULL)\n");
-        } else if (!pres_method.value->is_mem()) {
-          lprintf("(not a memOop, tag=%d)\n",
-                  (int)((uintptr_t)pres_method.value & 3));
-        } else {
-          void* m = (void*)pres_method.value->map();
-          lprintf("map=%p", m);
-#if DIAG_ZAP_FREED_INTERPRETERS
-          if ((uintptr_t)m == DIAG_INTERPRETER_ZAP_VALUE)
-            lprintf(" ZAPPED-ALREADY");
-#endif
-          lprintf("\n");
-        }
-#       endif
         res = currentProcess->runDoItMethod(pres_rcv.value,
                                             (slotsOop)pres_method.value);
         if (NLRSupport::have_NLR_through_C()) break;             // let NLR go through
@@ -265,29 +248,7 @@ void run_the_VM() {
   // After reading a snapshot we need to evaluate the snapshot actions.
   if (postReadSnapshot) {
     postReadSnapshot = false;
-#   if DIAG_SHELL_TRACE /* DIAGNOSTIC: snapshotAction postRead is supposed to enter the Self scheduler and never return. If it does return, log everything we can about why we're dropping to the VM# prompt.  -- claude & dmu May 2026 */
-    lprintf("\n[DIAG] entering eval(snapshotAction postRead)\n");
-    oop pr_res = eval("snapshotAction postRead", "<postRead Snapshot>");
-    lprintf("\n[DIAG] postRead returned. result=%p is_mark=%d badOop=%d "
-            "NLR_through_C=%d stackOverflow=%d nesting=%d inSelf=%d\n",
-            (void*)pr_res,
-            pr_res ? pr_res->is_mark() : -1,
-            pr_res == badOop,
-            NLRSupport::have_NLR_through_C(),
-            currentProcess ? currentProcess->hadStackOverflow() : -1,
-            currentProcess ? currentProcess->nesting : -1,
-            currentProcess ? currentProcess->inSelf() : -1);
-    if (pr_res != NULL && pr_res != badOop && !pr_res->is_mark()) {
-      lprintf("[DIAG] postRead result oop: ");
-      pr_res->print_oop();
-      lprintf("\n");
-    }
-#   if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: dump the interp event ring as well; only available when INTERP_RING is on.  -- claude & dmu May 2026 */
-    diag_dump_interp_now(stderr);
-#   endif
-#   else
     eval("snapshotAction postRead", "<postRead Snapshot>");
-#   endif
   }
 
   // The read-eval-print loop

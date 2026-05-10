@@ -9,97 +9,6 @@
 
 oop sneaky_method_argument_to_interpret;
 
-# if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: interpreter lifecycle ring buffer (stale-interp investigation). PROBE events fire from print_slot's bad-oop guard. NEW/DIE recording removed — heap-leak + poison answers the lifecycle question directly. Inspect post-mortem via lldb: `p g_interp_diag_count` then `p g_interp_diag_buf[i]`.  -- claude & dmu May 2026 */
-static const int kInterpDiagSize = 1024;
-InterpDiagEvent g_interp_diag_buf[kInterpDiagSize];
-unsigned long g_interp_diag_count = 0;
-
-void diag_interp_event(int kind, void* addr, void* frame, void* extra) {
-  unsigned long n = g_interp_diag_count++;
-  InterpDiagEvent& e = g_interp_diag_buf[n % kInterpDiagSize];
-  e.kind = kind;
-  e.addr = addr;
-  e.frame = frame;
-  e.extra = extra;
-  e.seq = n;
-}
-
-void diag_dump_interp_now(FILE* f) {
-  if (!f) return;
-  unsigned long total = g_interp_diag_count;
-  unsigned long start = total > kInterpDiagSize ? total - kInterpDiagSize : 0;
-  fprintf(f, "# total=%lu wrapped=%d size=%d\n",
-          total, total > kInterpDiagSize ? 1 : 0, kInterpDiagSize);
-  fprintf(f, "# kinds: 3=PROBE_FOUND 4=PROBE_MISSING 5=CB_WRITE 6=CB_BAD\n");
-  fprintf(f, "# seq kind addr frame extra\n");
-  for (unsigned long i = start; i < total; ++i) {
-    InterpDiagEvent& e = g_interp_diag_buf[i % kInterpDiagSize];
-    fprintf(f, "%lu %d %p %p %p\n",
-            e.seq, e.kind, e.addr, e.frame, e.extra);
-  }
-  fflush(f);
-}
-
-static void diag_dump_interp_atexit() {
-  char path[64];
-  snprintf(path, sizeof(path), "/tmp/interp_diag.%d.log", (int)getpid());
-  FILE* f = fopen(path, "w");
-  if (!f) return;
-  diag_dump_interp_now(f);
-  fclose(f);
-}
-namespace {
-  struct DiagInterpAtexitInstaller {
-    DiagInterpAtexitInstaller() { atexit(diag_dump_interp_atexit); }
-  };
-  DiagInterpAtexitInstaller g_diag_interp_atexit_installer;
-}
-# endif
-
-# if DIAG_SCAVENGED_INTERPRETER_STACK_RANGES /* DIAGNOSTIC: scavenge-range and frames_do recorders.  -- claude & dmu May 2026 */
-static const int kScavRangesMax = 4096;
-int g_scav_round = 0;
-ScavRange g_scav_ranges[kScavRangesMax];
-int g_scav_range_count = 0;
-void diag_scav_ranges_begin() {
-  ++g_scav_round;
-  g_scav_range_count = 0;
-}
-void diag_scav_ranges_add(void* start, void* end) {
-  if (g_scav_range_count >= kScavRangesMax) return;
-  g_scav_ranges[g_scav_range_count].start = start;
-  g_scav_ranges[g_scav_range_count].end = end;
-  ++g_scav_range_count;
-}
-bool diag_scav_ranges_contains(void* p) {
-  for (int i = 0; i < g_scav_range_count; ++i) {
-    if (p >= g_scav_ranges[i].start && p < g_scav_ranges[i].end) return true;
-  }
-  return false;
-}
-bool diag_scav_ranges_overlaps(void* start, void* end) {
-  for (int i = 0; i < g_scav_range_count; ++i) {
-    if (g_scav_ranges[i].start < end && start < g_scav_ranges[i].end)
-      return true;
-  }
-  return false;
-}
-
-static const int kScavFramesMax = 4096;
-void* g_scav_frames[kScavFramesMax];
-int g_scav_frames_count = 0;
-void diag_scav_frames_clear() { g_scav_frames_count = 0; }
-void diag_scav_frames_add(void* f) {
-  if (g_scav_frames_count >= kScavFramesMax) return;
-  g_scav_frames[g_scav_frames_count++] = f;
-}
-bool diag_scav_frames_contains(void* f) {
-  for (int i = 0; i < g_scav_frames_count; ++i)
-    if (g_scav_frames[i] == f) return true;
-  return false;
-}
-# endif
-
 interpreter* interpreter::_active_interp_list = NULL;
 fint interpreter::expected_magic_number = 0x1A7E11EC; // sentinel for interpreter validity
 
@@ -312,17 +221,6 @@ oop interpret( oop rcv,
   preserved pres_mh  (_mh);
   preservedArray pres_args(_args, _nargs);
 
-# if DIAG_ZAP_FREED_INTERPRETERS /* DIAGNOSTIC (stale-interp investigation): heap-allocate interp + storage and never free. Combined with the 0xde poison at exit below, dangling vframes pointing at a "freed" interpreter read recognizable poison bytes; newer interpret() calls get fresh heap and don't recycle the address. Intentional memory leak; only suitable for short repros.  -- claude & dmu May 2026 */
-  interpreter& interp = *(new interpreter(pres_rcv.value,
-                                          pres_sel.value,
-                                          pres_del.value,
-                                          pres_meth.value,
-                                          pres_mh.value,
-                                          _args, _nargs));
-  interp.set_cloned_blocks( malloc(interp.length_cloned_blocks() * sizeof(oop)));
-  interp.set_stack (        malloc(interp.length_stack()         * sizeof(oop)));
-  interp.set_locals(        malloc(interp.length_locals()        * sizeof(oop)));
-# else
   interpreter interp(pres_rcv.value,
                      pres_sel.value,
                      pres_del.value,
@@ -332,7 +230,6 @@ oop interpret( oop rcv,
   interp.set_cloned_blocks( alloca(interp.length_cloned_blocks() * sizeof(oop)));
   interp.set_stack (        alloca(interp.length_stack()         * sizeof(oop)));
   interp.set_locals(        alloca(interp.length_locals()        * sizeof(oop)));
-# endif
 
   // Attach persistent heap-allocated PICs from the global table.
   // PICs survive across invocations, so even non-looping methods benefit
@@ -417,34 +314,6 @@ oop interpret( oop rcv,
 
   oop result = interp.top();
 
-# if DIAG_ZAP_FREED_INTERPRETERS /* DIAGNOSTIC: detect a stale-capture result (oop value is poison from a previously-exited interpreter). Catch it here, at the innermost interpret() that returns it, before it propagates up the call chain.  -- claude & dmu May 2026 */
-  if ((uintptr_t)result == DIAG_INTERPRETER_ZAP_VALUE) {
-    lprintf("\n[DIAG] interpret() returning POISON result at innermost frame.\n");
-    lprintf("[DIAG]   interp=%p sp=%d length_stack=%d\n",
-            &interp, interp.sp, interp.length_stack());
-    lprintf("[DIAG]   stack[sp-1] = %p (raw oop value)\n", (void*)result);
-    lprintf("[DIAG]   stack[sp-2] = %p\n",
-            interp.sp >= 2 ? (void*)interp.stack[interp.sp-2] : (void*)0);
-    lprintf("[DIAG]   meth=%p rcv=%p sel=%p\n",
-            (void*)meth, (void*)rcv, (void*)sel);
-#if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS
-    diag_dump_interp_now(stderr);
-#endif
-  }
-# endif
-
-# if DIAG_ZAP_FREED_INTERPRETERS /* DIAGNOSTIC: poison heap-allocated interp storage at exit so dangling vframes read 0xde rather than stale-but-plausible values. Writes 64 bits at a time so each oop slot holds exactly DIAG_INTERPRETER_ZAP_VALUE — matches the consumers' uintptr_t test. The struct itself is still byte-poisoned via memset.  -- claude & dmu May 2026 */
-  for (fint i = 0; i < interp.length_stack();         ++i) ((uintptr_t*)interp.stack        )[i] = DIAG_INTERPRETER_ZAP_VALUE;
-  for (fint i = 0; i < interp.length_locals();        ++i) ((uintptr_t*)interp.locals       )[i] = DIAG_INTERPRETER_ZAP_VALUE;
-  for (fint i = 0; i < interp.length_cloned_blocks(); ++i) ((uintptr_t*)interp.cloned_blocks)[i] = DIAG_INTERPRETER_ZAP_VALUE;
-  {
-    uintptr_t* p = (uintptr_t*)&interp;
-    for (size_t i = 0; i < sizeof(interp) / sizeof(uintptr_t); ++i) p[i] = DIAG_INTERPRETER_ZAP_VALUE;
-    size_t tail = sizeof(interp) % sizeof(uintptr_t);
-    if (tail) memset((char*)&interp + sizeof(interp) - tail, 0xde, tail);
-  }
-# endif
-
   return result;
 }
 
@@ -480,184 +349,6 @@ void interpreter::setup_for_block() {
   }
 }
 
-
-
-# if DIAG_ARGS_WATCH /* DIAGNOSTIC (arg-corruption investigation): see diag_interpret_method_with_args_watch() below. /tmp/args_bad_entry.log = caller's fault; /tmp/args_bad_during.log = this method's fault. Requires DIAG_SCAVENGED_INTERPRETER_STACK_RANGES.  -- claude & dmu May 2026 */
-
-// Predicate: does `a` look like a corrupted/dangling memOop?
-// Allows non-mem-tagged oops (smi, mark) without comment; rejects mem-tagged
-// oops whose pointee or _map slot is outside the Self heap.
-static bool diag_arg_looks_bad(oop a) {
-  if (!a->is_mem()) return false;
-  if (!Memory->really_contains((void*)a)) return true;
-  // Also reject mem-tagged oops whose _map slot points outside heap
-  // (matches print_slot's check; catches a different failure mode).
-  return !Memory->really_contains((void*)memOop(a)->addr()->_map);
-}
-
-void interpreter::diag_dump_args(FILE* lf, const char* tag) {
-  fprintf(lf, "%s interp=%p selector=%p method=%p caller_frame=%p\n",
-          tag, this, selector, method_object, _my_frame);
-  fprintf(lf, "args=%p length_args=%d pc=%d firstBCI=%d\n",
-          args, (int)length_args, (int)pc, (int)mi.firstBCI());
-  for (int32 j = 0; j < length_args; ++j) {
-    fprintf(lf, "  args[%d]=0x%lx %s\n",
-            (int)j, (unsigned long)args[j],
-            diag_arg_looks_bad(args[j]) ? "BAD" : "ok");
-  }
-}
-
-// If any args[] is bad on entry, write /tmp/args_bad_entry.log + lprintf.
-// Only the first time per VM run (static `reported` latch).
-void interpreter::diag_check_args_bad_at_entry() {
-  static bool reported = false;
-  if (reported) return;
-  for (int32 ai = 0; ai < length_args; ++ai) {
-    if (!diag_arg_looks_bad(args[ai])) continue;
-    reported = true;
-    FILE* lf = fopen("/tmp/args_bad_entry.log", "w");
-    if (lf) { diag_dump_args(lf, "ENTRY"); fclose(lf); }
-    lprintf("\nARGS_BAD_ENTRY: interp=%p selector=%p\n", this, selector);
-    return;
-  }
-}
-
-// Walk active_interp_list to find the interpreter whose `stack` contains
-// our `args`. NULL if not found (case A: caller not on the list).
-interpreter* interpreter::diag_find_caller_owning_args() const {
-  for (interpreter* w = currentProcess->active_interp_list;
-       w; w = w->_prev_interp) {
-    if (w == this) continue;
-    if ((oop*)args >= w->stack
-        && (oop*)args < &w->stack[w->length_stack()])
-      return w;
-  }
-  return NULL;
-}
-
-// Format caller info into the open log file: presence/absence on
-// active_interp_list, position of &args[ai] within caller's stack range,
-// frames_do/InterpreterIterator visit status, and what the live scavenge
-// resolution path returns for caller's frame.
-void interpreter::diag_report_caller(FILE* lf, int ai, interpreter* caller) {
-  if (caller == NULL) {
-    fprintf(lf, "CALLER NOT FOUND in active_interp_list "
-                "(args=%p) — case A: caller's interp not on the list\n",
-            args);
-    return;
-  }
-  bool in_full   = ((oop*)&args[ai] >= caller->stack
-                    && (oop*)&args[ai] < &caller->stack[caller->length_stack()]);
-  bool in_active = ((oop*)&args[ai] >= caller->stack
-                    && (oop*)&args[ai] < &caller->stack[caller->sp]);
-  fprintf(lf,
-    "CALLER interp=%p stack=%p len=%d sp=%d "
-    "&args[%d] in[stack,stack+len)=%s in[stack,stack+sp)=%s\n",
-    caller, caller->stack, (int)caller->length_stack(),
-    (int)caller->sp, ai,
-    in_full ? "YES" : "NO", in_active ? "YES" : "NO");
-  fprintf(lf, "  args offset within caller->stack = %ld\n",
-          (long)((oop*)args - caller->stack));
-  fprintf(lf, "  &args[%d] offset = %ld; sp = %d\n",
-          ai, (long)((oop*)&args[ai] - caller->stack), (int)caller->sp);
-  // Was caller's frame visited by frames_do during the latest scavenge?
-  // If not → frames_do skipped it (case A.frames). If yes but its stack
-  // range wasn't recorded → InterpreterIterator didn't run on it
-  // (case A.iterator).
-  bool frame_visited = diag_scav_frames_contains(caller->_my_frame);
-  bool stack_overlap = diag_scav_ranges_overlaps(
-    caller->stack, &caller->stack[caller->length_stack()]);
-  fprintf(lf,
-    "CALLER frame=%p visited-by-frames_do=%s "
-    "caller-stack-overlap-with-scav-ranges=%s (scav_frames_count=%d)\n",
-    caller->_my_frame,
-    frame_visited ? "YES" : "NO",
-    stack_overlap ? "YES" : "NO",
-    g_scav_frames_count);
-  // What does the resolution path used by scavenge return for this frame now?
-  frame* cf = caller->_my_frame;
-  bool is_interp_self = cf->is_interpreted_self_frame();
-  interpreter* gi = cf->get_interpreter();
-  interpreter* fi = interpreter::find_interpreter_for_frame(cf);
-  fprintf(lf,
-    "RESOLVE caller_frame=%p is_interpreted_self_frame=%s "
-    "get_interpreter()=%p find_interpreter_for_frame()=%p (expected caller=%p)\n",
-    cf, is_interp_self ? "YES" : "NO", gi, fi, caller);
-}
-
-// Top-level "during" reporter. Write /tmp/args_bad_during.log and lprintf
-// a one-line summary. Caller is responsible for the static latch.
-void interpreter::diag_report_arg_flipped(int ai,
-                                          int pc_just_ran, int op_just_ran,
-                                          int x_just_ran,
-                                          int gc_before, int gc_after) {
-  FILE* lf = fopen("/tmp/args_bad_during.log", "w");
-  if (lf) {
-    fprintf(lf, "DURING: arg[%d] flipped good->bad\n", ai);
-    fprintf(lf, "just-executed bytecode: pc=%d op=%d x=%d\n",
-            pc_just_ran, op_just_ran, x_just_ran);
-    fprintf(lf, "scavengeCount before=%d after=%d (delta=%d)\n",
-            gc_before, gc_after, gc_after - gc_before);
-    bool reached = diag_scav_ranges_contains(&args[ai]);
-    fprintf(lf,
-      "&args[%d]=%p in latest-scavenge ranges: %s "
-      "(scav_round=%d range_count=%d)\n",
-      ai, &args[ai], reached ? "YES" : "NO",
-      g_scav_round, g_scav_range_count);
-    diag_report_caller(lf, ai, diag_find_caller_owning_args());
-    diag_dump_args(lf, "DURING");
-    fclose(lf);
-  }
-  lprintf("\nARGS_BAD_DURING: arg[%d] flipped at pc=%d op=%d gc_delta=%d\n",
-          ai, pc_just_ran, op_just_ran, gc_after - gc_before);
-}
-
-// Replaces abstract_interpreter::interpret_method() when DIAG_ARGS_WATCH=1.
-// Inlines the bytecode-dispatch loop so we can re-check args[] after every
-// bytecode and catch the first good→bad transition (which method-internal
-// bug or scavenge missed updating &args[ai]).
-void interpreter::diag_interpret_method_with_args_watch() {
-  diag_check_args_bad_at_entry();
-
-  // Per-arg good/bad state from the previous iteration. Capped at 16 args
-  // (sufficient for any real Self method; anything wider just isn't checked).
-  bool prev_bad[16];
-  for (int32 ai = 0; ai < length_args && ai < 16; ++ai)
-    prev_bad[ai] = diag_arg_looks_bad(args[ai]);
-
-  static bool during_reported = false;  // first flip per VM run, then quiet
-  fint length_codes = mi.length_codes;
-  while (pc < length_codes) {
-    int gc_before   = Memory->scavengeCount;
-    int pc_just_ran = pc;
-    // Decode the byte at pc directly so we know what op is about to run,
-    // independent of how interpret_bytecode mutates bc.
-    u_char byte_just_ran = (u_char)mi.codes[pc];
-    int    op_just_ran   = (int)getOp(byte_just_ran);
-    int    x_just_ran    = (int)getIndex(byte_just_ran);
-
-    interpret_bytecode();
-    if (get_error_msg()) break;
-
-    int gc_after = Memory->scavengeCount;
-    if (!during_reported) {
-      for (int32 ai = 0; ai < length_args && ai < 16; ++ai) {
-        bool now_bad = diag_arg_looks_bad(args[ai]);
-        if (now_bad && !prev_bad[ai]) {
-          during_reported = true;
-          diag_report_arg_flipped(ai, pc_just_ran, op_just_ran, x_just_ran,
-                                  gc_before, gc_after);
-          break;
-        }
-        prev_bad[ai] = now_bad;
-      }
-    }
-    ++pc;
-  }
-}
-# endif
-
-
 void interpreter::interpret_method() {
 
   do {
@@ -678,11 +369,7 @@ void interpreter::interpret_method() {
       }
     }
     pc = mi.firstBCI();
-#   if DIAG_ARGS_WATCH /* DIAGNOSTIC (arg-corruption investigation): inlined bytecode loop with args[] good->bad watcher. Body in diag_interpret_method_with_args_watch().  -- claude & dmu May 2026 */
-    diag_interpret_method_with_args_watch();
-#   else
     abstract_interpreter::interpret_method();
-#   endif
   } while ( pc == restart_pc() + 1); // interpret_method incremented it
 
   // zap blocks
@@ -690,14 +377,6 @@ void interpreter::interpret_method() {
         cb < cloned_blocks + mi.length_literals;
         cb++ ) {
     if (*cb != NULL) {
-#     if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: catch bad slot value (e.g. markOop 0xf) before assert_block aborts, so we can dump the cloned_blocks write log.  -- claude & dmu May 2026 */
-      if (!(*cb)->is_mem()) {
-        diag_interp_event(InterpDiag_CB_BAD_CLONED_BLOCK_WHEN_ZAPPING, cb, this, *cb);
-        lprintf("\InterpDiag_CB_BAD_CLONED_BLOCK_WHEN_ZAPPING: cloned_blocks[%ld] = %p in interp %p — dumping diag\n",
-                (long)(cb - cloned_blocks), (void*)*cb, this);
-        diag_dump_interp_now(stderr);
-      }
-#     endif
       assert_block(*cb, "must be a block");
       blockOop(*cb)->kill_block();
     }
@@ -725,17 +404,7 @@ void interpreter::do_branch_code( int32 target_PC, oop target_oop ) {
   // GC closure. If the preempt below transfers to twains and a scavenge fires,
   // a new-gen target_oop would otherwise dangle.
   preserved pres_target(target_oop);
-# if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: snapshot target_oop pre-preempt to assert preserved actually rescued it.  -- claude & dmu May 2026 */
-  oop pre_target = target_oop;
-# endif
   transfer_back_to_twains_process_if_stepping_or_stopping_pre();
-# if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: confirm preserved did its job.  -- claude & dmu May 2026 */
-  if (pres_target.value != pre_target) {
-    fatal2("do_branch_code: target_oop moved across preempt "
-           "(was 0x%lx, now 0x%lx) — unprotected oop bug confirmed",
-           (long)pre_target, (long)pres_target.value);
-  }
-# endif
   target_oop = pres_target.value;
 
   if ( target_oop != badOop ) { // conditional
@@ -769,17 +438,7 @@ void interpreter::do_literal_code(oop lit) {
   // GC closure. If the preempt below transfers to twains and a scavenge
   // fires, a new-gen lit would otherwise dangle.
   preserved pres_lit(lit);
-# if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: snapshot lit pre-preempt to assert preserved actually rescued it.  -- claude & dmu May 2026 */
-  oop pre_lit = lit;
-# endif
   transfer_back_to_twains_process_if_stepping_or_stopping_pre();
-# if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: confirm preserved did its job.  -- claude & dmu May 2026 */
-  if (pres_lit.value != pre_lit) {
-    fatal2("do_literal_code: lit moved across preempt "
-           "(was 0x%lx, now 0x%lx) — unprotected oop bug confirmed",
-           (long)pre_lit, (long)pres_lit.value);
-  }
-# endif
   lit = pres_lit.value;
   if (lit->is_block()) {
     oop cb = cloned_blocks[is.index];
@@ -796,11 +455,6 @@ void interpreter::do_literal_code(oop lit) {
       
       cloned_blocks[is.index] = cb =
         blockOop(lit)->clone_block_for_interpreter(block_scope_or_NLR_target());
-#     if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: log cloned_blocks slot writes for the CB_BAD investigation.  -- claude & dmu May 2026 */
-      diag_interp_event(
-                        InterpDiag_CLONED_BLOCK_FOR_LITERAL_CODE,
-                        &cloned_blocks[is.index], this, cb);
-#     endif
     }
     lit= cb;
   }
@@ -946,9 +600,6 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
   // the for(;;) loop after a HandleReturnTrap restart). All of those paths
   // can scavenge. Preserve it so the GC patches our copy in place.
   preserved pres_del(delOrNameToSend);
-# if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: snapshot delOrNameToSend pre-loop to assert preserved actually rescued it across the for(;;) iterations.  -- claude & dmu May 2026 */
-  oop pre_del = delOrNameToSend;
-# endif
   // Note: do NOT hoist methodHolder() here. _methodHolder is only required
   // to be valid on the lookup_and_send path; PIC-hit and send_prim paths
   // may run with it uninitialized. Re-read it lazily at the call site.
@@ -1023,15 +674,6 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
 
   oop res;
   for (;;) {
-
-#   if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: confirm preserved did its job across the loop body.  -- claude & dmu May 2026 */
-    if (pres_del.value != pre_del) {
-      fatal2("interpreter::send: delOrNameToSend moved across an "
-             "allocation/scavenge (was 0x%lx, now 0x%lx) — unprotected "
-             "oop bug confirmed",
-             (long)pre_del, (long)pres_del.value);
-    }
-#   endif
     res =
         stringOop(selToSend)->is_prim_name()
         ? send_prim()
@@ -1165,14 +807,6 @@ oop interpreter::lookup_and_send( LookupType type,
   ResourceMark rm; // for sub-objects of L and vf
   // since we come here from perform, selToSend may not be a string!
 
-# if DIAG_ACTIVATION_DUMP /* DIAGNOSTIC: simpleLookup's constructor asserts rcvToSend->verify_oop(). If we're about to fail that, dump activation context first so we know how rcvToSend got bad (which method/pc, what the send entry looked like, recent dispatched bytecodes).  -- claude & dmu May 2026 */
-  if (CheckAssertions && !rcvToSend->verify_oop()) {
-    print_activation_diag("interpreter::lookup_and_send: rcvToSend bad");
-    lprintf("  rcvToSend=%p selToSend=%p delOrNameToSend=%p mh=%p type=%d\n",
-            (void*)rcvToSend, (void*)selToSend,
-            (void*)delOrNameToSend, (void*)mh, (int)type);
-  }
-# endif
 
   if (UseLocalAccessBytecodes && !hasParentLocalSlot) {
     bool canCache = _pics && baseLookupType(type) == NormalBaseLookupType
@@ -1181,8 +815,7 @@ oop interpreter::lookup_and_send( LookupType type,
     simpleLookup L( type,
                     rcvToSend,
                     selToSend,
-                    delOrNameToSend,
-                    mh,
+                    delOrNameToSend,                    mh,
                     NULL,                        // deps (not needed for interpreter)
                     canCache ? &adepsList : NULL ); // track assignable parent dependencies only when cacheable
 

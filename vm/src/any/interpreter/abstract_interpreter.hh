@@ -7,14 +7,6 @@
   # pragma interface
 # endif
 
-// b-lite fallback: vm/ tree may build without diag_toggles.hh on its
-// include path (the macro normally arrives via vm64/src/any/runtime/diag_toggles.hh).
-// If undefined here, treat all DIAG_ACTIVATION_DUMP-gated code as off.
-//   -- claude & dmu May 2026
-# ifndef DIAG_ACTIVATION_DUMP
-#   define DIAG_ACTIVATION_DUMP 0
-# endif
-
 
 class abstract_interpreter;
 typedef void (*aiCheckFn)(abstract_interpreter*, oop);
@@ -102,21 +94,6 @@ class abstract_interpreter_interbytecode_state: public PartObj {
   
   fint       argument_count; // count of upcoming send
 
-# if DIAG_ACTIVATION_DUMP /* DIAGNOSTIC: snapshot of last_literal at the moment argument_count was most recently set, plus the full state captured at SEND/IMPLICIT_SEND entry. Together they let get_argument_count's fatal report whether a literal was swapped post-capture and what the dispatcher saw at send entry.  -- claude & dmu May 2026 */
-  oop        saved_selector_oop;
-  char       saved_selector_str[64];
-  fint       saved_selector_len;
-
-  oop        pre_send_selector_oop;
-  fint       pre_send_selector_arg_count;
-  fint       pre_send_selector_len;
-  char       pre_send_selector_str[64];
-  fint       pre_send_argument_count_state;
-  fint       pre_send_index_state;
-  fint       pre_send_pc;
-  bool       pre_send_was_implicit;
-# endif
-
  public:
   inline abstract_interpreter_interbytecode_state();
   
@@ -166,15 +143,7 @@ class abstract_interpreter_interbytecode_state: public PartObj {
     oop* p; \
     p =       &(is)->last_literal;  template; \
     p = (oop*)&(is)->delegatee;     template; \
-    DIAG_ACTIVATION_DUMP_ITERATE_FIELDS(is, template) \
-  }
-# if DIAG_ACTIVATION_DUMP /* DIAGNOSTIC: walk the diag-only oop fields so GC keeps them live. Compiles to nothing when off.  -- claude & dmu May 2026 */
-#   define DIAG_ACTIVATION_DUMP_ITERATE_FIELDS(is, template) \
-    p = &(is)->saved_selector_oop;        template; \
-    p = &(is)->pre_send_selector_oop;     template;
-# else
-#   define DIAG_ACTIVATION_DUMP_ITERATE_FIELDS(is, template) /* off */
-# endif
+  } 
 
 
 // I factor out bytecode decoding for all the places in the VM
@@ -203,29 +172,6 @@ class abstract_interpreter: public AnywhereObj {
   inline abstract_interpreter(oop meth);
   inline abstract_interpreter(methodMap *m);
   inline abstract_interpreter(byteVectorOop codes, objVectorOop literals);
-
-# if DIAG_ACTIVATION_DUMP /* DIAGNOSTIC: per-activation diagnostic state used by get_argument_count's fatal and lookup_and_send's bad-receiver guard. invocation-selector accessor (default NULL; real interpreter overrides to expose `selector`), pc ring buffer of the last bytecodes dispatched here, and the print_activation_diag formatter.  -- claude & dmu May 2026 */
-  virtual oop diag_invocation_selector() const { return NULL; }
-
-  static const int PC_RING_SIZE = 16;
-  fint pc_ring[PC_RING_SIZE];
-  int  pc_ring_total;
-
-  void record_pc_in_ring(fint pc_to_record) {
-    pc_ring[pc_ring_total % PC_RING_SIZE] = pc_to_record;
-    ++pc_ring_total;
-  }
-
-  void print_activation_diag(const char* tag);
-  // Helpers, each prints one section. Call individually for partial dumps,
-  // or via print_activation_diag for the full report.
-  void diag_print_method_summary();
-  void diag_print_is_state();
-  void diag_print_pc_ring();
-  void diag_print_bytecode_window();
-# else
-  void record_pc_in_ring(fint /*pc*/) {}
-# endif
   
   
  protected:  // Checkers
@@ -241,34 +187,7 @@ class abstract_interpreter: public AnywhereObj {
   static void check_delegatee(             abstract_interpreter*, oop);
   static void check_branch_vector(         abstract_interpreter*, oop);
   static void check_for_pop(               abstract_interpreter*, oop);
-
-# if DIAG_ACTIVATION_DUMP /* DIAGNOSTIC: snapshot the selector + is-state at the moment a SEND/IMPLICIT_SEND bytecode is dispatched. Lets the fatal in get_argument_count print what things looked like at the send entry.  -- claude & dmu May 2026 */
-  void capture_pre_send_diag(bool is_implicit) {
-    is.pre_send_was_implicit          = is_implicit;
-    is.pre_send_pc                    = pc;
-    is.pre_send_argument_count_state  = is.argument_count;
-    is.pre_send_index_state           = is.index;
-    oop s = (is.index < mi.length_literals) ? mi.literals[is.index] : NULL;
-    is.pre_send_selector_oop          = s;
-    is.pre_send_selector_arg_count    = -1;
-    is.pre_send_selector_len          = -1;
-    is.pre_send_selector_str[0]       = '\0';
-    if (s != NULL && s->is_mem() && s->is_string()) {
-      stringOop ss = stringOop(s);
-      is.pre_send_selector_arg_count = ss->arg_count();
-      fint n = ss->length();
-      is.pre_send_selector_len = n;
-      if (n > (fint)sizeof(is.pre_send_selector_str) - 1)
-        n = sizeof(is.pre_send_selector_str) - 1;
-      for (fint i = 0; i < n; ++i)
-        is.pre_send_selector_str[i] = ss->bytes()[i];
-      is.pre_send_selector_str[n] = '\0';
-    }
-  }
-# else
-  void capture_pre_send_diag(bool /*is_implicit*/) {}
-# endif
-
+  
   void set_error_msg(const char* s) {
     if (!error_msg) error_msg= s; } // want first one
     
@@ -329,7 +248,6 @@ class abstract_interpreter: public AnywhereObj {
   virtual void interpret_method();
   virtual frame* my_frame() {return NULL;}
   virtual void interpret_bytecode() {
-    record_pc_in_ring(pc);  // DIAGNOSTIC: empty stub when DIAG_ACTIVATION_DUMP=0  -- claude & dmu May 2026
     fetch_and_decode_bytecode();
     dispatch_bytecode();
   }
@@ -362,11 +280,9 @@ class abstract_interpreter: public AnywhereObj {
   void pre_INDEX_CODE()              { }
   
   void pre_SEND_CODE()               { check(check_no_send_modifiers);
-                                       check(check_no_lexical_level);
-                                       capture_pre_send_diag(false); }
+                                       check(check_no_lexical_level);  }
   void pre_IMPLICIT_SEND_CODE()      { check(check_no_lexical_level);
-                                       check(check_no_two_send_modifiers);
-                                       capture_pre_send_diag(true); }
+                                       check(check_no_two_send_modifiers);  }
    
   void pre_LEXICAL_LEVEL_CODE()      { check(check_no_send_modifiers); }
   void pre_READ_LOCAL_CODE()         { check(check_no_send_modifiers); }
@@ -480,25 +396,7 @@ class abstract_interpreter: public AnywhereObj {
     is.delegatee= stringOop(get_literal()); 
     is.reset_index();
   }
-  void post_ARGUMENT_COUNT_CODE()    {
-    is.argument_count= is.index;   is.reset_index();
-#   if DIAG_ACTIVATION_DUMP /* DIAGNOSTIC: snapshot last_literal as a string. If at IMPLICIT_SEND the live selector's bytes differ, the literal was swapped post-capture.  -- claude & dmu May 2026 */
-    is.saved_selector_oop = is.last_literal;
-    is.saved_selector_len = 0;
-    is.saved_selector_str[0] = '\0';
-    if (is.last_literal != NULL && is.last_literal->is_mem()) {
-      stringOop ss = stringOop(is.last_literal);
-      if (ss->is_string()) {
-        fint n = ss->length();
-        if (n > (fint)sizeof(is.saved_selector_str) - 1)
-          n = sizeof(is.saved_selector_str) - 1;
-        for (fint i = 0; i < n; ++i) is.saved_selector_str[i] = ss->bytes()[i];
-        is.saved_selector_str[n] = '\0';
-        is.saved_selector_len = ss->length();
-      }
-    }
-#   endif
-  }
+  void post_ARGUMENT_COUNT_CODE()    { is.argument_count= is.index;   is.reset_index(); }
   void post_LEXICAL_LEVEL_CODE()     { is.lexical_level=  is.index;   is.reset_index(); }
   
   void post_BRANCH_CODE()            { is.reset_index(); }
