@@ -9,6 +9,52 @@
 
 oop sneaky_method_argument_to_interpret;
 
+# if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: interpreter lifecycle ring buffer (stale-interp investigation). PROBE events fire from print_slot's bad-oop guard. NEW/DIE recording removed — heap-leak + poison answers the lifecycle question directly. Inspect post-mortem via lldb: `p g_interp_diag_count` then `p g_interp_diag_buf[i]`.  -- claude & dmu May 2026 */
+static const int kInterpDiagSize = 1024;
+InterpDiagEvent g_interp_diag_buf[kInterpDiagSize];
+unsigned long g_interp_diag_count = 0;
+
+void diag_interp_event(int kind, void* addr, void* frame, void* extra) {
+  unsigned long n = g_interp_diag_count++;
+  InterpDiagEvent& e = g_interp_diag_buf[n % kInterpDiagSize];
+  e.kind = kind;
+  e.addr = addr;
+  e.frame = frame;
+  e.extra = extra;
+  e.seq = n;
+}
+
+void diag_dump_interp_now(FILE* f) {
+  if (!f) return;
+  unsigned long total = g_interp_diag_count;
+  unsigned long start = total > kInterpDiagSize ? total - kInterpDiagSize : 0;
+  fprintf(f, "# total=%lu wrapped=%d size=%d\n",
+          total, total > kInterpDiagSize ? 1 : 0, kInterpDiagSize);
+  fprintf(f, "# kinds: 3=PROBE_FOUND 4=PROBE_MISSING 5=CB_WRITE 6=CB_BAD\n");
+  fprintf(f, "# seq kind addr frame extra\n");
+  for (unsigned long i = start; i < total; ++i) {
+    InterpDiagEvent& e = g_interp_diag_buf[i % kInterpDiagSize];
+    fprintf(f, "%lu %d %p %p %p\n",
+            e.seq, e.kind, e.addr, e.frame, e.extra);
+  }
+  fflush(f);
+}
+
+static void diag_dump_interp_atexit() {
+  char path[64];
+  snprintf(path, sizeof(path), "/tmp/interp_diag.%d.log", (int)getpid());
+  FILE* f = fopen(path, "w");
+  if (!f) return;
+  diag_dump_interp_now(f);
+  fclose(f);
+}
+namespace {
+  struct DiagInterpAtexitInstaller {
+    DiagInterpAtexitInstaller() { atexit(diag_dump_interp_atexit); }
+  };
+  DiagInterpAtexitInstaller g_diag_interp_atexit_installer;
+}
+# endif
 interpreter* interpreter::_active_interp_list = NULL;
 fint interpreter::expected_magic_number = 0x1A7E11EC; // sentinel for interpreter validity
 
@@ -361,6 +407,14 @@ void interpreter::interpret_method() {
         cb < cloned_blocks + mi.length_literals;  
         cb++ ) {
     if (*cb != NULL) {
+#     if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: catch bad slot value (e.g. markOop 0xf) before assert_block aborts, so we can dump the cloned_blocks write log.  -- claude & dmu May 2026 */
+      if (!(*cb)->is_mem()) {
+        diag_interp_event(InterpDiag_CB_BAD_CLONED_BLOCK_WHEN_ZAPPING, cb, this, *cb);
+        lprintf("\InterpDiag_CB_BAD_CLONED_BLOCK_WHEN_ZAPPING: cloned_blocks[%ld] = %p in interp %p — dumping diag\n",
+                (long)(cb - cloned_blocks), (void*)*cb, this);
+        diag_dump_interp_now(stderr);
+      }
+#     endif
       assert_block(*cb, "must be a block");
       blockOop(*cb)->kill_block();
     }
@@ -384,7 +438,17 @@ void interpreter::do_NONLOCAL_RETURN_CODE() {
 
 
 void interpreter::do_branch_code( int32 target_PC, oop target_oop ) {
+# if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: snapshot target_oop pre-preempt to assert preserved actually rescued it.  -- claude & dmu May 2026 */
+  oop pre_target = target_oop;
+# endif
   transfer_back_to_twains_process_if_stepping_or_stopping_pre();
+# if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: confirm preserved did its job.  -- claude & dmu May 2026 */
+  if (pres_target.value != pre_target) {
+    fatal2("do_branch_code: target_oop moved across preempt "
+           "(was 0x%lx, now 0x%lx) — unprotected oop bug confirmed",
+           (long)pre_target, (long)pres_target.value);
+  }
+# endif
 
   if ( target_oop != badOop ) { // conditional
     assert(sp > 0, "conditional branch needs stack element");
@@ -413,7 +477,17 @@ void interpreter::do_BRANCH_INDEXED_CODE() {
  
  
 void interpreter::do_literal_code(oop lit) {
+# if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: snapshot lit pre-preempt to assert preserved actually rescued it.  -- claude & dmu May 2026 */
+  oop pre_lit = lit;
+# endif
   transfer_back_to_twains_process_if_stepping_or_stopping_pre();
+# if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: confirm preserved did its job.  -- claude & dmu May 2026 */
+  if (pres_lit.value != pre_lit) {
+    fatal2("do_literal_code: lit moved across preempt "
+           "(was 0x%lx, now 0x%lx) — unprotected oop bug confirmed",
+           (long)pre_lit, (long)pres_lit.value);
+  }
+# endif
   if (lit->is_block()) {
     oop cb = cloned_blocks[is.index];
     if (cb == NULL ) {
@@ -429,6 +503,11 @@ void interpreter::do_literal_code(oop lit) {
       
       cloned_blocks[is.index] = cb =
         blockOop(lit)->clone_block_for_interpreter(block_scope_or_NLR_target());
+#     if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: log cloned_blocks slot writes for the CB_BAD investigation.  -- claude & dmu May 2026 */
+      diag_interp_event(
+                        InterpDiag_CLONED_BLOCK_FOR_LITERAL_CODE,
+                        &cloned_blocks[is.index], this, cb);
+#     endif
     }
     lit= cb;
   }
@@ -569,6 +648,9 @@ void interpreter::continue_NLR() {
 
 void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
 
+# if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: snapshot delOrNameToSend pre-loop to assert preserved actually rescued it across the for(;;) iterations.  -- claude & dmu May 2026 */
+  oop pre_del = delOrNameToSend;
+# endif
   assert_string(selToSend, "better be string");
 
   // NormalLookupType means rcvr is on stack
@@ -641,6 +723,14 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
   oop res;
   for (;;) {
 
+#   if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: confirm preserved did its job across the loop body.  -- claude & dmu May 2026 */
+    if (pres_del.value != pre_del) {
+      fatal2("interpreter::send: delOrNameToSend moved across an "
+             "allocation/scavenge (was 0x%lx, now 0x%lx) — unprotected "
+             "oop bug confirmed",
+             (long)pre_del, (long)pres_del.value);
+    }
+#   endif
     res =
         stringOop(selToSend)->is_prim_name()
         ? send_prim()

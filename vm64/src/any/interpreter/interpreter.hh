@@ -10,6 +10,25 @@
 
 extern oop sneaky_method_argument_to_interpret;
 
+# if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: interpreter lifecycle ring buffer (stale-interp investigation). PROBE events fire from print_slot's bad-oop guard.  -- claude & dmu May 2026 */
+enum {
+  InterpDiag_PROBE_FOUND_INTERPRETER_OF_VFRAME = 1,
+  InterpDiag_PROBE_MISSING_INTERPRETER_OF_VFRAME = 2,
+  InterpDiag_CLONED_BLOCK_FOR_LITERAL_CODE = 3,    // cloned_blocks[i] assigned. addr=&slot, frame=interp, extra=value
+  InterpDiag_CB_BAD_CLONED_BLOCK_WHEN_ZAPPING   = 4,    // zap-blocks saw non-memOop. addr=&slot, frame=interp, extra=value
+};
+struct InterpDiagEvent {
+  int kind;
+  void* addr;
+  void* frame;
+  void* extra;
+  unsigned long seq;
+};
+extern InterpDiagEvent g_interp_diag_buf[];
+extern unsigned long g_interp_diag_count;
+void diag_dump_interp_now(FILE* f);  // synchronous dump (for crashes that bypass atexit)
+void diag_interp_event(int kind, void* addr, void* frame, void* extra);
+# endif
 
 extern "C" {
   oop interpret( oop rcv,

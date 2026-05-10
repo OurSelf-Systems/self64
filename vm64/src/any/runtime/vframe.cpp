@@ -1102,6 +1102,19 @@ void abstract_vframe::print_slot(slotDesc* s, oop meth) {
     s->printAugmentedName();
     if (is_interpreted()) {
       interpreter* ip = ((interpreted_vframe*)this)->interp();
+#     if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: walk active_interp_list and record membership (stale-interp investigation) — no printing.  -- claude & dmu May 2026 */
+      if (ip) {
+        bool found = false;
+        for (interpreter* w = currentProcess->active_interp_list;
+             w; w = w->_prev_interp) {
+          if (w == ip) { found = true; break; }
+        }
+        diag_interp_event(found ? InterpDiag_PROBE_FOUND_INTERPRETER_OF_VFRAME
+                                : InterpDiag_PROBE_MISSING_INTERPRETER_OF_VFRAME,
+                          ip, ip->_my_frame,
+                          currentProcess->active_interp_list);
+      }
+#     else
       if (ip) {
         oop* slot_addr = s->is_arg_slot() ? &ip->args[off]
                        : &ip->locals[off - 0];
@@ -1110,6 +1123,7 @@ void abstract_vframe::print_slot(slotDesc* s, oop meth) {
       } else {
         lprintf(" interp=NULL");
       }
+#     endif
     }
     lprintf(">");
   } else {

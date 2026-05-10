@@ -240,6 +240,9 @@ void run_the_VM() {
   // After reading a snapshot we need to evaluate the snapshot actions.
   if (postReadSnapshot) {
     postReadSnapshot = false;
+#   if DIAG_TRACK_BLOCKS_AND_VFRAMES_ACROSS_INTERPRETERS /* DIAGNOSTIC: dump the interp event ring as well; only available when INTERP_RING is on.  -- claude & dmu May 2026 */
+    diag_dump_interp_now(stderr);
+#   endif
     eval("snapshotAction postRead", "<postRead Snapshot>");
   }
 
