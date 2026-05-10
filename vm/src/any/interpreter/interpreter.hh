@@ -30,6 +30,10 @@ class interpreter: public abstract_interpreter {
   friend class InterpreterIterator;
 
  public:
+# if DIAG_ACTIVATION_DUMP /* DIAGNOSTIC  -- claude & dmu May 2026 */
+  oop diag_invocation_selector() const override { return selector; }
+# endif
+
   // WARNING all oops here must appear in ITERATOR below
   oop receiver;
   // next 2 are not redundant because of performs:

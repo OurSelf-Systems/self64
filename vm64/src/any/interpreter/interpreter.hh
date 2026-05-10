@@ -90,6 +90,10 @@ class interpreter: public abstract_interpreter {
   friend class InterpreterIterator;
 
  public:
+# if DIAG_ACTIVATION_DUMP /* DIAGNOSTIC  -- claude & dmu May 2026 */
+  oop diag_invocation_selector() const override { return selector; }
+# endif
+
   // WARNING all oops here must appear in ITERATOR below
   oop receiver;
   // next 2 are not redundant because of performs:
@@ -230,6 +234,16 @@ class interpreter: public abstract_interpreter {
   void  attach_pics();  // look up or create PICs in the persistent table
 
   void interpret_method();
+# if DIAG_ARGS_WATCH /* DIAGNOSTIC: hand-inlined bytecode loop with args[] good->bad watcher. Top-level diag_interpret_method_with_args_watch() replaces abstract_interpreter::interpret_method() when on; the helpers below decompose entry-time checking and per-flip reporting.  -- claude & dmu May 2026 */
+  void diag_interpret_method_with_args_watch();
+  void diag_dump_args(FILE* lf, const char* tag);
+  void diag_check_args_bad_at_entry();
+  interpreter* diag_find_caller_owning_args() const;
+  void diag_report_caller(FILE* lf, int ai, interpreter* caller);
+  void diag_report_arg_flipped(int ai,
+                               int pc_just_ran, int op_just_ran, int x_just_ran,
+                               int gc_before, int gc_after);
+# endif
   frame* my_frame() {return _my_frame; }
 
 

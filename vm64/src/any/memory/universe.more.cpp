@@ -50,15 +50,48 @@ oop universe::tenure(oop p) {
 
 void universe::apply_force_frequent_scavenges_post_load() {
   if (!ForceFrequentScavengesViaSmallNewSpace) return;
-  tenure();
+
+  // Rationale: this flag is a stress amplifier — it shrinks eden/surv so
+  // scavenges fire ~10x as often, surfacing latent GC-root bugs. But if the
+  // snapshot we just loaded has new-space contents that already exceed the
+  // tiny target sizes, forcing them down would tenure a large pile of objects
+  // into old gen at startup. That mass tenuring can itself mask the very bugs
+  // we're trying to find (objects that should still be young get prematurely
+  // promoted out of harm's way). So:
+  //   * Empty / small snapshot (fits within default/10): tenure all and shrink
+  //     to default/10, as before.
+  //   * Heavy snapshot (new-space occupancy exceeds default/10): leave the
+  //     contents in place and instead set the limits to 110% of current
+  //     occupancy, just enough headroom for forward progress without any
+  //     extra tenuring. Subsequent scavenges still fire frequently because
+  //     eden has only ~10% slack above its current fill.
+  // -- claude & dmu May 2026
   const smi tiny_eden = default_eden_size / 10;
   const smi tiny_surv = default_surv_size / 10;
-  new_gen->shrink_to(tiny_eden, tiny_surv);
-  current_sizes.eden_size = roundTo(tiny_eden, idealized_page_size);
-  current_sizes.surv_size = roundTo(tiny_surv, idealized_page_size);
-  lprintf("ForceFrequentScavengesViaSmallNewSpace: tenured all and shrank "
-          "eden to %ld, surv to %ld bytes\n",
-          (long)current_sizes.eden_size, (long)current_sizes.surv_size);
+  const smi eden_occ = new_gen->eden_space->used();
+  const smi surv_occ = max(new_gen->from_space->used(),
+                           new_gen->  to_space->used());
+  const bool fits_tiny = eden_occ <= tiny_eden && surv_occ <= tiny_surv;
+
+  smi target_eden, target_surv;
+  if (fits_tiny) {
+    tenure();
+    target_eden = tiny_eden;
+    target_surv = tiny_surv;
+    new_gen->shrink_to(target_eden, target_surv);
+  } else {
+    // 110% of occupancy, but never below the tiny target.  -- claude & dmu May 2026
+    target_eden = max(tiny_eden, (eden_occ * 11) / 10);
+    target_surv = max(tiny_surv, (surv_occ * 11) / 10);
+  }
+  current_sizes.eden_size = roundTo(target_eden, idealized_page_size);
+  current_sizes.surv_size = roundTo(target_surv, idealized_page_size);
+  lprintf("ForceFrequentScavengesViaSmallNewSpace: %s; "
+          "eden=%ld surv=%ld bytes (eden_occ=%ld surv_occ=%ld)\n",
+          fits_tiny ? "tenured all and shrank to defaults/10"
+                    : "kept new-space contents, sized limits to 110%% of occupancy",
+          (long)current_sizes.eden_size, (long)current_sizes.surv_size,
+          (long)eden_occ, (long)surv_occ);
 }
 
 oop universe::default_low_space_handler(oop p)
@@ -151,7 +184,7 @@ oop universe::scavenge(oop p) {
     
     new_gen->eden_space->clear();
     new_gen->from_space->clear();
-    
+
     swapSurvivors();
     
     tenuring_threshold =

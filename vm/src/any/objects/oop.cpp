@@ -357,6 +357,22 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
     // this should be valid across calls to self, right?
     abstract_vframe* vf = new_vframe(currentProcess->last_self_frame(false));
 
+    // The makeALookup sites below construct a simpleLookup (interp-only) or
+    // cacheProbingLookup (compiler builds — extends simpleLookup) on the C
+    // stack and then call perform_full_lookup_n / lookupNMethod /
+    // evaluateResult. Those calls can allocate, which can trigger a scavenge
+    // — and without registration, L's captured oops (receiver, selector,
+    // etc.) would go stale. Same mechanism as in interpreter::lookup_and_send;
+    // see the comment on interpreter::lookup_in_progress for the full why.
+    //
+    // The active interp is the one currently running Self code on this
+    // process — the head of active_interp_list. The surrounding code
+    // already assumes an active Self frame exists (see the new_vframe call
+    // above, which uses last_self_frame); the assert here pins that.
+    interpreter* active_interp = currentProcess->active_interp_list;
+    assert(active_interp != NULL,
+           "no active interpreter — unwind_protect_prim called outside Self");
+
     // lookup nmethod for 1st value message send
 
 #   if defined (FAST_COMPILER) || defined(SIC_COMPILER)
@@ -369,7 +385,12 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
 #   endif
         
     makeALookup( L, doBlock, VMString[VALUE] );
-    
+    // Register L immediately after construction. set_lookup_in_progress
+    // asserts no other lookup is already in progress on this interp
+    // (re-entrancy invariant). For compiler builds, &L is a
+    // cacheProbingLookup* which upcasts cleanly to simpleLookup*.
+    active_interp->set_lookup_in_progress(&L);
+
     nmethod* nm = NULL;
     if (Interpret)
       L.perform_full_lookup_n(0);
@@ -390,6 +411,12 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
 
       protectBlock = p.value;
     }
+    // L's captures are no longer used past this point. Clear before any
+    // subsequent allocation could trigger a scavenge that walks &L —
+    // L's C-stack storage outlives this scope but its contents are no
+    // longer authoritative. Note the early-return path below (no NLR)
+    // happens AFTER this clear, which is correct.
+    active_interp->lookup_in_progress = NULL;
 
     if (!NLRSupport::have_NLR_through_C()) {
       // no nlr; just return
@@ -410,7 +437,10 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
     
     // lookup nmethod for 2nd value: message send
     makeALookup( Ltwo, protectBlock, VMString[VALUE_] );
-                            
+    // Register Ltwo. The L from earlier was already cleared above, so
+    // the re-entrancy assert in set_lookup_in_progress passes here.
+    active_interp->set_lookup_in_progress(&Ltwo);
+
     nmethod* nm2 = NULL;
     if (Interpret)
       Ltwo.perform_full_lookup_n(1);
@@ -429,9 +459,11 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
       arg =  original_aborting ? Memory->nilObj : res;
       preservedArray p1(&arg, 1); // interp does not scav args
       res2 = Ltwo.evaluateResult(&arg, 1, nm2);
-                
+
       res = p.value;
     }
+    // Ltwo's captures no longer needed.
+    active_interp->lookup_in_progress = NULL;
 
     // determine target of nlr
     if (NLRSupport::have_NLR_through_C() && NLRSupport::NLR_home_from_C() == 0) {
