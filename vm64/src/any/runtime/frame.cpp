@@ -159,8 +159,7 @@ interpreter* frame::get_interpreter() {
   frame* f= block_scope_of_home_frame();
   if (f == NULL)
     return NULL;
-  auto i = f->get_interpreter_of_block_scope();
-  return i && i->magic_number == interpreter::expected_magic_number ? i : NULL;
+  return f->get_interpreter_of_block_scope();
 }
 
 

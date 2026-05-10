@@ -274,11 +274,7 @@ private:
 private:
   // must be called after every bytecode
   void transfer_back_to_twains_process_if_stepping_or_stopping_pre();
-  
-public:
-  fint magic_number;
-  static fint expected_magic_number;
- };
+};
 
 extern void InterpreterLookup_cont( simpleLookup *L, int32 arg_count);
 
