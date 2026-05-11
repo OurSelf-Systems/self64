@@ -607,14 +607,14 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
  
   oop res;
   for (;;) {
-    res = try_pic(type, delOrNameToSend, resSP);
-    if (!res)
-      res =
-      stringOop(selToSend)->is_prim_name()
-      ? send_prim()
-      : lookup_and_send( type, methodHolder(), delOrNameToSend);
+    oop picRes = try_pic(type, delOrNameToSend, resSP);
 
-    if (!is_return_patched())
+    res = picRes ? picRes :
+        stringOop(selToSend)->is_prim_name()
+        ? send_prim()
+        : lookup_and_send( type, methodHolder(), delOrNameToSend);
+
+    if (picRes || !is_return_patched())
       break;
     if (get_return_patch_reason() == patched_for_profiling) {
       break; // don't handle profiling interp yet XXX
