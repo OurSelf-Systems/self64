@@ -605,40 +605,18 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
 
   int32 resSP = sp - arg_count - (type == NormalLookupType);
   
-  oop x = try_pic(type, delOrNameToSend, resSP);
-  if (x != badOop) {
-    stack[resSP] = x;
-    sp = resSP + 1; // sp points one past top
-    return;
-  }
+  if (try_pic(type, delOrNameToSend, resSP)) return;
  
   oop res;
   for (;;) {
-    res = try_pic(type, delOrNameToSend, resSP);
-    if (res == badOop) {
       res =
       stringOop(selToSend)->is_prim_name()
       ? send_prim()
       : lookup_and_send( type, methodHolder(), delOrNameToSend);
-    }
     
-    if (!is_return_patched())
-      break;
-    if (get_return_patch_reason() == patched_for_profiling) {
-      break; // don't handle profiling interp yet XXX
-    }
-    // save non vol regs because HandleReturnTrap can call convert which
-    //  can call continueNLRAfterReturnTrap which (I think) cuts back the stack
-    // -- dmu 2/96
+    oop res_after_trap = handle_return_trap_after_send_if_needed(res);
+    if (res_after_trap == badOop) {break;}
 
-    preserved pres_res(res); // preserved -- dmu 5/26
-    SaveNonVolRegsAndCall5( HandleReturnTrap,
-                            NLRSupport::have_NLR_through_C() ? NLRSupport::NLR_result_from_C() : stack[sp-1],
-                            (char*)currentFrame(),
-                            NLRSupport::have_NLR_through_C(),
-                            (frame*)NLRSupport::NLR_home_from_C(),
-                            NLRSupport::NLR_home_ID_from_C());
-    res = pres_res.value;
     if (!restartSend)
       break;
 #if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
@@ -649,7 +627,7 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
   sp = resSP + 1; // sp points one past top
 }
 
-oop interpreter::try_pic(LookupType type, oop delOrNameToSend, int32 resSP) {
+bool interpreter::try_pic(LookupType type, oop delOrNameToSend, int32 resSP) {
   // --- PIC check (normal non-primitive sends only) ---
   if ( baseLookupType(type) == NormalBaseLookupType
        && _pics
@@ -660,30 +638,35 @@ oop interpreter::try_pic(LookupType type, oop delOrNameToSend, int32 resSP) {
       InterpreterPIC& pic = _pics[pic_idx];
       mapOop rMap = rcvToSend->map()->enclosing_mapOop();
       for (int i = 0; i < pic.count; i++) {
-        oop r = try_pic_entry(pic, i, rMap, delOrNameToSend, arg_count, resSP);
-        if (r != badOop)
-          return r;
+        if (try_pic_entry(pic, i, rMap, delOrNameToSend, arg_count, resSP))
+          return true;
       }
     }
   }
-  return badOop;
+  return false;
 }
 
-oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
+bool interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
                                  oop delToSend, fint arg_count, int32 resSP ) {
   if (pic.entries[i].cachedMap != rMap)
-    return badOop;
+    return false;
   switch (pic.resultType[i]) {
     default: fatal1("unknown resultType %d", pic.resultType[i]);
-    case constantResult:
+    case constantResult: {
       // Constant (map slot without code): value cached in cachedMethod
-      return pic.entries[i].cachedMethod;
-
+      oop res = pic.entries[i].cachedMethod;
+      stack[resSP] = res;
+      sp = resSP + 1;
+      return true;
+    }
     case dataResult: {
       // Data slot read: read from holder at cached offset
       oop holder = pic.entries[i].cachedHolder;
       if (holder == NULL) holder = rcvToSend;
-      return *oopsOop(holder)->oops(pic.slotOffset[i]);
+      oop res = *oopsOop(holder)->oops(pic.slotOffset[i]);
+      stack[resSP] = res;
+      sp = resSP + 1;
+      return true;
     }
     case assignmentResult: {
       // Assignment: write arg to holder at cached offset, return receiver
@@ -691,22 +674,52 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
       if (holder == NULL) holder = rcvToSend;
       Memory->store(oopsOop(holder)->oops(pic.slotOffset[i]),
                     stack[sp - arg_count]);
-      return rcvToSend;
+      oop res = rcvToSend;
+      stack[resSP] = res;
+      sp = resSP + 1;
+      return true;
     }
     case methodResult: {
       oop holder = pic.entries[i].cachedHolder;
       if (holder == NULL) holder = rcvToSend;
-      return ::interpret( rcvToSend,
+      oop res = ::interpret( rcvToSend,
                          selToSend,
                          delToSend,
                          pic.entries[i].cachedMethod,
                          holder,
                          &stack[sp - arg_count],
                          arg_count );
+      // push res before return trap in case of GC -- dmu 5/26
+      oop res_after_trap = handle_return_trap_after_send_if_needed(res);
+      if (res_after_trap != badOop) res = res_after_trap;
+      stack[resSP] = res;
+      sp = resSP + 1;
+    
+      return true;
     }
   }
   fatal("should not get here");
 }
+
+// thread res through here to preserve it, but return badOop if no trap needed
+oop interpreter::handle_return_trap_after_send_if_needed(oop res) {
+  // Test for profiling because that is not implemented yet -- dmu 5/26
+  if (!is_return_patched() || get_return_patch_reason() == patched_for_profiling)
+    return badOop;
+  
+  preserved p(res);
+  // save non vol regs because HandleReturnTrap can call convert which
+  //  can call continueNLRAfterReturnTrap which (I think) cuts back the stack
+  // -- dmu 2/96
+  SaveNonVolRegsAndCall5( HandleReturnTrap,
+                         NLRSupport::have_NLR_through_C() ? NLRSupport::NLR_result_from_C() : stack[sp-1],
+                         (char*)currentFrame(),
+                         NLRSupport::have_NLR_through_C(),
+                         (frame*)NLRSupport::NLR_home_from_C(),
+                         NLRSupport::NLR_home_ID_from_C());
+  return p.value;
+}
+
 
 oop interpreter::send_prim() {
   
