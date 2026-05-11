@@ -608,8 +608,7 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
 #define WTF 1
   
   oop x = try_pic(type, delOrNameToSend, resSP);
-  if (x == badOop) {abort();}
-  if (x != NULL) {
+  if (x != badOop) {
 #if WTF
     stack[resSP] = x;
     sp = resSP + 1; // sp points one past top
@@ -664,28 +663,28 @@ oop interpreter::try_pic(LookupType type, oop delOrNameToSend, int32 resSP) {
       mapOop rMap = rcvToSend->map()->enclosing_mapOop();
       for (int i = 0; i < pic.count; i++) {
         oop r = try_pic_entry(pic, i, rMap, delOrNameToSend, arg_count, resSP);
-        if (r)
+        if (r != badOop)
           return r;
       }
     }
   }
-  return NULL;
+  return badOop;
 }
 
 oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
                                  oop delToSend, fint arg_count, int32 resSP ) {
   if (pic.entries[i].cachedMap != rMap)
-    return NULL;
+    return badOop;
   switch (pic.resultType[i]) {
     default: fatal1("unknown resultType %d", pic.resultType[i]);
     case constantResult: {
       // Constant (map slot without code): value cached in cachedMethod
       oop res = pic.entries[i].cachedMethod;
-      assert(res != NULL, "???");
+      assert(res != badOop, "???");
 #if !WTF
       stack[resSP] = res;
       sp = resSP + 1;
-      return (oop)true;
+      return res;
 #else
       return res;
 #endif
@@ -695,11 +694,11 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
       oop holder = pic.entries[i].cachedHolder;
       if (holder == NULL) holder = rcvToSend;
       oop res = *oopsOop(holder)->oops(pic.slotOffset[i]);
-      assert(res != NULL, "???");
+      assert(res != badOop, "???");
 #if !WTF
       stack[resSP] = res;
       sp = resSP + 1;
-      return (oop)true;
+      return res;
 #else
       return res;
 #endif
@@ -711,11 +710,11 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
       Memory->store(oopsOop(holder)->oops(pic.slotOffset[i]),
                     stack[sp - arg_count]);
       oop res = rcvToSend;
-      assert(res != NULL, "???");
+      assert(res != badOop, "???");
 #if !WTF
       stack[resSP] = res;
       sp = resSP + 1;
-      return (oop)true;
+      return res;
 #else
       return res;
 #endif
@@ -731,11 +730,11 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
                          &stack[sp - arg_count],
                          arg_count );
       // push res before return trap in case of GC -- dmu 5/26
-      assert(res != NULL, "???");
+      assert(res != badOop, "???");
 #if !WTF
       stack[resSP] = res;
       sp = resSP + 1;
-      return (oop)true;
+      return res;
 #else
       //handleReturnTrapAfterSendIfNeeded();
       return res;
