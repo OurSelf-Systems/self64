@@ -607,10 +607,12 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
  
   oop res;
   for (;;) {
-    res =
-        stringOop(selToSend)->is_prim_name()
-        ? send_prim()
-        : lookup_and_send( type, methodHolder(), delOrNameToSend);
+    res = try_pic(type, delOrNameToSend, resSP);
+    if (!res)
+      res =
+      stringOop(selToSend)->is_prim_name()
+      ? send_prim()
+      : lookup_and_send( type, methodHolder(), delOrNameToSend);
 
     if (!is_return_patched())
       break;
