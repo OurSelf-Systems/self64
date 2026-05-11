@@ -613,13 +613,15 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
   }
  
   oop res;
-  bool first = true;
   for (;;) {
+    res = try_pic(type, delOrNameToSend, resSP);
+    if (res == badOop) {
       res =
       stringOop(selToSend)->is_prim_name()
       ? send_prim()
       : lookup_and_send( type, methodHolder(), delOrNameToSend);
-
+    }
+    
     if (!is_return_patched())
       break;
     if (get_return_patch_reason() == patched_for_profiling) {
