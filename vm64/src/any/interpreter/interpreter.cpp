@@ -673,19 +673,15 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
     return badOop;
   switch (pic.resultType[i]) {
     default: fatal1("unknown resultType %d", pic.resultType[i]);
-    case constantResult: {
+    case constantResult:
       // Constant (map slot without code): value cached in cachedMethod
-      oop res = pic.entries[i].cachedMethod;
-      assert(res != badOop, "???");
-      return res;
-    }
+      return pic.entries[i].cachedMethod;
+
     case dataResult: {
       // Data slot read: read from holder at cached offset
       oop holder = pic.entries[i].cachedHolder;
       if (holder == NULL) holder = rcvToSend;
-      oop res = *oopsOop(holder)->oops(pic.slotOffset[i]);
-      assert(res != badOop, "???");
-      return res;
+      return *oopsOop(holder)->oops(pic.slotOffset[i]);
     }
     case assignmentResult: {
       // Assignment: write arg to holder at cached offset, return receiver
@@ -693,24 +689,18 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
       if (holder == NULL) holder = rcvToSend;
       Memory->store(oopsOop(holder)->oops(pic.slotOffset[i]),
                     stack[sp - arg_count]);
-      oop res = rcvToSend;
-      assert(res != badOop, "???");
-      return res;
+      return rcvToSend;
     }
     case methodResult: {
       oop holder = pic.entries[i].cachedHolder;
       if (holder == NULL) holder = rcvToSend;
-      oop res = ::interpret( rcvToSend,
+      return ::interpret( rcvToSend,
                          selToSend,
                          delToSend,
                          pic.entries[i].cachedMethod,
                          holder,
                          &stack[sp - arg_count],
                          arg_count );
-      // push res before return trap in case of GC -- dmu 5/26
-      assert(res != badOop, "???");
-      //handleReturnTrapAfterSendIfNeeded();
-      return res;
     }
   }
   fatal("should not get here");
