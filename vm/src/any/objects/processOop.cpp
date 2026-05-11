@@ -364,6 +364,8 @@ oop processOopClass::ActivationStack_prim(void *FH) {
     // We can't call killVFrameOopsAndSetWatermark here -- its
     // setupPreemption() side effect rewrites the global SP limit, which
     // would clobber preemption checks for the actual currentProcess.
+    //
+    // -- claude & dmu  5/26
     frame* topFrame = p->last_self_frame(false);
     vframeOop sentinel = vframeList();
     vframeOop l;

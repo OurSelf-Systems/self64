@@ -25,16 +25,7 @@ typedef void (*vfValueDoFn)(compiled_vframe* vf1,
 
 class abstract_vframe: public ResourceObj {
  unknown:
-  static const uintptr_t MAGIC = 0xABF00DABF00DULL;
-  uintptr_t _magic;
   frame* fr;
-
- public:
-  abstract_vframe() : _magic(MAGIC), fr(NULL) {}
-  bool has_valid_magic() const { return _magic == MAGIC; }
-  void verify_magic() const {
-    assert(_magic == MAGIC, "abstract_vframe magic corrupt / freed");
-  }
 
  unknown:
 

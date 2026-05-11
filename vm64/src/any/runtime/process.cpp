@@ -1096,7 +1096,6 @@ frame* Process::frame_for_check_vfo_locals(abstract_vframe* currentVF) {
   
   if (currentVF == NULL)
     return NULL;
-  currentVF->verify_magic();
   frame* first  = currentVF->fr;
   frame* second = first->selfSender();
   

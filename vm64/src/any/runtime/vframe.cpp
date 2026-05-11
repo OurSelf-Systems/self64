@@ -812,7 +812,6 @@ bool abstract_vframe::is_prologue() {
 
 
 abstract_vframe* abstract_vframe::get_sender(bool skipC) {
-  verify_magic();
   frame* f = skipC ? fr->selfSender() : fr->sender();
   if ( f == NULL  ||  !f->is_self_frame() )
     return NULL;

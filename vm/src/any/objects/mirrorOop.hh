@@ -75,9 +75,7 @@ class mirrorOopClass: public slotsOopClass {
   oop expr_stack_prim()          { return reflectee()->mirror_expr_stack();   }
   oop methodHolder_prim()        { return reflectee()->mirror_methodHolder();}
   oop selector_prim()            { return reflectee()->mirror_selector();     }
-  oop bci_prim()                 {
-//    lprintf("in bci_prim current %p, vm %p, twains %p, frame %p\n", currentProcess, vmProcess, twainsProcess, currentFrame());
-    return reflectee()->mirror_bci();          }
+  oop bci_prim()                 { return reflectee()->mirror_bci();          }
 };
 
 oop reflectee_eq_prim(mirrorOop rcvr, oop anotherMirror);

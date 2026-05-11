@@ -84,12 +84,10 @@ void abstract_interpreter::print_short() {
 
 
 void abstract_interpreter::interpret_method() {
-  fint length_codes = mi.length_codes;
-  while ( pc < length_codes ) {
+  for ( ;  pc < mi.length_codes;  ++pc ) {
     interpret_bytecode();
     if ( get_error_msg() )
       return;
-    ++pc;
   }
 }
 
@@ -262,3 +260,4 @@ void abstract_interpreter::check_branch_vector(abstract_interpreter *ai, oop) {
 void abstract_interpreter::check_for_pop(abstract_interpreter *ai, oop n) {
   ai->check_for_pop(n);
 }
+

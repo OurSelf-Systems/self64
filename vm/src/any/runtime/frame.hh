@@ -192,7 +192,7 @@ private:
   // testers
  public:
 
-  // Plan D enum: refines what "is this a Self frame?" is asking. The default
+  // Refines what "is this a Self frame?" is asking. The default
   // case names what the predicate plainly promises — a frame holding live Self
   // execution state, including the bottom-of-process sentinel (which IS the
   // first interpret() in the process and has live receiver/args/locals/stack).
@@ -201,6 +201,8 @@ private:
   // can be unwound past. Those callers pass AlsoCanBeUnwoundPast.
   // Cases are #if-fenced so future configurations can introduce their own
   // distinctions without sharing this config's vocabulary.
+  //
+  // -- claude & dmu  5/26
   enum SelfFrameQuery {
 # if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
     HoldsSelfExecutionState,    // default — sentinel YES (GC-correct)
@@ -218,7 +220,7 @@ private:
   interpreter* get_interpreter();
   interpreter* get_interpreter_of_block_scope();
   
-  bool is_self_frame            (SelfFrameQuery q = HoldsSelfExecutionState);
+  bool is_self_frame(SelfFrameQuery q = HoldsSelfExecutionState);
     
   bool is_first_self_frame();
 

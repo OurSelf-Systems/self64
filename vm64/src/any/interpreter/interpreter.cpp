@@ -89,8 +89,6 @@ void InterpreterLookup_cont( simpleLookup *L, int32 arg_count) {
   L->perform_full_lookup_n(arg_count);
 }
 
-interpreter* diag_mostRecentInterpreter = NULL;     // -- claude & dmu May 2026
-frame* diag_mostRecentInterpreterFrame = NULL;
 
 inline interpreter::interpreter( oop rcv,
                                  oop sel,
@@ -154,10 +152,8 @@ inline interpreter::interpreter( oop rcv,
   _pics = NULL;
   _num_pics = 0;
   _pc_to_pic = NULL;
-  
-  diag_mostRecentInterpreter = this;
-  diag_mostRecentInterpreterFrame = currentFrame();
 }
+
 
 void interpreter::attach_pics() {
 # if TARGET_IS_64BIT
@@ -211,23 +207,8 @@ oop interpret( oop rcv,
                oop* _args,
                int32 _nargs) {
 
-  // FIX: register all oop parameters as GC roots so that scavenges fired
-  // before the interpreter struct is constructed (entry-scavenge below,
-  // and any allocation in `new interpreter(...)` itself) update them.
-  // Reading .value after each preservation gives the current live oop.
-  preserved pres_rcv (rcv);
-  preserved pres_sel (sel);
-  preserved pres_del (del);
-  preserved pres_meth(meth);
-  preserved pres_mh  (_mh);
-  preservedArray pres_args(_args, _nargs);
+  interpreter interp(rcv, sel, del, meth, _mh, _args, _nargs);
 
-  interpreter interp(pres_rcv.value,
-                     pres_sel.value,
-                     pres_del.value,
-                     pres_meth.value,
-                     pres_mh.value,
-                     _args, _nargs);
   interp.set_cloned_blocks( alloca(interp.length_cloned_blocks() * sizeof(oop)));
   interp.set_stack (        alloca(interp.length_stack()         * sizeof(oop)));
   interp.set_locals(        alloca(interp.length_locals()        * sizeof(oop)));
@@ -305,6 +286,9 @@ oop interpret( oop rcv,
   //
   //  The yield happens — but in the NLR target frame, after the NLR has fully resolved, not in stop_vfo's immediate
   //   caller.
+  //
+  // -- claude & dmu  5/26
+  
   if (currentProcess
       && currentProcess->stopActivation
       && interp._my_frame == currentProcess->stopActivation->locals()) {
@@ -349,6 +333,8 @@ void interpreter::setup_for_block() {
     hasParentLocalSlot = true; // be conservative
   }
 }
+
+
 
 void interpreter::interpret_method() {
 
@@ -404,6 +390,7 @@ void interpreter::do_branch_code( int32 target_PC, oop target_oop ) {
   // target_oop is a parameter on the C stack — not iterated by the interpreter
   // GC closure. If the preempt below transfers to twains and a scavenge fires,
   // a new-gen target_oop would otherwise dangle.
+  // -- dmu 5/26
   preserved pres_target(target_oop);
   transfer_back_to_twains_process_if_stepping_or_stopping_pre();
   target_oop = pres_target.value;
@@ -438,6 +425,7 @@ void interpreter::do_literal_code(oop lit) {
   // lit is a parameter on the C stack — not iterated by the interpreter
   // GC closure. If the preempt below transfers to twains and a scavenge
   // fires, a new-gen lit would otherwise dangle.
+  // -- dmu 5/26
   preserved pres_lit(lit);
   transfer_back_to_twains_process_if_stepping_or_stopping_pre();
   lit = pres_lit.value;
@@ -524,6 +512,7 @@ void interpreter::do_read_write_local_code(bool isWrite) {
  
 void interpreter::do_send_code(bool isSelfImplicit, stringOop selector, fint arg_count) {
   // not needed because send causes a new interpreter which calls interpret_method, which calls interruptCheck
+  // -- dmu  5/26
   // transfer_back_to_twains_process_if_stepping_or_stopping_pre();
   
   LookupType type;
@@ -595,9 +584,11 @@ void interpreter::continue_NLR() {
 
 
 void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
-  // Note: do NOT hoist methodHolder() here. _methodHolder is only required
+  // Do NOT hoist methodHolder() here. _methodHolder is only required
   // to be valid on the lookup_and_send path; PIC-hit and send_prim paths
   // may run with it uninitialized. Re-read it lazily at the call site.
+  //
+  // -- claude & dmu  5/26
   assert_string(selToSend, "better be string");
 
   // NormalLookupType means rcvr is on stack
@@ -610,6 +601,8 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
   // Sync member from local (local parameter shadows the member;
   // lookup_and_send and send_prim access the member directly)
   this->arg_count = arg_count;
+
+
   int32 resSP = sp - arg_count - (type == NormalLookupType);
  
   oop res;
@@ -824,6 +817,7 @@ oop interpreter::lookup_and_send( LookupType type,
     // Register L so a scavenge fired during the lookup updates L's
     // captured oops in place. Asserts no other lookup is in progress on
     // this interpreter (re-entrancy invariant).
+    // -- claude & dmu  5/26
     set_lookup_in_progress(&L);
 
     // XXXXXX check code table, use compiled method, get compiler to call me
@@ -836,19 +830,24 @@ oop interpreter::lookup_and_send( LookupType type,
       // Clear before the function returns. After the return, L's C-stack
       // storage is gone; a still-set lookup_in_progress would dangle and
       // the next scavenge that walks this interp would deref it.
+      // -- claude & dmu  5/26
       oop nlr_res = NLRSupport::NLR_result_from_C();
       lookup_in_progress = NULL;
       return nlr_res;
     }
 
     // Fill PIC for normal sends that found a result.
-    // We deliberately leave lookup_in_progress set throughout this block:
+    
+    // Leave lookup_in_progress set throughout this block:
     // the PIC-fill code reads L's fields (L.result(), L.resultType(),
     // L.receiverMapOop()), and any allocation in here could trigger a
     // scavenge that must still see L's captures. Cleared after
     // L.evaluateResult below, before returning.
+    // -- claude & dmu  5/26
+    
     // Exclude performs — their selector varies at runtime, so caching
     // the result at this bytecode PC would be incorrect.
+    
     if ( canCache && L.result() != NULL ) {
       ResultType rt = L.resultType();
       // Don't cache when lookup traversed assignable parent slots —
@@ -898,6 +897,7 @@ oop interpreter::lookup_and_send( LookupType type,
     // allocate), then clear lookup_in_progress, then return. The clear
     // must happen before the function returns so the field doesn't
     // outlive L's C-stack storage.
+    // -- claude & dmu  5/26
     oop res = L.evaluateResult(&stack[sp - arg_count], arg_count, NULL);
     lookup_in_progress = NULL;
     return res;
@@ -916,6 +916,8 @@ oop interpreter::lookup_and_send( LookupType type,
 
     // Register L (a vframeLookup IS-A simpleLookup) so a scavenge fired
     // during the lookup updates L's captured oops in place.
+    // -- claude & dmu  5/26
+
     set_lookup_in_progress(&L);
 
     // XXXXXX check code table, use compiled method, get compiler to call me
@@ -1011,11 +1013,15 @@ void interpreter::print() {
 // twains at the very next bytecode boundary.  pc is advanced above so
 // it points to the next bytecode to execute at yield time.
 // MOVE OUT OF LOOP! see fastPreemptionCheck in interpret_method
-// Don't stop before doing arg count bytecode; is silly
-
+//
+// Someday, don't even go back into interpreter loop merely to single-step.
+// Just dispatch to the next bytecode.
+//
+// -- claude & dmu  5/26
 
 // Call before every bytecode unless is_skipped_even_for_preemption_checks
 // Makes single-stepping and stopping work.
+// -- claude & dmu  5/26
 void interpreter::transfer_back_to_twains_process_if_stepping_or_stopping_pre() {
   // potential optimization, but does not work yet
   // better would be to optimize interpreter and not pay for stepping when not stepping
@@ -1056,25 +1062,3 @@ void interpreter::transfer_back_to_twains_process_if_stepping_or_stopping_pre() 
 
 
 // spy
-
-
-/*
-SELF
-POP
-NONLOCAL_RETURN
-LITERAL
-READ_LOCAL
-WRITE_LOCAL
-SEND
-IMPLICIT_SEND
-BRANCH
-BRANCH_TRUE
-BRANCH_FALSE
-BRANCH_INDEXED
- 
- INDEX
- DELEGATEE
- UNDIRECTED_RESEND
- ARGUMENT_COUNT
-
-*/
