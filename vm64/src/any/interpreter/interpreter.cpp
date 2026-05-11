@@ -605,7 +605,12 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
 
   int32 resSP = sp - arg_count - (type == NormalLookupType);
   
-  if (try_pic(type, delOrNameToSend, resSP)) return;
+  oop picRes = try_pic(type, delOrNameToSend, resSP);
+  if (picRes != badOop) {
+    stack[resSP] = picRes;
+    sp = resSP + 1;
+    return;
+  }
  
   oop res;
   for (;;) {
@@ -627,7 +632,7 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
   sp = resSP + 1; // sp points one past top
 }
 
-bool interpreter::try_pic(LookupType type, oop delOrNameToSend, int32 resSP) {
+oop interpreter::try_pic(LookupType type, oop delOrNameToSend, int32 resSP) {
   // --- PIC check (normal non-primitive sends only) ---
   if ( baseLookupType(type) == NormalBaseLookupType
        && _pics
@@ -638,35 +643,30 @@ bool interpreter::try_pic(LookupType type, oop delOrNameToSend, int32 resSP) {
       InterpreterPIC& pic = _pics[pic_idx];
       mapOop rMap = rcvToSend->map()->enclosing_mapOop();
       for (int i = 0; i < pic.count; i++) {
-        if (try_pic_entry(pic, i, rMap, delOrNameToSend, arg_count, resSP))
-          return true;
+        oop picRes = try_pic_entry(pic, i, rMap, delOrNameToSend, arg_count, resSP);
+        if (picRes != badOop)
+          return picRes;
       }
     }
   }
-  return false;
+  return badOop;
 }
 
-bool interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
+oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
                                  oop delToSend, fint arg_count, int32 resSP ) {
   if (pic.entries[i].cachedMap != rMap)
-    return false;
+    return badOop;
   switch (pic.resultType[i]) {
     default: fatal1("unknown resultType %d", pic.resultType[i]);
-    case constantResult: {
+    case constantResult:
       // Constant (map slot without code): value cached in cachedMethod
-      oop res = pic.entries[i].cachedMethod;
-      stack[resSP] = res;
-      sp = resSP + 1;
-      return true;
-    }
+      return pic.entries[i].cachedMethod;
+
     case dataResult: {
       // Data slot read: read from holder at cached offset
       oop holder = pic.entries[i].cachedHolder;
       if (holder == NULL) holder = rcvToSend;
-      oop res = *oopsOop(holder)->oops(pic.slotOffset[i]);
-      stack[resSP] = res;
-      sp = resSP + 1;
-      return true;
+      return *oopsOop(holder)->oops(pic.slotOffset[i]);
     }
     case assignmentResult: {
       // Assignment: write arg to holder at cached offset, return receiver
@@ -674,10 +674,7 @@ bool interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
       if (holder == NULL) holder = rcvToSend;
       Memory->store(oopsOop(holder)->oops(pic.slotOffset[i]),
                     stack[sp - arg_count]);
-      oop res = rcvToSend;
-      stack[resSP] = res;
-      sp = resSP + 1;
-      return true;
+      return rcvToSend;
     }
     case methodResult: {
       oop holder = pic.entries[i].cachedHolder;
@@ -689,13 +686,8 @@ bool interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
                          holder,
                          &stack[sp - arg_count],
                          arg_count );
-      // push res before return trap in case of GC -- dmu 5/26
       oop res_after_trap = handle_return_trap_after_send_if_needed(res);
-      if (res_after_trap != badOop) res = res_after_trap;
-      stack[resSP] = res;
-      sp = resSP + 1;
-    
-      return true;
+      return res_after_trap == badOop ? res : res_after_trap;
     }
   }
   fatal("should not get here");

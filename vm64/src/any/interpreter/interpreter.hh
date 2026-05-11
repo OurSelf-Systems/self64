@@ -235,10 +235,10 @@ class interpreter: public abstract_interpreter {
 
 private:
   oop handle_return_trap_after_send_if_needed(oop);
-  bool try_pic(LookupType, oop delOrNameToSend, int32 resSP);
+  oop try_pic(LookupType, oop delOrNameToSend, int32 resSP);
   // If pic entry i matches rMap, produce its result, update the stack, and
   // return true; otherwise return false.  -- claude & dmu May 2026
-  bool try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
+  oop try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
                       oop delToSend, fint arg_count, int32 resSP );
 
  public:
