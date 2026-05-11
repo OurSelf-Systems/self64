@@ -605,14 +605,10 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
 
   int32 resSP = sp - arg_count - (type == NormalLookupType);
   
-#define WTF 1
-  
   oop x = try_pic(type, delOrNameToSend, resSP);
   if (x != badOop) {
-#if WTF
     stack[resSP] = x;
     sp = resSP + 1; // sp points one past top
-#endif
     return;
   }
  
@@ -681,13 +677,7 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
       // Constant (map slot without code): value cached in cachedMethod
       oop res = pic.entries[i].cachedMethod;
       assert(res != badOop, "???");
-#if !WTF
-      stack[resSP] = res;
-      sp = resSP + 1;
       return res;
-#else
-      return res;
-#endif
     }
     case dataResult: {
       // Data slot read: read from holder at cached offset
@@ -695,13 +685,7 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
       if (holder == NULL) holder = rcvToSend;
       oop res = *oopsOop(holder)->oops(pic.slotOffset[i]);
       assert(res != badOop, "???");
-#if !WTF
-      stack[resSP] = res;
-      sp = resSP + 1;
       return res;
-#else
-      return res;
-#endif
     }
     case assignmentResult: {
       // Assignment: write arg to holder at cached offset, return receiver
@@ -711,13 +695,7 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
                     stack[sp - arg_count]);
       oop res = rcvToSend;
       assert(res != badOop, "???");
-#if !WTF
-      stack[resSP] = res;
-      sp = resSP + 1;
       return res;
-#else
-      return res;
-#endif
     }
     case methodResult: {
       oop holder = pic.entries[i].cachedHolder;
@@ -731,14 +709,8 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
                          arg_count );
       // push res before return trap in case of GC -- dmu 5/26
       assert(res != badOop, "???");
-#if !WTF
-      stack[resSP] = res;
-      sp = resSP + 1;
-      return res;
-#else
       //handleReturnTrapAfterSendIfNeeded();
       return res;
-#endif
     }
   }
   fatal("should not get here");
