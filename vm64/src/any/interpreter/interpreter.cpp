@@ -522,9 +522,8 @@ void interpreter::do_send_code(bool isSelfImplicit, stringOop selector, fint arg
   else if ( is.delegatee != NULL)      type = DirectedResendLookupType;
   else                                 type =   ImplicitSelfLookupType;
 
-  if (selector == VMString[_RESTART]) {
+  if (selector == VMString[_RESTART])
     pc= restart_pc();
-  }
   else {
     selToSend= selector;
     send(type, is.delegatee, arg_count);
@@ -817,7 +816,6 @@ oop interpreter::lookup_and_send( LookupType type,
   ResourceMark rm; // for sub-objects of L and vf
   // since we come here from perform, selToSend may not be a string!
 
-
   if (UseLocalAccessBytecodes && !hasParentLocalSlot) {
     bool canCache = _pics && baseLookupType(type) == NormalBaseLookupType
                     && !isPerformLookupType(type);
@@ -825,7 +823,8 @@ oop interpreter::lookup_and_send( LookupType type,
     simpleLookup L( type,
                     rcvToSend,
                     selToSend,
-                    delOrNameToSend,                    mh,
+                    delOrNameToSend,
+                    mh,
                     NULL,                        // deps (not needed for interpreter)
                     canCache ? &adepsList : NULL ); // track assignable parent dependencies only when cacheable
 
@@ -862,7 +861,6 @@ oop interpreter::lookup_and_send( LookupType type,
     
     // Exclude performs — their selector varies at runtime, so caching
     // the result at this bytecode PC would be incorrect.
-    
     if ( canCache && L.result() != NULL ) {
       ResultType rt = L.resultType();
       // Don't cache when lookup traversed assignable parent slots —
@@ -950,7 +948,7 @@ oop interpreter::lookup_and_send( LookupType type,
                             InterpreterLookup_cont);
 
     if (NLRSupport::have_NLR_through_C()) { // recursive lookup error
-      // Clear before return: see the parallel comment in the branch above.
+      // Clear before return: see the parallel comment in the branch above. -- dmu 5/26
       oop nlr_res = NLRSupport::NLR_result_from_C();
       lookup_in_progress = NULL;
       return nlr_res;
@@ -958,6 +956,7 @@ oop interpreter::lookup_and_send( LookupType type,
 
     // Compute result first (evaluateResult uses L's fields and may
     // allocate), then clear lookup_in_progress, then return.
+    //  -- dmu 5/26
     oop res = L.evaluateResult(&stack[sp - arg_count], arg_count, NULL);
     lookup_in_progress = NULL;
     return res;

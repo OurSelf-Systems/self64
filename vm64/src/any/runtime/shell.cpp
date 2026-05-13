@@ -43,12 +43,12 @@ oop evalExpressions(Scanner* scanner) {
       }
       else
         evalMethod = create_outerMethod(EMPTY, &b);
-      
       if (!res->is_mark()) {
         // FIX: register evalMethod and the receiver as GC roots so scavenges
         // that fire inside runDoItMethod/interpret() update them. Without
         // these, the C-stack copies are stale after a scavenge moves the
         // method (or its map) out of new-gen.
+        // -- dmu & claude, 5/26
         preserved pres_method((oop)evalMethod);
         preserved pres_rcv(Memory->lobbyObj);
         res = currentProcess->runDoItMethod(pres_rcv.value,
@@ -103,9 +103,6 @@ static void processArguments(int argc, const char *argv[]) {
     if (strcmp(argv[i], "--vm-version") == 0) {
       print_vm_version = true;
     }
-    if (strcmp(argv[i], "--force-frequent-scavenges-via-small-new-space") == 0) {
-      ForceFrequentScavengesViaSmallNewSpace = true;
-    }
   }
 
   // Some implementations of getopt (I'm looking at you, GNU) rearrange argv for their own purposes.
@@ -148,7 +145,6 @@ static void processArguments(int argc, const char *argv[]) {
       lprintf("  -a\t\tTest the Assembler (added for Intel)\n");
       lprintf("  --vm-run-tests\tRun C++ VM unit tests and exit\n");
       lprintf("  --vm-version\tPrint VM version and platform info at startup\n");
-      lprintf("  --force-frequent-scavenges-via-small-new-space\tClamp eden/surv to 1/10 of defaults; cap Self attempts to grow them\n");
       lprintf("Other command line switches may be interpreted by the Self world\n");
       ::exit(0);
       break;
@@ -219,7 +215,6 @@ void abortSelf() {
 
 void run_the_VM() {
   assert(! bootstrapping, "don't get screwed again by this");
-  Memory->apply_force_frequent_scavenges_post_load();
   Memory->scavenge();
   SignalInterface::initialize();
   initHProfiler();

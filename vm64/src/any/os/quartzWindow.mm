@@ -26,6 +26,7 @@
 // prefix header for ALL sources (including .mm), whereas Makefile builds
 // only inject it for .cpp/.c/.hh files.  The headers lack include guards.
 // Test for a macro defined by config.hh (the first file in the PCH).
+// -- dmu & claude, 5/26
 # ifndef SPARC_ARCH
 #  include "_precompiled.hh"
 # endif
@@ -479,6 +480,7 @@ static void ensure_cocoa_initialized() {
     // Set an empty main menu before finishLaunching to prevent AppKit from
     // building the default menu, which triggers lazy loading of Writing Tools
     // and other frameworks — very slow under lldb due to dyld image notifications.
+    // -- dmu & claude, 5/26
     [NSApp setMainMenu:[[NSMenu alloc] init]];
     [NSApp finishLaunching];
 

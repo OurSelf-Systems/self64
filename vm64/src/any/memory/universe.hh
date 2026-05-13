@@ -148,6 +148,7 @@ class universe {
   // If ForceFrequentScavengesViaSmallNewSpace is set, tenure everything in
   // new-gen and then logically shrink the eden/from/to spaces to 1/10 of the
   // built-in defaults so scavenges fire ~10x as often.
+  // -- dmu 5/26
   void apply_force_frequent_scavenges_post_load();
   oop default_low_space_handler(oop p= NULL);
   

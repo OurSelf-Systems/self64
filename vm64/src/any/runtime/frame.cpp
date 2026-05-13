@@ -74,6 +74,7 @@ Stack* frame::my_stack()   {
 bool frame::is_compiled_self_frame(SelfFrameQuery q) {
   // Compiled bottom-of-process distinction is not introduced in this VM today;
   // the parameter is accepted for symmetry with is_interpreted_self_frame().
+  // -- dmu 5/26
   Unused(q);
   return Memory->code->contains(return_addr());
 }
@@ -179,6 +180,7 @@ bool frame::is_interpreted_self_frame(SelfFrameQuery q) {
   // exclude it: it has no meaningful caller above. For GC and other root-scan
   // callers (the default), we must NOT exclude it — its interpreter holds
   // live oops that scavenge has to walk. See SelfFrameQuery in frame.hh.
+  //  -- dmu & claude, 5/26
   if (q == AlsoCanBeUnwoundPast && is_bottom_of_process_sentinel())
     return false;
 # else
@@ -622,14 +624,14 @@ void HandleReturnTrap(oop result, char* sp_of_patched_frame,
     trivial_exit_from_return_trap(result, sp_of_patched_frame,
                                   nlr, nlrHome, nlrHomeID,
                                   selfPC, patched_self_frame);
-    if (selfPC == 0) return; // interpreter-only: normal return through C stack
+    if (selfPC == 0) return; // interpreter-only: normal return through C stack -- dmu 5/26
     ShouldNotReachHere();
   }
 
   // programming conversion / single-stepping trap / stop trap / unc. trap
   if (  conversion_needed_for_return_trap(nlr, nlrHome, nlrHomeID, convertFrame)) {
     ConvertFrame(result, sp_of_patched_frame, nlr, nlrHome, nlrHomeID,  selfPC == 0);
-    if (selfPC == 0) return; // interpreter-only: normal return through C stack
+    if (selfPC == 0) return; // interpreter-only: normal return through C stack -- dmu 5/26
     ShouldNotReachHere();
   }
   // just return through this frame, don't need to convert
@@ -679,8 +681,9 @@ void  unpatch_the_convertFrame_and_get_returnTrap_info(
     // The cascade can unwind past every real Self frame, leaving only the
     // bottom-of-process sentinel above; last_self_frame then returns NULL.
     // No convert frame to unpatch — bail.
+    // -- dmu & claude, 5/26
     if (convertFrame == NULL) {
-      lprintf("unpatch_the_convertFrame: no Self frame above sentinel; bailing\n");
+      // lprintf("unpatch_the_convertFrame: no Self frame above sentinel; bailing\n");
       return;
     }
     // Don't know if the following line works, not supporting the interp these days...dmu 2/03
@@ -713,7 +716,7 @@ void trivial_exit_from_return_trap(oop result, char* sp_of_patched_frame, bool n
                               :  patched_self_frame->send_desc(),
                             selfPC == 0);
   if (selfPC == 0)
-    return; // interpreter-only: normal return through C stack
+    return; // interpreter-only: normal return through C stack -- dmu 5/26
   ShouldNotReachHere();
 }
 

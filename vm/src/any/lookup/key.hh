@@ -108,6 +108,7 @@ class MethodLookupKey: public ScopeLookupKey {
   // about lacking GC awareness.
   // Two overloads matching simpleLookup's: a free-function callback
   // (oopsDoFn) and a closure-style callback (OopClosure*).
+  // -- dmu 5/26
   void oops_do(oopsDoFn f);
   void oops_do(class OopClosure* c);
   
@@ -155,5 +156,6 @@ class NMethodLookupKey: public MethodLookupKey {
   bool verify();
   // oops_do inherited from MethodLookupKey — NMethodLookupKey adds no new
   // oop fields, so the parent's body covers all of them.
+  // -- dmu 5/26
 };
 

@@ -61,10 +61,6 @@ void oopClass::print_oop() {
   if (t == Int_Tag) {
     smiOop(this)->print_oop();
   } else if (t == Mem_Tag) {
-//    if (!Memory->is_obj_heap((oop*)this)) {
-//      lprintf("<bad oop %#lx: Mem_Tag but not in heap>", (unsigned long)this);
-//      return;
-//    }
     memOop(this)->print_oop();
   } else if (t == Float_Tag) {
     floatOop(this)->print_oop();
@@ -361,6 +357,7 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
     // this should be valid across calls to self, right?
     abstract_vframe* vf = new_vframe(currentProcess->last_self_frame(false));
 
+#   if TARGET_IS_64BIT
     // The makeALookup sites below construct a simpleLookup (interp-only) or
     // cacheProbingLookup (compiler builds — extends simpleLookup) on the C
     // stack and then call perform_full_lookup_n / lookupNMethod /
@@ -378,7 +375,7 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
     interpreter* active_interp = currentProcess->active_interp_list;
     assert(active_interp != NULL,
            "no active interpreter — unwind_protect_prim called outside Self");
-
+#   endif
     // lookup nmethod for 1st value message send
 
 #   if defined (FAST_COMPILER) || defined(SIC_COMPILER)
@@ -391,6 +388,7 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
 #   endif
         
     makeALookup( L, doBlock, VMString[VALUE] );
+#   if TARGET_IS_64BIT
     // Register L immediately after construction. set_lookup_in_progress
     // asserts no other lookup is already in progress on this interp
     // (re-entrancy invariant). For compiler builds, &L is a
@@ -398,6 +396,7 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
     //
     // -- claude & dmu  5/26
     active_interp->set_lookup_in_progress(&L);
+#   endif
 
     nmethod* nm = NULL;
     if (Interpret)
@@ -419,6 +418,7 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
 
       protectBlock = p.value;
     }
+#   if TARGET_IS_64BIT
     // L's captures are no longer used past this point. Clear before any
     // subsequent allocation could trigger a scavenge that walks &L —
     // L's C-stack storage outlives this scope but its contents are no
@@ -427,6 +427,7 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
     //
     // -- claude & dmu  5/26
     active_interp->lookup_in_progress = NULL;
+#   endif
 
     if (!NLRSupport::have_NLR_through_C()) {
       // no nlr; just return
@@ -447,9 +448,11 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
     
     // lookup nmethod for 2nd value: message send
     makeALookup( Ltwo, protectBlock, VMString[VALUE_] );
+#   if TARGET_IS_64BIT
     // Register Ltwo. The L from earlier was already cleared above, so
     // the re-entrancy assert in set_lookup_in_progress passes here.
     active_interp->set_lookup_in_progress(&Ltwo);
+#   endif
 
     nmethod* nm2 = NULL;
     if (Interpret)
@@ -472,8 +475,10 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
 
       res = p.value;
     }
+#   if TARGET_IS_64BIT
     // Ltwo's captures no longer needed.
     active_interp->lookup_in_progress = NULL;
+#   endif
 
     // determine target of nlr
     if (NLRSupport::have_NLR_through_C() && NLRSupport::NLR_home_from_C() == 0) {

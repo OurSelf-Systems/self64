@@ -972,7 +972,6 @@ bool abstract_vframe::print_frame(fint curFrame) {
            || !as_compiled()->desc->is_lite()
 #       endif
      )) {
-
     smi len;
     oop* stack;
     get_expr_stack(stack, len);
@@ -1053,7 +1052,7 @@ void abstract_vframe::print_contents() {
             first= false;
             lprintf("| ");
           }
-          print_slot(s, method()); // THIS ONE
+          print_slot(s, method());
           break;
         }
       }

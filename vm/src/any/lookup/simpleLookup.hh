@@ -161,6 +161,8 @@ class simpleLookup: public ResourceObj {
   //   - OopClosure* version is used by InterpreterIterator and other
   //     closure-style walkers (scavenge, GC mark, etc.); non-virtual,
   //     walks the same fields via the closure.
+  //
+  // -- dmu & claude, 5/26
   virtual void oops_do(oopsDoFn f);
   void         oops_do(OopClosure* c);
 

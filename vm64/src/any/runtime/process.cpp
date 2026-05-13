@@ -238,6 +238,7 @@ void Process::start() {
   // unwind_stack_to_kill_process; their alloca'd interp structs are
   // gone, so any pointers still on active_interp_list are dangling.
   // Clear the list so frame::get_interpreter doesn't return them.
+  // -- dmu 5/26
   active_interp_list = NULL;
 # endif
   processOop cpo = processObj();
@@ -376,6 +377,7 @@ void Process::patchForSingleStepping(frame* belowFrame) {
   // Also arm when stopActivation is set: `stopping` only becomes true
   // *after* the stop-target activation has died, but the return trap that
   // detects it needs to have been patched *before* the target returns.
+  // -- dmu & claude, 5/26
   if (isSingleStepping() || stopping || stopActivation != NULL) {
     // make sure we stop at the next possible byte code
     setupPreemption();
@@ -883,6 +885,7 @@ vframeOop Process::findInsertionPoint(abstract_vframe* target) {
     // vframeOops here (frames popped eagerly during interpretation).
     // The post-kill verify at the end of killVFrameOops is the one that
     // establishes the invariant.
+    // -- dmu & claude, 5/26
 #   endif
   }
   assert(stack()->contains((char*)target->fr) ||
@@ -1030,7 +1033,7 @@ void Process::killVFrameOops(abstract_vframe* currentVF) {
   }
 
   if (check_vfo_locals) {
-    killVFrameOopsInCurrentFrame(currentVF); // IN HERE?
+    killVFrameOopsInCurrentFrame(currentVF);
     clear_check_vfo_locals();
   }
   
@@ -1039,6 +1042,7 @@ void Process::killVFrameOops(abstract_vframe* currentVF) {
     stopping = true;
     if (preemptCause == cNoCause) preemptCause = cFinishedActivation;
   }
+
   if (traceV) verifyVFrameList();
 }
 
@@ -1047,16 +1051,17 @@ void Process::killVFrameOops(abstract_vframe* currentVF) {
 //  but have since died
 
 void Process::killVFrameOopsInCurrentFrame(abstract_vframe* currentVF) {
+  
   frame* f = frame_for_check_vfo_locals(currentVF);
-  if (f == NULL) {
-    return;
-  }
+  if (f == NULL) return;
 
   vframeOop sentinel = procObj->vframeList();
+
   abstract_vframe* vf = new_vframe(f);
   vframeOop lastToKill = findInsertionPoint(vf);
 
   trace_killVFrameOopsInCurrentFrame(lastToKill, vf);
+
   if (lastToKill != sentinel) {
     vframeOop firstSurvivor = lastToKill->next();       // don't kill this one
     vframeOop prev = sentinel;  // prev guy (to delete elems from list)
@@ -1096,6 +1101,7 @@ frame* Process::frame_for_check_vfo_locals(abstract_vframe* currentVF) {
   
   if (currentVF == NULL)
     return NULL;
+  
   frame* first  = currentVF->fr;
   frame* second = first->selfSender();
   
@@ -1709,6 +1715,7 @@ void Process::nonLifoError() {
 
 
 void interruptCheck() {
+   
   if (isStackOverflow((char*)currentFrame())) {
     currentProcess->state = stopped;
     if (twainsProcess) {

@@ -87,8 +87,10 @@ volatile void NLRSupport::continue_NLR_into_interpreted_Self() {
 # if TARGET_IS_64BIT
   // On x86_64 interpreter-only builds, c_entry_point() and ContinueNLRFromC
   // don't work.  Use longjmp to unwind back to the interpreter's setjmp point.
+    
   // Clear processSemaphore before longjmp — the caller (continue_NLR_into_Self)
   // set it, but longjmp bypasses the normal cleanup path that would clear it.
+  // -- dmu & claude, 5/26
   processSemaphore = false;
   extern void interpreter_longjmp_for_NLR();
   interpreter_longjmp_for_NLR();

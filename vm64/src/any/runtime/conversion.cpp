@@ -14,7 +14,7 @@ void Conversion::doit() {
   convert();
   if (VerifyAfterConversion) Memory->verify();
   returnToSelf(result, sp, nlr, nlrHome, nlrHomeID, sd, isInterpreting);
-  if (isInterpreting) return; // interpreter-only: normal return through C stack
+  if (isInterpreting) return; // interpreter-only: normal return through C stack -- dmu 5/26
   ShouldNotReachHere();
 }
 
@@ -39,6 +39,7 @@ void Conversion::convert() {
     vdepth = 0;
     // Cascade-unwind can leave only the bottom-of-process sentinel above,
     // in which case last_self_frame returns NULL — no convert frame exists.
+    // -- dmu & claude, 5/26
     sd = convertFrame ? convertFrame->send_desc() : NULL;
     convertFrame_rl = NULL; // deallocating it
     return;
@@ -122,7 +123,6 @@ void Conversion::retarget_vfs_to_convert(frame* copiedFrame, RegisterLocator* co
 
 
 void Conversion::copy_caller() {
-  fatal("in cc??");
   frame* callerFrame = convertFrame->immediateSelfSender();
   // callerFrame can be NULL e.g. when convertNM = doIt
   // also, callerFrame is only a piece of a frame because we popped the
@@ -132,14 +132,12 @@ void Conversion::copy_caller() {
   
   if (callerFrame == NULL) {
     sd = sendDesc::first_sendDesc();
-    fatal();
     nonvols_for_caller = convertFrame_rl->sender()->for_copied_frame(convertFrame->sender());
     vf[0] = NULL;
   }
   else {
     sd = callerFrame->send_desc();
     frame* copied_callerFrame = callerFrame->copy();
-    fatal();
     nonvols_for_caller = convertFrame_rl->sender()->for_copied_frame(copied_callerFrame);
     vf[0] = new_vframe(copied_callerFrame, nonvols_for_caller)->as_compiled();
   }
@@ -155,8 +153,6 @@ void Conversion::init() {
 
   // copy the frame to convert
   frame*           copiedFrame    = convertFrame   ->copy();
-  
-  fatal("for_copied_frame???");
   RegisterLocator* copiedFrame_rl = convertFrame_rl->for_copied_frame(copiedFrame);
   
   # if TARGET_ARCH != PPC_ARCH  // vdepth fails for copiedFrame on PPC because it has no register locator -- dmu 12/02
@@ -171,8 +167,6 @@ void Conversion::init() {
   
   retarget_vfs_to_convert(copiedFrame, copiedFrame_rl);
   
-  fatal("copy_caller???");
-
   copy_caller();
 
   nms   = NEW_RESOURCE_ARRAY(         nmethod*, vdepth+1);
@@ -395,7 +389,7 @@ void Conversion::returnToSelf(oop res, char* self_sparc_fp_or_ppc_sp,
   if (isInterpretingArg) {
     return_to_interpreted_self( dest_self_fr, restartSend,
                                 self_sparc_fp_or_ppc_sp,  res, nlrHome_arg,  nlrHomeID_arg);
-    return; // interpreter-only builds: return_to_interpreted_self returns normally
+    return; // interpreter-only builds: return_to_interpreted_self returns normally -- dmu 5/26
   }
   else if (nlr_arg)
     nlr_to_compiled_self(res, restartSend, nlrHome_arg, nlrHomeID_arg,
@@ -429,12 +423,14 @@ void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSen
     // dest_self_fr may be NULL when the cascade has unwound past every real
     // Self frame and only the bottom-of-process sentinel remains above; in
     // that case there's no interp to inform about restartSend.
+    // -- dmu & claude, 5/26
     if (dest_self_fr != NULL)
       dest_self_fr->get_interpreter()->set_restartSend(restartSend);
     if (restartSend)
       NLRSupport::reset_have_NLR_through_C();
     // Capture nlr before deleting the resource area below: this->nlr
     // lives in the resource mark so reading it after delete rm is UB.
+    // -- dmu & claude, 5/26
     bool wasNLR = this && this->nlr;
     ConversionInProgress = false;
     if (this) delete rm; // free all resources
@@ -447,6 +443,7 @@ void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSen
     // single-stepping) faking an NLR would cascade up the stack and
     // terminate the process; instead let the caller's interpreter send loop
     // resume with its natural result.
+    // -- dmu & claude, 5/26
     if (wasNLR)
       NLRSupport::save_NLR_results(res, (smi)nlrHome_arg, nlrHomeID_arg);
     processSemaphore = false;

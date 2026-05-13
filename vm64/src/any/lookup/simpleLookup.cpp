@@ -508,6 +508,7 @@ void simpleLookup::print() {
 // Canonical body: the OopClosure overload walks `receiver` and delegates
 // to the key for the rest. Used by InterpreterIterator and other
 // closure-style walkers.
+// -- dmu 5/26
 void simpleLookup::oops_do(OopClosure* c) {
   c->do_oop(&receiver);
   key.oops_do(c);
@@ -515,6 +516,7 @@ void simpleLookup::oops_do(OopClosure* c) {
   // deps/adeps are dependency-list pointers, not oops.
   // If FAST_COMPILER / SIC_COMPILER builds are reactivated,
   // cacheProbingLookup must override and also call canonical_key.oops_do(c).
+  // -- dmu 5/26
 }
 
 

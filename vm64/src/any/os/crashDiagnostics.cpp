@@ -234,6 +234,7 @@ static void print_heap_layout() {
 // don't drop bytes. For stderr, callers should keep individual writes
 // < PIPE_BUF (512 on macOS) for atomicity vs. concurrent writers; regular
 // files are not subject to that limit.
+// -- dmu & claude, 5/26
 static void write_fd(int fd, const char* s, size_t n) {
   if (fd < 0) return;
   while (n > 0) {
@@ -249,11 +250,13 @@ static void write_stderr(const char* s, size_t n) {
 
 // Crash-trace file fd, set by print_native_backtrace_hybrid for the duration
 // of a single trace. -1 means no file sink (writes go only to stderr).
+// -- dmu & claude, 5/26
 static int trace_file_fd = -1;
 
 // Tee one logical line (always ends with '\n') to stderr and the trace file
 // (if open). Stderr write is one write() call <= 480 bytes so the kernel
 // won't split it against concurrent writers (macOS PIPE_BUF == 512).
+// -- dmu & claude, 5/26
 static void writeln_tee(const char* s) {
   char buf[480];
   size_t n = strlen(s);
@@ -266,6 +269,7 @@ static void writeln_tee(const char* s) {
 
 // Tee a line built from three parts (prefix + name + suffix) — used for the
 // demangled-line case to avoid extra string copies.
+// -- dmu & claude, 5/26
 static void writeln_tee3(const char* a, size_t alen,
                          const char* b, size_t blen,
                          const char* c, size_t clen) {
@@ -286,6 +290,7 @@ static void writeln_tee3(const char* a, size_t alen,
 // Parse one line of backtrace_symbols output and tee a demangled version
 // to stderr + crash-trace file.
 // Darwin format: "<frame#> <binary> <addr> <_mangled> + <offset>"
+// -- dmu & claude, 5/26
 static void emit_demangled_line(const char* line) {
   const char* z = strstr(line, " __Z");
   int skip = 2;

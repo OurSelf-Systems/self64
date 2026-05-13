@@ -369,6 +369,8 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
     // process — the head of active_interp_list. The surrounding code
     // already assumes an active Self frame exists (see the new_vframe call
     // above, which uses last_self_frame); the assert here pins that.
+    //
+    // -- dmu & claude, 5/26
     interpreter* active_interp = currentProcess->active_interp_list;
     assert(active_interp != NULL,
            "no active interpreter — unwind_protect_prim called outside Self");
@@ -389,6 +391,7 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
     // asserts no other lookup is already in progress on this interp
     // (re-entrancy invariant). For compiler builds, &L is a
     // cacheProbingLookup* which upcasts cleanly to simpleLookup*.
+    // -- dmu & claude, 5/26
     active_interp->set_lookup_in_progress(&L);
 
     nmethod* nm = NULL;
@@ -416,6 +419,7 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
     // L's C-stack storage outlives this scope but its contents are no
     // longer authoritative. Note the early-return path below (no NLR)
     // happens AFTER this clear, which is correct.
+    // -- dmu & claude, 5/26
     active_interp->lookup_in_progress = NULL;
 
     if (!NLRSupport::have_NLR_through_C()) {
@@ -439,6 +443,7 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
     makeALookup( Ltwo, protectBlock, VMString[VALUE_] );
     // Register Ltwo. The L from earlier was already cleared above, so
     // the re-entrancy assert in set_lookup_in_progress passes here.
+    // -- dmu & claude, 5/26
     active_interp->set_lookup_in_progress(&Ltwo);
 
     nmethod* nm2 = NULL;
@@ -462,7 +467,7 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
 
       res = p.value;
     }
-    // Ltwo's captures no longer needed.
+    // Ltwo's captures no longer needed. -- dmu 5/26
     active_interp->lookup_in_progress = NULL;
 
     // determine target of nlr

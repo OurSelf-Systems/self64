@@ -47,6 +47,7 @@ frame* Stack::callee_of(const frame* f) {
 // Returns the first C frame whose sender is a *real* Self frame, or NULL
 // if no Self frame exists on the stack. Never returns a frame whose sender
 // is the bottom-of-process sentinel (see frame::is_bottom_of_process_sentinel).
+// -- dmu 5/26
 frame* Stack::first_VM_frame() {
   if (process->nesting == 0)
     return NULL;
@@ -75,6 +76,7 @@ frame* Stack::first_VM_frame() {
 // Returns the topmost real Self frame on the stack, or NULL if there is
 // none. Never returns the bottom-of-process sentinel (see
 // frame::is_bottom_of_process_sentinel).
+// -- claude & dmu, 5/26
 frame* Stack::last_self_frame(bool includePrologue, RegisterLocator** rl) {
   frame* ff = first_VM_frame(); // sets senderFrame as side-effect
   if (ff == NULL) return NULL;
@@ -194,6 +196,7 @@ void Stack::frames_do(framesDoFn fn, primDoFn pfn) {
     // machinery isn't designed to climb into the bottom-of-process sentinel.
     // The sentinel still receives (*fn)(f, NULL) below, and its interpreter
     // gets iterated by FrameIterator::do_all via the default predicate.
+    // -- claude & dmu, 5/26
     if (f->is_self_frame(frame::AlsoCanBeUnwoundPast)) {
       reg_locs = reg_locs->climb_to_frame(f);
       (*fn)(f, reg_locs);
@@ -235,6 +238,7 @@ int32 Stack::depth() {
 
 static void frame_remove_patch(frame* f, RegisterLocator*) {
   // Patch removal is an unwind-side operation: the sentinel has no patch slot.
+  // -- claude & dmu, 5/26
   if (f->is_self_frame(frame::AlsoCanBeUnwoundPast))  f->remove_patch();
 }
 
@@ -380,9 +384,7 @@ void print_stack() {
   currentProcess->stack()->print();
 }
 
-static void frame_scavenge_contents(frame* f, RegisterLocator* rl) {
-  f->scavenge_contents(rl);
-}
+static void frame_scavenge_contents(frame* f, RegisterLocator* rl) { f->scavenge_contents(rl); }
 static void frame_gc_mark_contents(frame* f, RegisterLocator* rl) { f->gc_mark_contents(rl); }
 static void frame_gc_unmark_contents(frame* f, RegisterLocator* rl) { f->gc_unmark_contents(rl); }
 static bool frame_verify_result = true;

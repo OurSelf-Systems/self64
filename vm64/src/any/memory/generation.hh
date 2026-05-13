@@ -134,6 +134,7 @@ class newGeneration: public generation {
   // emptied (e.g., by a tenure-everything scavenge). Each new size is rounded
   // up to idealized_page_size and clamped to the existing physical extent.
   // The unused tail of each space's mmap region is left allocated but unused.
+  // -- dmu 5/26
   void shrink_to(smi new_eden_bytes, smi new_surv_bytes);
 
  private:

@@ -28,6 +28,7 @@ public:
   void cleanup();
   // If ForceFrequentScavengesViaSmallNewSpace is set, clamp eden_size/surv_size
   // to 1/10 of the defaults so scavenges happen far more often.
+  // -- dmu 5/26
   void apply_force_frequent_scavenges_clamp();
 };
 

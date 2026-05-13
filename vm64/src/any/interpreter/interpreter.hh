@@ -53,7 +53,6 @@ class interpreter: public abstract_interpreter {
   friend class InterpreterIterator;
 
  public:
-
   // WARNING all oops here must appear in ITERATOR below
   oop receiver;
   // next 2 are not redundant because of performs:
@@ -136,6 +135,8 @@ class interpreter: public abstract_interpreter {
   //   which already walks this interpreter's oops on every scavenge, also
   //   walks L's captures via L->oops_do(closure) when this field is
   //   non-NULL. The captures are then updated in place.
+  //
+  // -- dmu & claude, 5/26
   class simpleLookup* lookup_in_progress;
 
   // Setter that asserts the no-re-entrancy invariant: each interpreter
@@ -143,6 +144,8 @@ class interpreter: public abstract_interpreter {
   // create new interpreter activations (each with its own
   // lookup_in_progress), so re-entrancy on the same interp would indicate
   // a structural change we'd need to handle (e.g. switching to a chain).
+  //
+  // -- dmu & claude, 5/26
   inline void set_lookup_in_progress(class simpleLookup* L) {
     assert(lookup_in_progress == NULL,
            "re-entrant lookup — previous one should have been cleared");
@@ -273,11 +276,11 @@ private:
   void continue_NLR();
   
 private:
-  // must be called after every bytecode
   void transfer_back_to_twains_process_if_stepping_or_stopping_pre();
 };
 
 extern void InterpreterLookup_cont( simpleLookup *L, int32 arg_count);
+
 
 
 // for scavenging, see frame.c
@@ -370,6 +373,7 @@ class InterpreterIterator: public StackObj {
     // If a lookup is in progress on this interpreter activation, walk its
     // captured oops too so a scavenge / mark / etc. updates them in place.
     // See interpreter::lookup_in_progress for why.
+    // -- dmu & claude, 5/26
     if ((interp)->lookup_in_progress)
       (interp)->lookup_in_progress->oops_do(oop_closure);
   }

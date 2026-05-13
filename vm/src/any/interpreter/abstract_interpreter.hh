@@ -259,11 +259,13 @@ class abstract_interpreter: public AnywhereObj {
   // points: stepping or finish must not pause between one of these and
   // the SEND it modifies, or the inter-bytecode state would be observed
   // half-built.
+  // -- dmu 5/26
   static bool is_send_modifier_bytecode(u_char code, InstructionSetKind iset);
   // Pre-2026 the fast_compiler omitted preemption pcDescs
   // at these bytecodes (fscope.cpp); the interpreter's per-bytecode
   // yield must do the same.
-  bool is_skipped_even_for_preemption_checks(u_char code) {
+  // -- dmu 5/26
+    bool is_skipped_even_for_preemption_checks(u_char code) {
     return is_send_modifier_bytecode(code, mi.instruction_set);
   }
 

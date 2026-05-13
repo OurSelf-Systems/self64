@@ -288,7 +288,7 @@ class FlagSettingInt {
     "silently trace message sends (in event buffer)", false)                  \
     BOOLEAN_PRIM_TEMPLATE(template, PrintVMMessages, true,                    \
     "print VM debug messages to stderr", true)                                \
-    BOOLEAN_PRIM_TEMPLATE(template, LogVMMessages, true,                     \
+    BOOLEAN_PRIM_TEMPLATE(template, LogVMMessages, false,                     \
     "log VM debug messages to a file", true)                                  \
                                                                               \
     BOOLEAN_PRIM_TEMPLATE(template, PrintPeriod, false,                       \
