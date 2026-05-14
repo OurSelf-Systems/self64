@@ -1,0 +1,9 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/ungar/self/vms/russell_allen_self/cmake_install.cmake",
+		"/Users/ungar/self/vms/russell_allen_self/src/cmake_install.cmake",
+		"/Users/ungar/self/vms/russell_allen_self/_glue/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

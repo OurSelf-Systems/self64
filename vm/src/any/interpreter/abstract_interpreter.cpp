@@ -141,7 +141,19 @@ void abstract_interpreter::dispatch_bytecode() {
   }
 } 
 
-
+bool abstract_interpreter::is_send_modifier_bytecode(u_char code,
+                                                     InstructionSetKind iset) {
+  fint op = getOp(code);
+  return  op == INDEX_CODE
+  ||  op == DELEGATEE_CODE
+  ||  code == BuildCode(NO_OPERAND_CODE, UNDIRECTED_RESEND_CODE)
+  // Stritly speaking, should need the following, but we don't seem to,
+  //   and it's faster this way.
+  // Well, there is a mysterious infinite sendDesc finding bug, and I'm trying to fix it with this:
+  //   -- dmu 5/02
+  || (iset == TWENTIETH_CENTURY_PLUS_ARGUMENT_COUNT_INSTRUCTION_SET
+      && op == ARGUMENT_COUNT_CODE);
+}
 
 void abstract_interpreter::do_LITERAL_CODE() { 
  do_literal_code( get_literal()); 

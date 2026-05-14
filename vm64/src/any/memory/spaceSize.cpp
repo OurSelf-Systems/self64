@@ -71,3 +71,18 @@ void spaceSizes::cleanup()
 {
   APPLY_TO_SPACE_SIZES(ROUND_TO_IDEALIZED_PAGE_SIZE_TEMPLATE);
 }
+
+void spaceSizes::apply_force_frequent_scavenges_clamp()
+{
+  if (!ForceFrequentScavengesViaSmallNewSpace) return;
+  // Cap to whatever apply_force_frequent_scavenges_post_load picked at load
+  // time (either default/10 for an empty snapshot, or 110% of occupancy for
+  // a heavy one). This stops Self code from growing the saved sizes beyond
+  // the chosen stress target, while still honoring the per-snapshot decision
+  // about whether to tenure.
+  // -- claude & dmu May 2026
+  const smi cap_eden = Memory->current_sizes.eden_size;
+  const smi cap_surv = Memory->current_sizes.surv_size;
+  if (eden_size > cap_eden) eden_size = cap_eden;
+  if (surv_size > cap_surv) surv_size = cap_surv;
+}

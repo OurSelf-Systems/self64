@@ -30,6 +30,7 @@ class interpreter: public abstract_interpreter {
   friend class InterpreterIterator;
 
  public:
+
   // WARNING all oops here must appear in ITERATOR below
   oop receiver;
   // next 2 are not redundant because of performs:

@@ -50,6 +50,20 @@ if(SELF_X11)
     endif()
     link_directories(${X11_LIBRARY_DIRS})
     include_directories(${X11_INCLUDE_DIRS})
+    # Xft.h includes <ft2build.h>; FreeType headers live in a freetype2 subdir
+    if(SELF_XFT AND X11_INCLUDE_DIRS)
+      foreach(_x11dir ${X11_INCLUDE_DIRS})
+        if(IS_DIRECTORY "${_x11dir}/freetype2")
+          include_directories("${_x11dir}/freetype2")
+        endif()
+      endforeach()
+    endif()
+    # FindX11 doesn't add Xft/FreeType to X11_LIBRARIES; link them explicitly
+    if(SELF_XFT)
+      find_library(SELF_FREETYPE_LIB freetype
+        PATHS /usr/X11R6/lib /opt/X11/lib NO_DEFAULT_PATH)
+      list(APPEND 3RD_PARTY_LIBS ${X11_Xft_LIB} ${SELF_FREETYPE_LIB})
+    endif()
     list(APPEND 3RD_PARTY_LIBS ${X11_LIBRARIES} ${Fontconfig_LIBRARIES})
 endif()
 

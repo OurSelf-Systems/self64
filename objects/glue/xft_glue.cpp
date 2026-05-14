@@ -5,8 +5,20 @@
 
 # include "_glueDefs.cpp.incl"
 
+// x_includes.hh (via the PCH) renamed X11's Cursor to SelfX11Cursor
+// to avoid a clash with Carbon's Cursor struct, then #undef'd the macro.
+// Xft.h pulls in Xrender.h which references bare Cursor (and Status on
+// macOS), so we temporarily reinstate the macro while including Xft.
+# define Cursor SelfX11Cursor
+# ifdef __APPLE__
+#     define Status int
+# endif
 # include <X11/Xlib.h>
 # include <X11/Xft/Xft.h>
+# undef Cursor
+# ifdef __APPLE__
+#     undef Status
+# endif
 
 # include "xft.primMaker.hh"
 

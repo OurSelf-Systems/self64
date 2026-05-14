@@ -72,6 +72,24 @@ newGeneration::newGeneration(smi &eden_size, smi &surv_size, FILE *snap) {
   high_boundary= new_spaces + new_size;
 }
 
+void newGeneration::shrink_to(smi new_eden_bytes, smi new_surv_bytes) {
+  new_eden_bytes = roundTo(new_eden_bytes, idealized_page_size);
+  new_surv_bytes = roundTo(new_surv_bytes, idealized_page_size);
+  newSpace* spaces[3] = { eden_space, from_space, to_space };
+  smi       sizes [3] = { new_eden_bytes, new_surv_bytes, new_surv_bytes };
+  for (int i = 0; i < 3; ++i) {
+    newSpace* s = spaces[i];
+    assert(s->used() == 0, "new space must be empty before shrinking");
+    char* start   = s->spaceStart();
+    char* old_end = s->spaceEnd();
+    char* new_end = start + sizes[i];
+    if (new_end >= old_end) continue;  // not actually a shrink
+    s->bytes_top    = (oop*) new_end;
+    s->bytes_bottom = s->bytes_top;
+    s->objs_top     = s->objs_bottom;
+  }
+}
+
 void newGeneration::prepare_for_scavenge()
 {
   to_space->prepare_for_scavenge();

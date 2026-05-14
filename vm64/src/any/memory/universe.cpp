@@ -904,6 +904,8 @@ oop full_write_snapshot_prim(oop rcvrIgnored, byteVectorOop name,
 
   { APPLY_TO_SPACE_SIZES(GET_SPACE_SIZE_FROM_OBJ_TEMPLATE);
 
+    snap_sizes.apply_force_frequent_scavenges_clamp();
+
     const char *s= Memory->check_sizes_for_snapshot(snap_sizes);
     if (s) {
       failure(FH, s);

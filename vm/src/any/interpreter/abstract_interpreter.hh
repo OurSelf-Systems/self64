@@ -94,7 +94,7 @@ class abstract_interpreter_interbytecode_state: public PartObj {
   
   fint       argument_count; // count of upcoming send
 
- public:  
+ public:
   inline abstract_interpreter_interbytecode_state();
   
   void reset_index()          { index= 0; }
@@ -169,7 +169,7 @@ class abstract_interpreter: public AnywhereObj {
   class abstract_interpreter_bytecode_info        bc;
   class abstract_interpreter_interbytecode_state  is;
   
- public: 
+ public:
   inline abstract_interpreter(oop meth);
   inline abstract_interpreter(methodMap *m);
   inline abstract_interpreter(byteVectorOop codes, objVectorOop literals);
@@ -247,10 +247,28 @@ class abstract_interpreter: public AnywhereObj {
 
  public:
   virtual void interpret_method();
+  virtual frame* my_frame() {return NULL;}
   virtual void interpret_bytecode() {
     fetch_and_decode_bytecode();
     dispatch_bytecode();
   }
+  // True for the send-modifier / prefix bytecodes whose state is only
+  // meaningful as part of the upcoming send (INDEX_CODE, DELEGATEE_CODE,
+  // no-operand UNDIRECTED_RESEND_CODE, and — only in the modern
+  // instruction set — ARGUMENT_COUNT_CODE).  These are not stable stop
+  // points: stepping or finish must not pause between one of these and
+  // the SEND it modifies, or the inter-bytecode state would be observed
+  // half-built.
+  // -- dmu 5/26
+  static bool is_send_modifier_bytecode(u_char code, InstructionSetKind iset);
+  // Pre-2026 the fast_compiler omitted preemption pcDescs
+  // at these bytecodes (fscope.cpp); the interpreter's per-bytecode
+  // yield must do the same.
+  // -- dmu 5/26
+    bool is_skipped_even_for_preemption_checks(u_char code) {
+    return is_send_modifier_bytecode(code, mi.instruction_set);
+  }
+
   virtual void fetch_and_decode_bytecode();
   void dispatch_bytecode();
   

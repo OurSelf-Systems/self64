@@ -138,6 +138,7 @@ class Process: public CHeapObj {
   void setStopPoint(vframeOop stop);
   bool isStopping()             { return stopping; }
   frame* stopFrame();
+  void setStopping()            { stopping = true; }
   void resetStopping()          { stopping = false; }
 
   void killFrames(abstract_vframe* vf);

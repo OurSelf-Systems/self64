@@ -191,17 +191,53 @@ private:
 
   // testers
  public:
- 
-  bool is_compiled_self_frame();
+
+  // Refines what "is this a Self frame?" is asking. The default
+  // case names what the predicate plainly promises — a frame holding live Self
+  // execution state, including the bottom-of-process sentinel (which IS the
+  // first interpret() in the process and has live receiver/args/locals/stack).
+  // Unwind callers — return-trap patching, NLR, vframe killing — want a
+  // strictly stronger property: yes AND has a meaningful caller above me /
+  // can be unwound past. Those callers pass AlsoCanBeUnwoundPast.
+  // Cases are #if-fenced so future configurations can introduce their own
+  // distinctions without sharing this config's vocabulary.
+  //
+  // -- claude & dmu  5/26
+  enum SelfFrameQuery {
+# if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+    HoldsSelfExecutionState,    // default — sentinel YES (GC-correct)
+    AlsoCanBeUnwoundPast,       // refinement — sentinel NO (unwind-correct)
+# else
+    HoldsSelfExecutionState,    // single case; the unwind distinction is
+                                // interp-only-64-bit specific in this VM today.
+# endif
+  };
+
+  bool is_compiled_self_frame   (SelfFrameQuery q = HoldsSelfExecutionState);
   bool is_self_stub_frame();
-  bool is_interpreted_self_frame();
-  
+  bool is_interpreted_self_frame(SelfFrameQuery q = HoldsSelfExecutionState);
+
   interpreter* get_interpreter();
   interpreter* get_interpreter_of_block_scope();
-    
-  bool is_self_frame();
+  
+  bool is_self_frame(SelfFrameQuery q = HoldsSelfExecutionState);
     
   bool is_first_self_frame();
+
+  // The bottom-of-process sentinel is the synthetic frame pushed by
+  // Process::start (runtime_stubs_{aarch64,x86_64}.cpp) so that the
+  // topmost real Self frame has somewhere to "return into". It is not a
+  // Self frame for any purpose: do not patch it, do not wrap it in a
+  // vframe, do not pass it to killVFrameOops* / setWatermark /
+  // frame_for_check_vfo_locals. Stack::first_VM_frame() and
+  // Stack::last_self_frame() are responsible for filtering it out, since
+  // is_interpreted_self_frame() currently returns true on it.
+  //
+  // Added to catch a bug I created when I implemented single-stepping for Apple 64-bit.
+  // Happens in optimized builds when a send bytecode ends up in HandleReturnTrap.
+  //
+  // -- dmu 5/26
+  bool is_bottom_of_process_sentinel();
     
   fint vdepth(bool includePrologueVframe = false);
 

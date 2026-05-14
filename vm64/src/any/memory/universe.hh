@@ -20,6 +20,7 @@ extern bool page_aligned;       // Are space boundaries page aligned?
 extern bool SnapshotCode;       // reading=>snap contains code; writing=>write code
 extern bool okToUseCodeFromSnapshot;
 extern bool noCodeWarnings;     // Suppress VM startup warnings about code
+extern bool ForceFrequentScavengesViaSmallNewSpace; // clamp eden/surv to 1/10 of defaults; cap Self-set sizes
 
 extern const char* vmDate;
 
@@ -144,6 +145,11 @@ class universe {
   void swapSurvivors();
   oop scavenge(oop p = NULL);
   oop tenure(oop p = NULL);
+  // If ForceFrequentScavengesViaSmallNewSpace is set, tenure everything in
+  // new-gen and then logically shrink the eden/from/to spaces to 1/10 of the
+  // built-in defaults so scavenges fire ~10x as often.
+  // -- dmu 5/26
+  void apply_force_frequent_scavenges_post_load();
   oop default_low_space_handler(oop p= NULL);
   
   void need_scavenge() {

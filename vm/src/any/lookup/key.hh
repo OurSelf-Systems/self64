@@ -102,6 +102,15 @@ class MethodLookupKey: public ScopeLookupKey {
       &&   _methodHolder_or_map           ==   p._methodHolder_or_map
       &&   selector                       ==   p.selector
       &&   delegatee                      ==   p.delegatee; }
+
+  // Walk every captured oop. Mirrors NMethodLookupKey::oops_do (below)
+  // and addresses the long-standing comment at the top of this class
+  // about lacking GC awareness.
+  // Two overloads matching simpleLookup's: a free-function callback
+  // (oopsDoFn) and a closure-style callback (OopClosure*).
+  // -- dmu 5/26
+  void oops_do(oopsDoFn f);
+  void oops_do(class OopClosure* c);
   
   int32 hash();
   void  init_hash();
@@ -145,6 +154,8 @@ class NMethodLookupKey: public MethodLookupKey {
   void switch_pointers(oop from, oop to);
   void relocate();
   bool verify();
-  void oops_do(oopsDoFn f);
+  // oops_do inherited from MethodLookupKey — NMethodLookupKey adds no new
+  // oop fields, so the parent's body covers all of them.
+  // -- dmu 5/26
 };
 

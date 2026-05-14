@@ -1,5 +1,11 @@
 .DS_Store
 *.o
+*.d
+*.a
+*.dylib
+*.gch
+*.pch
+*.dSYM
 *~
 *.snap
 *.snap.backup
@@ -10,5 +16,6 @@
 *.xcuserstate
 *.OLD
 build/
+cmake-build-*/
 objects/glue/test*
 
