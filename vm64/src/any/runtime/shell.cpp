@@ -44,7 +44,15 @@ oop evalExpressions(Scanner* scanner) {
       else
         evalMethod = create_outerMethod(EMPTY, &b);
       if (!res->is_mark()) {
-        res = currentProcess->runDoItMethod(Memory->lobbyObj, evalMethod);
+        // FIX: register evalMethod and the receiver as GC roots so scavenges
+        // that fire inside runDoItMethod/interpret() update them. Without
+        // these, the C-stack copies are stale after a scavenge moves the
+        // method (or its map) out of new-gen.
+        // -- dmu & claude, 5/26
+        preserved pres_method((oop)evalMethod);
+        preserved pres_rcv(Memory->lobbyObj);
+        res = currentProcess->runDoItMethod(pres_rcv.value,
+                                            (slotsOop)pres_method.value);
         if (NLRSupport::have_NLR_through_C()) break;             // let NLR go through
       }
     } else if (!parser.noParseError()) {
