@@ -8,6 +8,8 @@
 
 # include "_frame.cpp.incl"
 
+extern "C" void ReturnOffTopOfProcess();
+
 
 frame* frame::nmethod_frame_chain(nmethod* nm) {
   return *nmethod_frame_chain_addr(nm); }
@@ -69,7 +71,11 @@ Stack* frame::my_stack()   {
   return s;
 }
 
-bool frame::is_compiled_self_frame() {
+bool frame::is_compiled_self_frame(SelfFrameQuery q) {
+  // Compiled bottom-of-process distinction is not introduced in this VM today;
+  // the parameter is accepted for symmetry with is_interpreted_self_frame().
+  // -- dmu 5/26
+  Unused(q);
   return Memory->code->contains(return_addr());
 }
 
@@ -77,12 +83,17 @@ bool frame::is_self_stub_frame() {
   return Memory->code->sZone->contains(return_addr());
 }
 
-bool frame::is_self_frame() {
-  return is_compiled_self_frame() || is_interpreted_self_frame();
+bool frame::is_self_frame(SelfFrameQuery q) {
+  return is_compiled_self_frame(q) || is_interpreted_self_frame(q);
 }
     
 bool frame::is_first_self_frame() {
   return is_self_frame() && selfSender() == NULL;
+}
+
+// See declaration for clarification. -- dmu 5/26
+bool frame::is_bottom_of_process_sentinel() {
+  return real_return_addr() == (char*)&ReturnOffTopOfProcess;
 }
 
 
@@ -144,7 +155,6 @@ interpreter* frame::get_interpreter_of_block_scope() {
 # endif
 }
 
-
 interpreter* frame::get_interpreter() {
   //  on sparc uses sender, on ppc, same frame
   frame* f= block_scope_of_home_frame();
@@ -154,15 +164,29 @@ interpreter* frame::get_interpreter() {
 }
 
 
-
-bool frame::is_interpreted_self_frame() {
+bool frame::is_interpreted_self_frame(SelfFrameQuery q) {
 # if TARGET_OS_VERSION == MACOSX_VERSION && !TARGET_IS_64BIT
   // breaks when scanning stack for spy (32-bit only; 64-bit has no compiler
   // so interpreter must work)
   if (Interpret) fatal("Interpreter does not work on OSX");
+  Unused(q);
   return false;
 # else
-  return get_interpreter() != NULL;
+  if (get_interpreter() == NULL) return false;
+# if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+  // The bottom-of-process sentinel has a non-NULL interpreter pointer (it IS
+  // the first interpret() in the process — live receiver/args/locals/stack).
+  // For unwind callers (return-trap patching, NLR, vframe killing), we must
+  // exclude it: it has no meaningful caller above. For GC and other root-scan
+  // callers (the default), we must NOT exclude it — its interpreter holds
+  // live oops that scavenge has to walk. See SelfFrameQuery in frame.hh.
+  //  -- dmu & claude, 5/26
+  if (q == AlsoCanBeUnwoundPast && is_bottom_of_process_sentinel())
+    return false;
+# else
+  Unused(q);
+# endif
+  return true;
 # endif
 }
   
@@ -564,7 +588,7 @@ static void patch_frame_at_end_of_NLR_for_returnTrap(frame* convertFrame, frame*
 
 
 // The caller of HandleReturnTrap is the frame that must be converted;
-// the assembly glue makes sure no registers are clobbered before 
+// the assembly glue makes sure no registers are clobbered before
 // HandleReturnTrap is called and creates a new stack frame.
 
 void HandleReturnTrap(oop result, char* sp_of_patched_frame,
@@ -586,31 +610,33 @@ void HandleReturnTrap(oop result, char* sp_of_patched_frame,
   frame* convertFrame;
   unpatch_the_convertFrame_and_get_returnTrap_info(sp_of_patched_frame, patched_self_frame,
                                                    convertFrame, selfPC);
-    
-  if (traceV) 
+  if (traceV)
     lprintf("*** HandleReturnTrap: sp_of_patched_frame = 0x%x, nlr = %d, nlrHome = 0x%x, nlrHomeID = %d patched_self_frame = 0x%x\n",
             sp_of_patched_frame, nlr, nlrHome, nlrHomeID, patched_self_frame);
 
   LOG_EVENT3("HandleReturnTrap res=%#lx sp_of_patched_frame=%#lx pc=%#lx", result, sp_of_patched_frame, selfPC);
 
   currentProcess->killVFrameOopsAndSetWatermark(convertFrame);  // kill extra vframes
-  
+
   // figure out why the frame was marked & exit appropriately
 
   if ( return_trap_was_just_for_vframeOops(selfPC, convertFrame)) {
     trivial_exit_from_return_trap(result, sp_of_patched_frame,
                                   nlr, nlrHome, nlrHomeID,
                                   selfPC, patched_self_frame);
+    if (selfPC == 0) return; // interpreter-only: normal return through C stack -- dmu 5/26
     ShouldNotReachHere();
   }
+
   // programming conversion / single-stepping trap / stop trap / unc. trap
   if (  conversion_needed_for_return_trap(nlr, nlrHome, nlrHomeID, convertFrame)) {
     ConvertFrame(result, sp_of_patched_frame, nlr, nlrHome, nlrHomeID,  selfPC == 0);
+    if (selfPC == 0) return; // interpreter-only: normal return through C stack -- dmu 5/26
     ShouldNotReachHere();
   }
   // just return through this frame, don't need to convert
   NLR_exit_from_return_trap(result, sp_of_patched_frame, nlrHome, nlrHomeID, convertFrame, selfPC);
-}  
+}
 
 
 objVectorOop OutgoingArgsOfReturnTrapOrRecompileFrame = NULL;
@@ -652,6 +678,14 @@ void  unpatch_the_convertFrame_and_get_returnTrap_info(
     // must be in interpreter, find the frame
     // skip C interp frames
     convertFrame = currentProcess->last_self_frame(true);
+    // The cascade can unwind past every real Self frame, leaving only the
+    // bottom-of-process sentinel above; last_self_frame then returns NULL.
+    // No convert frame to unpatch — bail.
+    // -- dmu & claude, 5/26
+    if (convertFrame == NULL) {
+      // lprintf("unpatch_the_convertFrame: no Self frame above sentinel; bailing\n");
+      return;
+    }
     // Don't know if the following line works, not supporting the interp these days...dmu 2/03
     OutgoingArgsOfReturnTrapOrRecompileFrame = convertFrame->patched_frame_saved_outgoing_args();
     convertFrame->remove_patch();
@@ -681,6 +715,8 @@ void trivial_exit_from_return_trap(oop result, char* sp_of_patched_frame, bool n
                               ?  NULL
                               :  patched_self_frame->send_desc(),
                             selfPC == 0);
+  if (selfPC == 0)
+    return; // interpreter-only: normal return through C stack -- dmu 5/26
   ShouldNotReachHere();
 }
 
