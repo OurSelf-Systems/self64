@@ -786,7 +786,7 @@ void compiled_vframe::enumerate_references(enumeration* e) {
 # endif // defined(FAST_COMPILER) || defined(SIC_COMPILER)
 
 interpreted_vframe::interpreted_vframe(frame* f) {
-  assert(f->is_interpreted_self_frame(), "must be right frame");
+  assert(f == NULL || f->is_interpreted_self_frame(), "must be right frame");
   fr = f;
 }
 
@@ -946,7 +946,7 @@ bool abstract_vframe::print_frame(fint curFrame) {
   oop meth = method();
   methodMap* mm = (methodMap*) meth->map();
   print_code(curFrame);
-  
+
   stringOop file = mm->file();
   if (file->length() > 0) {
     lprintf(" (");
@@ -955,17 +955,17 @@ bool abstract_vframe::print_frame(fint curFrame) {
   } else {
     lprintf(" ");
   }
-  
+
   if (selector()->is_string()) {
     stringOop(this->selector())->string_print();
   } else {
     selector()->print_oop();
   }
-  
+
   lprintf(" = ");
 
   print_contents();
-  
+
   if ( WizardMode
       && (    is_interpreted()  
 #       if defined(FAST_COMPILER) || defined(SIC_COMPILER)
@@ -1084,12 +1084,46 @@ void abstract_vframe::print_slot(slotDesc* s, oop meth) {
   s->printAugmentedName();
   lprintf(s->is_obj_slot() ? " <- " : " = ");
   oop p = get_slot(s);
-  p->print_oop();
+  bool oop_outside = p->is_mem() && !Memory->really_contains((void*)p);
+  bool map_outside = p->is_mem() && !oop_outside &&
+                     !Memory->really_contains((void*)memOop(p)->addr()->_map);
+  if (oop_outside || map_outside) {
+    const char* kind = s->is_arg_slot() ? "arg"
+                     : s->is_obj_slot() ? "obj"
+                     : s->is_map_slot() ? "map"
+                     : s->is_vm_slot()  ? "vm"  : "?";
+    int32 off = s->data->is_smi() ? smiOop(s->data)->value() : -999999;
+    lprintf("<bad slot oop %#lx (%s) kind=%s off=%d slot ",
+            (unsigned long)p,
+            oop_outside ? "oop outside heap" : "map outside heap",
+            kind, (int)off);
+    s->printAugmentedName();
+    if (is_interpreted()) {
+      interpreter* ip = ((interpreted_vframe*)this)->interp();
+      if (ip) {
+        oop* slot_addr = s->is_arg_slot() ? &ip->args[off]
+                       : &ip->locals[off - 0];
+        lprintf(" interp=%p args=%p locals=%p &slot=%p",
+                ip, ip->args, ip->locals, slot_addr);
+      } else {
+        lprintf(" interp=NULL");
+      }
+    }
+    lprintf(">");
+  } else {
+    p->print_oop();
+  }
   if (s->is_obj_slot()) {
     oop orig_p = meth->get_slot(s);
     if (orig_p != p) {
       lprintf(" \"");
-      orig_p->print_oop();
+      if (orig_p->is_mem() &&
+          (!Memory->is_obj_heap((oop*)orig_p) ||
+           !Memory->is_obj_heap((oop*)memOop(orig_p)->addr()->_map))) {
+        lprintf("<bad orig_p oop %#lx>", (unsigned long)orig_p);
+      } else {
+        orig_p->print_oop();
+      }
       lprintf("\"");
     }
   }
