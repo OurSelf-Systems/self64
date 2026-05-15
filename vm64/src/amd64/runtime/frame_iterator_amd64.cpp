@@ -11,7 +11,9 @@
 
 void FrameIterator::do_vm_frame() {
   assert(!processSemaphore, "oopClosure will not be called on resultOop in HandleReturnTrap");
+# if TARGET_ARCH == I386_ARCH
   assert(SaveOutgoingArgumentsOfPatchedFrames, "always true for I386");
+# endif
   if (!SaveOutgoingArgumentsOfPatchedFrames)
     return;
   do_incoming_arguments_of_vm_frame_called_from_self();

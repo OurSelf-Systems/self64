@@ -68,7 +68,9 @@ char* copy_c_heap_string(const char* s) {
 
 char* copy_string(const char* s, smi len) {
   char* str = NEW_RESOURCE_ARRAY( char, len+1);
-  memcpy(str, s, len+1);
+  if (len != 0) {
+    memcpy(str, s, len+1);
+  }
   str[len] = '\0';
   return str;
 }
