@@ -80,6 +80,7 @@ static char* spyLogFile= NULL;
 char* startUpSelfFile= NULL;
 static bool run_vm_tests_flag = false;
 bool print_vm_version = false;
+bool ForceFrequentScavengesViaSmallNewSpace = false;
 
 const char **prog_argv;
 int    prog_argc;
