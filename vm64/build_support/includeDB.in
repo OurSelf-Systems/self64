@@ -1198,6 +1198,7 @@ interpreter.cpp               runtime.hh
 interpreter.cpp               sendDesc.hh
 interpreter.cpp               shell.hh
 interpreter.cpp               sig.hh
+interpreter.cpp               vframeOop.hh
 
 interpreter.hh                abstract_interpreter_inline.hh
 interpreter.hh                diag_toggles.hh
