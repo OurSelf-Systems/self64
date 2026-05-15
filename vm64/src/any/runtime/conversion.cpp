@@ -14,7 +14,8 @@ void Conversion::doit() {
   convert();
   if (VerifyAfterConversion) Memory->verify();
   returnToSelf(result, sp, nlr, nlrHome, nlrHomeID, sd, isInterpreting);
-  ShouldNotReachHere(); 
+  if (isInterpreting) return; // interpreter-only: normal return through C stack -- dmu 5/26
+  ShouldNotReachHere();
 }
 
 
@@ -36,7 +37,10 @@ void Conversion::convert() {
   if (isInterpreting) {
     // already interpreted frame
     vdepth = 0;
-    sd = convertFrame->send_desc();
+    // Cascade-unwind can leave only the bottom-of-process sentinel above,
+    // in which case last_self_frame returns NULL — no convert frame exists.
+    // -- dmu & claude, 5/26
+    sd = convertFrame ? convertFrame->send_desc() : NULL;
     convertFrame_rl = NULL; // deallocating it
     return;
   }
@@ -162,7 +166,7 @@ void Conversion::init() {
   sp += copiedFrame->frame_size() * oopSize;    // assume stack grows downwards
   
   retarget_vfs_to_convert(copiedFrame, copiedFrame_rl);
-
+  
   copy_caller();
 
   nms   = NEW_RESOURCE_ARRAY(         nmethod*, vdepth+1);
@@ -382,9 +386,11 @@ void Conversion::returnToSelf(oop res, char* self_sparc_fp_or_ppc_sp,
      assert(currentProcess->preemptionPending(),  "should stop immediately after send");
   }
   
-  if (isInterpretingArg)
+  if (isInterpretingArg) {
     return_to_interpreted_self( dest_self_fr, restartSend,
                                 self_sparc_fp_or_ppc_sp,  res, nlrHome_arg,  nlrHomeID_arg);
+    return; // interpreter-only builds: return_to_interpreted_self returns normally -- dmu 5/26
+  }
   else if (nlr_arg)
     nlr_to_compiled_self(res, restartSend, nlrHome_arg, nlrHomeID_arg,
                           self_sd, self_sparc_fp_or_ppc_sp);
@@ -402,19 +408,50 @@ void Conversion::returnToSelf(oop res, char* self_sparc_fp_or_ppc_sp,
 // this may be NULL
 void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSend,
                                                    char* self_sparc_fp_or_ppc_sp, oop res, frame* nlrHome_arg, int32 nlrHomeID_arg) {
+# if !(TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER))
    // a bit slow, for sparc f is just callee of self_sparc_fp_or_ppc_sp, same frame on ppc
     frame* f= currentProcess->stack()
                 ->interpreter_frame_for_continuing_from_return_trap();
     assert(f, "must have frame to return to");
     char* continuationPC = f->c_return_pc();
-    dest_self_fr->get_interpreter()->set_restartSend(restartSend);
+# endif
+    // Skip the HandleReturnTrap-frame lookup on 64-bit interpreter-only
+    // builds: continuationPC is unused below (no ContinueNLRAfterReturnTrap),
+    // and frame::c_entry_point() is unreliable here because the BL-decoding
+    // it does fails when the optimizer shuffles call sites or the linker
+    // routes the call through a stub (see frame.cpp ~line 134).
+    // dest_self_fr may be NULL when the cascade has unwound past every real
+    // Self frame and only the bottom-of-process sentinel remains above; in
+    // that case there's no interp to inform about restartSend.
+    // -- dmu & claude, 5/26
+    if (dest_self_fr != NULL)
+      dest_self_fr->get_interpreter()->set_restartSend(restartSend);
     if (restartSend)
       NLRSupport::reset_have_NLR_through_C();
+    // Capture nlr before deleting the resource area below: this->nlr
+    // lives in the resource mark so reading it after delete rm is UB.
+    // -- dmu & claude, 5/26
+    bool wasNLR = this && this->nlr;
     ConversionInProgress = false;
     if (this) delete rm; // free all resources
     OutgoingArgsOfReturnTrapOrRecompileFrame = NULL; // done
-    ContinueNLRAfterReturnTrap( continuationPC, self_sparc_fp_or_ppc_sp, res, nlrHome_arg, nlrHomeID_arg );
+
+# if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+    // Interpreter-only builds: ContinueNLRAfterReturnTrap is a JIT assembly
+    // routine that doesn't exist.  Only fake an NLR-through-C when the
+    // return really was an NLR.  For a normal trapped return (e.g. during
+    // single-stepping) faking an NLR would cascade up the stack and
+    // terminate the process; instead let the caller's interpreter send loop
+    // resume with its natural result.
+    // -- dmu & claude, 5/26
+    if (wasNLR)
+      NLRSupport::save_NLR_results(res, (smi)nlrHome_arg, nlrHomeID_arg);
+    processSemaphore = false;
+    return;
+# else
+   ContinueNLRAfterReturnTrap( continuationPC, self_sparc_fp_or_ppc_sp, res, nlrHome_arg, nlrHomeID_arg );
     ShouldNotReachHere();
+# endif
 }
  
 // this may be NULL
