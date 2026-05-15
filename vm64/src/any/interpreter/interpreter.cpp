@@ -117,7 +117,8 @@ inline interpreter::interpreter( oop rcv,
   _my_frame = NULL;
   _prev_interp = NULL;
   _block_scope_or_NLR_target = NULL;
-  
+  lookup_in_progress = NULL;
+
   if (mi.map()->kind() == OuterMethodType) {
     setup_for_method();
   } 
@@ -205,7 +206,7 @@ oop interpret( oop rcv,
                oop _mh,
                oop* _args,
                int32 _nargs) {
-  
+
   interpreter interp(rcv, sel, del, meth, _mh, _args, _nargs);
 
   interp.set_cloned_blocks( alloca(interp.length_cloned_blocks() * sizeof(oop)));
@@ -239,7 +240,66 @@ oop interpret( oop rcv,
   interpreter::_active_interp_list = interp._prev_interp;
 # endif
 
-  return interp.top();
+  // Pre-2026 stop semantics, replicated for the interpreter.
+  // On nmethods this was driven by a return trap on the frame below
+  // the last Self frame: when stop_vfo's nmethod returned, the trap
+  // dispatched to Process::killVFrameOops, which set stopping=true /
+  // preemptCause=cFinishedActivation; the trap-handler return path
+  // then yielded.  The interpreter has no return trap, so we hook
+  // the equivalent point directly here.  We don't yield from this
+  // site — yielding now would leave the caller's pc still pointing
+  // at the send bytecode (the caller's bytecode loop hasn't run its
+  // ++pc yet).  Instead we set the same flags Process::killVFrameOops
+  // would have set, return naturally into the caller's send(), and
+  // let the per-bytecode yield in abstract_interpreter::interpret_method
+  // pick them up after ++pc — by then pc is correctly at the
+  // post-send bytecode when twains sees the yielded process.
+  
+  // How this works if stop-frame is NLR-returned through:
+  //  The trace for an NLR through stop_vfo (call C = stop_vfo, A = NLR target frame above C):
+  //
+  //  1. A block somewhere below C performs do_NONLOCAL_RETURN_CODE → start_NLR arms NLR-through-C and sets the block's pc =
+  //  return_pc().
+  //  2. Block's interpret_method exits, interpret() returns to its sender's send().
+  //  3. At every frame on the way up (including C and C's caller B), do_send_code's post-send() block runs:
+  //  if (NLRSupport::have_NLR_through_C()) {
+  //    continue_NLR();
+  //    pc = return_pc();   // = length_codes - 1
+  //  }
+  //  4. Back in that frame's bytecode loop: ++pc → pc = length_codes (off the end).
+  //  5. The 2026 per-bytecode hook in abstract_interpreter::interpret_method fires but takes the off-the-end branch — and
+  //  that branch unconditionally breaks without yielding:
+  //  if (pc >= length_codes) {
+  //    lprintf(... "single stepping off end, so keep going");
+  //    break; // single stepping does not want to see off the end of the codes
+  //  }
+  //  5. The comment says "single stepping" but the break is taken for stopping too — there's no isSingleStepping() guard on
+  //  it (the line is commented out). So the per-bytecode yield is skipped on every NLR-unwinding frame.
+  //  6. The frame's interpret() returns. When that frame happens to be C (stop_vfo), my new hook fires and sets
+  //  stopping=true / cFinishedActivation ✓.
+  //  7. Unwinding continues up through B, B's interpret() returns, etc. — none of them yield (off-the-end break) and none of
+  //   them re-enter my hook (frame mismatch).
+  //  8. Eventually NLR resolves at A. A's bytecode loop resumes with pc inside its valid range
+  //  (post-send-that-invoked-the-block).
+  //  9. Now — on the next iteration in A — the per-bytecode hook fires with isStopping() true and pc < length_codes, so it
+  //  yields with cFinishedActivation.
+  //
+  //  The yield happens — but in the NLR target frame, after the NLR has fully resolved, not in stop_vfo's immediate
+  //   caller.
+  //
+  // -- claude & dmu  5/26
+  
+  if (currentProcess
+      && currentProcess->stopActivation
+      && interp._my_frame == currentProcess->stopActivation->locals()) {
+    currentProcess->setStopping();
+    if (preemptCause == cNoCause)
+      preemptCause = cFinishedActivation;
+  }
+
+  oop result = interp.top();
+
+  return result;
 }
 
 
@@ -300,8 +360,8 @@ void interpreter::interpret_method() {
   } while ( pc == restart_pc() + 1); // interpret_method incremented it
 
   // zap blocks
-  for ( oop* cb = cloned_blocks;  
-        cb < cloned_blocks + mi.length_literals;  
+  for ( oop* cb = cloned_blocks;
+        cb < cloned_blocks + mi.length_literals;
         cb++ ) {
     if (*cb != NULL) {
       assert_block(*cb, "must be a block");
@@ -311,17 +371,30 @@ void interpreter::interpret_method() {
 }
 
 
-void interpreter::do_SELF_CODE()  { stack[sp++]= self; }
+void interpreter::do_SELF_CODE()  {
+  transfer_back_to_twains_process_if_stepping_or_stopping_pre();
+  stack[sp++]= self; }
 
-void interpreter::do_POP_CODE()  { --sp; assert(sp >= 0, "too many pops"); }
+void interpreter::do_POP_CODE()  {
+  transfer_back_to_twains_process_if_stepping_or_stopping_pre();
+  --sp; assert(sp >= 0, "too many pops"); }
 
 void interpreter::do_NONLOCAL_RETURN_CODE() {
+  transfer_back_to_twains_process_if_stepping_or_stopping_pre();
   start_NLR(stack[sp - 1]);
   pc= return_pc();
 }
 
 
 void interpreter::do_branch_code( int32 target_PC, oop target_oop ) {
+  // target_oop is a parameter on the C stack — not iterated by the interpreter
+  // GC closure. If the preempt below transfers to twains and a scavenge fires,
+  // a new-gen target_oop would otherwise dangle.
+  // -- dmu 5/26
+  preserved pres_target(target_oop);
+  transfer_back_to_twains_process_if_stepping_or_stopping_pre();
+  target_oop = pres_target.value;
+
   if ( target_oop != badOop ) { // conditional
     assert(sp > 0, "conditional branch needs stack element");
     if ( stack[--sp] != target_oop )
@@ -349,6 +422,13 @@ void interpreter::do_BRANCH_INDEXED_CODE() {
  
  
 void interpreter::do_literal_code(oop lit) {
+  // lit is a parameter on the C stack — not iterated by the interpreter
+  // GC closure. If the preempt below transfers to twains and a scavenge
+  // fires, a new-gen lit would otherwise dangle.
+  // -- dmu 5/26
+  preserved pres_lit(lit);
+  transfer_back_to_twains_process_if_stepping_or_stopping_pre();
+  lit = pres_lit.value;
   if (lit->is_block()) {
     oop cb = cloned_blocks[is.index];
     if (cb == NULL ) {
@@ -411,6 +491,7 @@ void interpreter::local_slot_desc( interpreter*& r,
 
 
 void interpreter::do_read_write_local_code(bool isWrite) {
+  transfer_back_to_twains_process_if_stepping_or_stopping_pre();
   interpreter* interp;
   slotDesc* sd;
   ResourceMark rm; // for vf
@@ -430,6 +511,10 @@ void interpreter::do_read_write_local_code(bool isWrite) {
 
  
 void interpreter::do_send_code(bool isSelfImplicit, stringOop selector, fint arg_count) {
+  // not needed because send causes a new interpreter which calls interpret_method, which calls interruptCheck
+  // -- dmu  5/26
+  // transfer_back_to_twains_process_if_stepping_or_stopping_pre();
+  
   LookupType type;
 
   if      ( !isSelfImplicit )          type =         NormalLookupType;
@@ -498,7 +583,11 @@ void interpreter::continue_NLR() {
 
 
 void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
-
+  // Do NOT hoist methodHolder() here. _methodHolder is only required
+  // to be valid on the lookup_and_send path; PIC-hit and send_prim paths
+  // may run with it uninitialized. Re-read it lazily at the call site.
+  //
+  // -- claude & dmu  5/26
   assert_string(selToSend, "better be string");
 
   // NormalLookupType means rcvr is on stack
@@ -514,91 +603,113 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
 
 
   int32 resSP = sp - arg_count - (type == NormalLookupType);
-
-  // --- PIC check (normal non-primitive sends only) ---
-  if ( baseLookupType(type) == NormalBaseLookupType
-       && _pics
-       && !stringOop(selToSend)->is_prim_name() ) {
-    int pic_idx = _pc_to_pic[pc];
-    if (pic_idx >= 0) {
-      InterpreterPIC& pic = _pics[pic_idx];
-      mapOop rMap = rcvToSend->map()->enclosing_mapOop();
-      for (int i = 0; i < pic.count; i++) {
-        if (pic.entries[i].cachedMap == rMap) {
-          oop res;
-          switch (pic.resultType[i]) {
-            case constantResult:
-              // Constant (map slot without code): value cached in cachedMethod
-              res = pic.entries[i].cachedMethod;
-              break;
-            case dataResult: {
-              // Data slot read: read from holder at cached offset
-              oop holder = pic.entries[i].cachedHolder;
-              if (holder == NULL) holder = rcvToSend;
-              res = *oopsOop(holder)->oops(pic.slotOffset[i]);
-              break;
-            }
-            case assignmentResult: {
-              // Assignment: write arg to holder at cached offset, return receiver
-              oop holder = pic.entries[i].cachedHolder;
-              if (holder == NULL) holder = rcvToSend;
-              Memory->store(oopsOop(holder)->oops(pic.slotOffset[i]),
-                            stack[sp - arg_count]);
-              res = rcvToSend;
-              break;
-            }
-            default: { // methodResult
-              oop holder = pic.entries[i].cachedHolder;
-              if (holder == NULL) holder = rcvToSend;
-              res = ::interpret( rcvToSend,
-                                 selToSend,
-                                 delOrNameToSend,
-                                 pic.entries[i].cachedMethod,
-                                 holder,
-                                 &stack[sp - arg_count],
-                                 arg_count );
-              break;
-            }
-          }
-          stack[resSP] = res;
-          sp = resSP + 1;
-          return;
-        }
-      }
-    }
+  
+  oop picRes = try_pic(type, delOrNameToSend, resSP);
+  if (picRes != badOop) {
+    stack[resSP] = picRes;
+    sp = resSP + 1;
+    return;
   }
-
+ 
   oop res;
   for (;;) {
+      res =
+      stringOop(selToSend)->is_prim_name()
+      ? send_prim()
+      : lookup_and_send( type, methodHolder(), delOrNameToSend);
+    
+    oop res_after_trap = handle_return_trap_after_send_if_needed(res);
+    if (res_after_trap == badOop) {break;}
 
-    res =
-        stringOop(selToSend)->is_prim_name()
-        ? send_prim()
-        : lookup_and_send( type, methodHolder(), delOrNameToSend);
-
-
-    if (!is_return_patched())
-      break;
-    if (get_return_patch_reason() == patched_for_profiling) {
-      break; // don't handle profiling interp yet XXX
-    }
-    // save non vol regs because HandleReturnTrap can call convert which
-    //  can call continueNLRAfterReturnTrap which (I think) cuts back the stack
-    // -- dmu 2/96
-
-    SaveNonVolRegsAndCall5( HandleReturnTrap,
-                            NLRSupport::have_NLR_through_C() ? NLRSupport::NLR_result_from_C() : stack[sp-1],
-                            (char*)currentFrame(),
-                            NLRSupport::have_NLR_through_C(),
-                            (frame*)NLRSupport::NLR_home_from_C(),
-                            NLRSupport::NLR_home_ID_from_C());
     if (!restartSend)
       break;
+#if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+    fatal("sends only restart for uncommon traps or recompilation");
+#endif
   }
   stack[resSP] = res;
   sp = resSP + 1; // sp points one past top
 }
 
+oop interpreter::try_pic(LookupType type, oop delOrNameToSend, int32 resSP) {
+  // --- PIC check (normal non-primitive sends only) ---
+  if ( baseLookupType(type) == NormalBaseLookupType
+       && _pics
+       && !stringOop(selToSend)->is_prim_name()
+      ) {
+    int pic_idx = _pc_to_pic[pc];
+    if (pic_idx >= 0) {
+      InterpreterPIC& pic = _pics[pic_idx];
+      mapOop rMap = rcvToSend->map()->enclosing_mapOop();
+      for (int i = 0; i < pic.count; i++) {
+        oop picRes = try_pic_entry(pic, i, rMap, delOrNameToSend, arg_count, resSP);
+        if (picRes != badOop)
+          return picRes;
+      }
+    }
+  }
+  return badOop;
+}
+
+oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
+                                 oop delToSend, fint arg_count, int32 resSP ) {
+  if (pic.entries[i].cachedMap != rMap)
+    return badOop;
+  switch (pic.resultType[i]) {
+    default: fatal1("unknown resultType %d", pic.resultType[i]);
+    case constantResult:
+      // Constant (map slot without code): value cached in cachedMethod
+      return pic.entries[i].cachedMethod;
+
+    case dataResult: {
+      // Data slot read: read from holder at cached offset
+      oop holder = pic.entries[i].cachedHolder;
+      if (holder == NULL) holder = rcvToSend;
+      return *oopsOop(holder)->oops(pic.slotOffset[i]);
+    }
+    case assignmentResult: {
+      // Assignment: write arg to holder at cached offset, return receiver
+      oop holder = pic.entries[i].cachedHolder;
+      if (holder == NULL) holder = rcvToSend;
+      Memory->store(oopsOop(holder)->oops(pic.slotOffset[i]),
+                    stack[sp - arg_count]);
+      return rcvToSend;
+    }
+    case methodResult: {
+      oop holder = pic.entries[i].cachedHolder;
+      if (holder == NULL) holder = rcvToSend;
+      oop res = ::interpret( rcvToSend,
+                         selToSend,
+                         delToSend,
+                         pic.entries[i].cachedMethod,
+                         holder,
+                         &stack[sp - arg_count],
+                         arg_count );
+      oop res_after_trap = handle_return_trap_after_send_if_needed(res);
+      return res_after_trap == badOop ? res : res_after_trap;
+    }
+  }
+  fatal("should not get here");
+}
+
+// thread res through here to preserve it, but return badOop if no trap needed
+oop interpreter::handle_return_trap_after_send_if_needed(oop res) {
+  // Test for profiling because that is not implemented yet -- dmu 5/26
+  if (!is_return_patched() || get_return_patch_reason() == patched_for_profiling)
+    return badOop;
+  
+  preserved p(res);
+  // save non vol regs because HandleReturnTrap can call convert which
+  //  can call continueNLRAfterReturnTrap which (I think) cuts back the stack
+  // -- dmu 2/96
+  SaveNonVolRegsAndCall5( HandleReturnTrap,
+                         NLRSupport::have_NLR_through_C() ? NLRSupport::NLR_result_from_C() : stack[sp-1],
+                         (char*)currentFrame(),
+                         NLRSupport::have_NLR_through_C(),
+                         (frame*)NLRSupport::NLR_home_from_C(),
+                         NLRSupport::NLR_home_ID_from_C());
+  return p.value;
+}
 
 
 oop interpreter::send_prim() {
@@ -704,7 +815,7 @@ oop interpreter::lookup_and_send( LookupType type,
                                          oop delOrNameToSend ) {
   ResourceMark rm; // for sub-objects of L and vf
   // since we come here from perform, selToSend may not be a string!
-   
+
   if (UseLocalAccessBytecodes && !hasParentLocalSlot) {
     bool canCache = _pics && baseLookupType(type) == NormalBaseLookupType
                     && !isPerformLookupType(type);
@@ -717,6 +828,12 @@ oop interpreter::lookup_and_send( LookupType type,
                     NULL,                        // deps (not needed for interpreter)
                     canCache ? &adepsList : NULL ); // track assignable parent dependencies only when cacheable
 
+    // Register L so a scavenge fired during the lookup updates L's
+    // captured oops in place. Asserts no other lookup is in progress on
+    // this interpreter (re-entrancy invariant).
+    // -- claude & dmu  5/26
+    set_lookup_in_progress(&L);
+
     // XXXXXX check code table, use compiled method, get compiler to call me
 
 #   if TARGET_IS_64BIT
@@ -724,10 +841,24 @@ oop interpreter::lookup_and_send( LookupType type,
 #   endif
     switchToVMStack_intSend( &L, arg_count, InterpreterLookup_cont);
     if (NLRSupport::have_NLR_through_C()) { // recursive lookup error
-      return NLRSupport::NLR_result_from_C();
+      // Clear before the function returns. After the return, L's C-stack
+      // storage is gone; a still-set lookup_in_progress would dangle and
+      // the next scavenge that walks this interp would deref it.
+      // -- claude & dmu  5/26
+      oop nlr_res = NLRSupport::NLR_result_from_C();
+      lookup_in_progress = NULL;
+      return nlr_res;
     }
 
     // Fill PIC for normal sends that found a result.
+    
+    // Leave lookup_in_progress set throughout this block:
+    // the PIC-fill code reads L's fields (L.result(), L.resultType(),
+    // L.receiverMapOop()), and any allocation in here could trigger a
+    // scavenge that must still see L's captures. Cleared after
+    // L.evaluateResult below, before returning.
+    // -- claude & dmu  5/26
+    
     // Exclude performs — their selector varies at runtime, so caching
     // the result at this bytecode PC would be incorrect.
     if ( canCache && L.result() != NULL ) {
@@ -775,7 +906,14 @@ oop interpreter::lookup_and_send( LookupType type,
       }
     }
 
-    return  L.evaluateResult(&stack[sp - arg_count], arg_count, NULL);
+    // Compute result FIRST (evaluateResult uses L's fields and may
+    // allocate), then clear lookup_in_progress, then return. The clear
+    // must happen before the function returns so the field doesn't
+    // outlive L's C-stack storage.
+    // -- claude & dmu  5/26
+    oop res = L.evaluateResult(&stack[sp - arg_count], arg_count, NULL);
+    lookup_in_progress = NULL;
+    return res;
   }
   else {
     FlushRegisterWindows();
@@ -788,7 +926,13 @@ oop interpreter::lookup_and_send( LookupType type,
                     &ivf,
                     NULL,
                     NULL);
-                  
+
+    // Register L (a vframeLookup IS-A simpleLookup) so a scavenge fired
+    // during the lookup updates L's captured oops in place.
+    // -- claude & dmu  5/26
+
+    set_lookup_in_progress(&L);
+
     // XXXXXX check code table, use compiled method, get compiler to call me
 
     /* see runtime.h for explanation of SaveNonVol...
@@ -804,10 +948,18 @@ oop interpreter::lookup_and_send( LookupType type,
                             InterpreterLookup_cont);
 
     if (NLRSupport::have_NLR_through_C()) { // recursive lookup error
-      return NLRSupport::NLR_result_from_C();
+      // Clear before return: see the parallel comment in the branch above. -- dmu 5/26
+      oop nlr_res = NLRSupport::NLR_result_from_C();
+      lookup_in_progress = NULL;
+      return nlr_res;
     }
-  
-    return L.evaluateResult(&stack[sp - arg_count], arg_count, NULL);
+
+    // Compute result first (evaluateResult uses L's fields and may
+    // allocate), then clear lookup_in_progress, then return.
+    //  -- dmu 5/26
+    oop res = L.evaluateResult(&stack[sp - arg_count], arg_count, NULL);
+    lookup_in_progress = NULL;
+    return res;
   }
   return NULL; // silence compiler
 }
@@ -868,6 +1020,46 @@ void interpreter::print() {
   lprintf("\n\tselToSend: "); selToSend->print_oop();
 }
 
+// Per-bytecode yield for single-stepping and finish (stop-at-activation).
+// The scheduler's TWAINS primitive sets isSingleStepping() when resuming
+// a stepped process; `stopping` becomes true once the stop-target
+// activation returns.  In either case we want to hand control back to
+// twains at the very next bytecode boundary.  pc is advanced above so
+// it points to the next bytecode to execute at yield time.
+// MOVE OUT OF LOOP! see fastPreemptionCheck in interpret_method
+//
+// Someday, don't even go back into interpreter loop merely to single-step.
+// Just dispatch to the next bytecode.
+//
+// -- claude & dmu  5/26
+
+// Call before every bytecode unless is_skipped_even_for_preemption_checks
+// Makes single-stepping and stopping work.
+// -- claude & dmu  5/26
+void interpreter::transfer_back_to_twains_process_if_stepping_or_stopping_pre() {
+  // potential optimization, but does not work yet
+  // better would be to optimize interpreter and not pay for stepping when not stepping
+  // -- dmu 5/26
+  //  fastPreemptionCheck();
+  //  return;
+  
+  const auto length_codes = mi.length_codes;
+  const auto relevant_pc = pc;
+  const auto relevant_code = mi.codes[relevant_pc];
+  assert(!is_skipped_even_for_preemption_checks(relevant_code), "should not be here");
+  if (currentProcess
+      && (currentProcess->isSingleStepping() || currentProcess->isStopping())
+      && twainsProcess
+      && !processSemaphore) {
+    if (preemptCause == cNoCause)
+      preemptCause = currentProcess->isSingleStepping()
+      ? cSingleStepped : cFinishedActivation;
+    // caller will increment pc, scheduler expects an incremented pc
+    twainsProcess->transfer();
+  }
+}
+
+
 // XXX look at these:
 // all 4 sends
 // sending to interp
@@ -884,4 +1076,3 @@ void interpreter::print() {
 
 
 // spy
-

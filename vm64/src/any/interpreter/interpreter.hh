@@ -10,7 +10,6 @@
 
 extern oop sneaky_method_argument_to_interpret;
 
-
 extern "C" {
   oop interpret( oop rcv,
                  oop sel,
@@ -103,10 +102,55 @@ class interpreter: public abstract_interpreter {
   static interpreter* _active_interp_list;
 
   static interpreter* find_interpreter_for_frame(frame* f);
-
+ 
   InterpreterPIC* _pics;       // points into InterpreterPICTable (heap) or NULL
   int32           _num_pics;
   int16_t*        _pc_to_pic;  // points into InterpreterPICTable (heap) or NULL
+
+  // Pointer to the in-progress simpleLookup on this interpreter activation,
+  // or NULL when no lookup is active.
+  //
+  // When a scavenge can happen during a lookup:
+  //   interpreter::lookup_and_send constructs `simpleLookup L` on the C
+  //   stack and then calls switchToVMStack_intSend(&L, ...). The lookup
+  //   itself may invoke primitives, recurse into interpret() to run user
+  //   code, and allocate — and any allocation can trigger a scavenge. So
+  //   between L's construction and the post-call use of L's fields
+  //   (L.evaluateResult, PIC cache fill), an arbitrary number of scavenges
+  //   may fire.
+  //
+  // Why that's a problem:
+  //   L's constructor captures the current `receiver`, `selector`,
+  //   `delegatee`, the receiver's mapOop, and `methodHolder_or_map` — all
+  //   heap pointers — into L's fields. The scavenger walks the heap and
+  //   the Self stacks but does NOT walk the C stack. So L's captures go
+  //   stale across the call: their pointees have been relocated, but L
+  //   still holds the pre-move addresses. Subsequent reads (evaluateResult,
+  //   PIC fill) see stale data and dispatch the wrong method, leaving
+  //   is.argument_count inconsistent with the real selector — surfacing
+  //   later as the "argument_count N != selector's arg_count M" fatal.
+  //
+  // The fix:
+  //   Stash &L here for the duration of the call. InterpreterIterator,
+  //   which already walks this interpreter's oops on every scavenge, also
+  //   walks L's captures via L->oops_do(closure) when this field is
+  //   non-NULL. The captures are then updated in place.
+  //
+  // -- dmu & claude, 5/26
+  class simpleLookup* lookup_in_progress;
+
+  // Setter that asserts the no-re-entrancy invariant: each interpreter
+  // activation has at most one lookup in progress at a time. Nested sends
+  // create new interpreter activations (each with its own
+  // lookup_in_progress), so re-entrancy on the same interp would indicate
+  // a structural change we'd need to handle (e.g. switching to a chain).
+  //
+  // -- dmu & claude, 5/26
+  inline void set_lookup_in_progress(class simpleLookup* L) {
+    assert(lookup_in_progress == NULL,
+           "re-entrant lookup — previous one should have been cleared");
+    lookup_in_progress = L;
+  }
 
 # if TARGET_IS_64BIT
   // On x86_64 interpreter-only builds, ContinueNLRFromC and c_entry_point()
@@ -153,7 +197,10 @@ class interpreter: public abstract_interpreter {
   void  attach_pics();  // look up or create PICs in the persistent table
 
   void interpret_method();
-  
+
+  frame* my_frame() {return _my_frame; }
+
+
   oop methodHolder() {
     assert( ! _methodHolder->is_map(), "interp mh always object");
     return _methodHolder;
@@ -188,7 +235,15 @@ class interpreter: public abstract_interpreter {
                        oop delegatee);
                       
   oop send_prim( );
-  
+
+private:
+  oop handle_return_trap_after_send_if_needed(oop);
+  oop try_pic(LookupType, oop delOrNameToSend, int32 resSP);
+  // If pic entry i matches rMap, produce its result, update the stack, and
+  // return true; otherwise return false.  -- claude & dmu May 2026
+  oop try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
+                      oop delToSend, fint arg_count, int32 resSP );
+
  public:
   oop try_perform_prim( bool hasFailBlock,
                         bool& is_perform );
@@ -219,6 +274,9 @@ class interpreter: public abstract_interpreter {
   void setup_for_block(  );
   void start_NLR(oop res);
   void continue_NLR();
+  
+private:
+  void transfer_back_to_twains_process_if_stepping_or_stopping_pre();
 };
 
 extern void InterpreterLookup_cont( simpleLookup *L, int32 arg_count);
@@ -303,14 +361,21 @@ class InterpreterIterator: public StackObj {
         ++p) { 
       if (*p != NULL) { oop_closure->do_oop(p); } 
     }
-    for (p = (interp)->stack;  p < &(interp)->stack[(interp)->sp];  p++) { 
+    for (p = (interp)->stack;  p < &(interp)->stack[(interp)->sp];  p++) {
       oop_closure->do_oop(p);
-    } 
+    }
     if (zap) for ( ; p < &(interp)->stack[(interp)->length_stack()]; p++) { 
       *p = badOop;
     }
     p =       &(interp)->rcvToSend;  oop_closure->do_oop(p);
     p = (oop*)&(interp)->selToSend;  oop_closure->do_oop(p);
+
+    // If a lookup is in progress on this interpreter activation, walk its
+    // captured oops too so a scavenge / mark / etc. updates them in place.
+    // See interpreter::lookup_in_progress for why.
+    // -- dmu & claude, 5/26
+    if ((interp)->lookup_in_progress)
+      (interp)->lookup_in_progress->oops_do(oop_closure);
   }
-};  
+};
     
