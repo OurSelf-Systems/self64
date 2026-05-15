@@ -5,6 +5,9 @@
 
 # pragma implementation "process.hh"
 # include "_process.cpp.incl"
+# include <dlfcn.h>
+
+extern "C" void ReturnOffTopOfProcess();
 
 // valid state transitions for processes:
 //
@@ -230,6 +233,14 @@ void Process::start() {
   // be deallocated either by TWAINS or during the next scavenge.
   
   state = aborting;
+# if TARGET_IS_64BIT
+  // The process's interpret() C frames have just been unwound by
+  // unwind_stack_to_kill_process; their alloca'd interp structs are
+  // gone, so any pointers still on active_interp_list are dangling.
+  // Clear the list so frame::get_interpreter doesn't return them.
+  // -- dmu 5/26
+  active_interp_list = NULL;
+# endif
   processOop cpo = processObj();
   cpo->kill();
   
@@ -363,7 +374,11 @@ void Process::resetSingleStepping() {
 }
 
 void Process::patchForSingleStepping(frame* belowFrame) {
-  if (isSingleStepping() || stopping) {
+  // Also arm when stopActivation is set: `stopping` only becomes true
+  // *after* the stop-target activation has died, but the return trap that
+  // detects it needs to have been patched *before* the target returns.
+  // -- dmu & claude, 5/26
+  if (isSingleStepping() || stopping || stopActivation != NULL) {
     // make sure we stop at the next possible byte code
     setupPreemption();
     if (inSelf()) {
@@ -862,7 +877,16 @@ vframeOop Process::findInsertionPoint(abstract_vframe* target) {
     static fint findInseritonPoint_count = 0;
     ++findInseritonPoint_count;
     lprintf("*** Entering Process::findInsertionPoint(0x%x), %d\n", target, findInseritonPoint_count);
+#   if defined(FAST_COMPILER) || defined(SIC_COMPILER)
     verifyVFrameList();
+#   else
+    // Interpreter-only: findInsertionPoint is called from killVFrameOops
+    // *before* the kill walk, so the list routinely contains stale
+    // vframeOops here (frames popped eagerly during interpretation).
+    // The post-kill verify at the end of killVFrameOops is the one that
+    // establishes the invariant.
+    // -- dmu & claude, 5/26
+#   endif
   }
   assert(stack()->contains((char*)target->fr) ||
          ((ConversionInProgress || theRecompilation)
@@ -991,7 +1015,7 @@ void Process::killVFrameOops(abstract_vframe* currentVF) {
   vframeOop lastToKill;
   if (currentVF) {
     lastToKill = findInsertionPoint(currentVF);
-    if (traceV) 
+    if (traceV)
       lprintf("*** killVFrameOops(currentVF = 0x%x, fr = 0x%x, lastToKill 0x%x)\n",
               currentVF, currentVF->fr, lastToKill);
   } else {
@@ -1080,7 +1104,56 @@ frame* Process::frame_for_check_vfo_locals(abstract_vframe* currentVF) {
   
   frame* first  = currentVF->fr;
   frame* second = first->selfSender();
-
+  
+  // Defensive: when invoked via HandleReturnTrap on a return that unwinds off
+  // the top of the process, `first` is the bottom sentinel frame
+  // (PC = ReturnOffTopOfProcess) and has no Self sender. That is not a bug --
+  // there is simply no frame above to check vfo locals against. Treat it the
+  // same as the `currentVF == NULL` case at the top of this function and
+  // return NULL so callers (killVFrameOopsInCurrentFrame, etc.) skip the
+  // check cleanly. Without this guard we crash dereferencing `second` at the
+  // `second->vfo_locals_of_home_frame()` log line below, or fatal at
+  // "null second".
+  //
+  // This happens with an optimized build of the 64-bit Mac interpreter.
+  // With the sequence: halt. 3 + 4     attach: 0      10 do: [step]
+  //
+  // When this happens, the "first" frame's pc points into ReturnOffTopOfProcess
+  //
+  // At this point, I'm not sure if there is a bug in the caller, which is: Process::killVFrameOopsInCurrentFrame(abstract_vframe*)
+  //
+  // Although the caller+ watches for ReturnOffTopOfProcess, we are still seeing
+  // other frames that are in the middle of primitive callees. So there may be more bugs, but
+  // will defend for now.
+  // -- dmu 5/26
+  
+  char* first_pc = first->real_return_addr();
+  if (first_pc == (char*)&ReturnOffTopOfProcess) {
+    if (traceV) lprintf("frame_for_check_vfo_locals: first is bottom-of-process sentinel, returning NULL\n");
+    return NULL;
+  }
+  if (second == NULL) {
+    Dl_info dl;
+    const char* sym = "?";
+    long off = 0;
+    if (dladdr((void*)first_pc, &dl) && dl.dli_sname) {
+      sym = dl.dli_sname;
+      off = (long)((char*)first_pc - (char*)dl.dli_saddr);
+    }
+    lprintf("frame_for_check_vfo_locals: unexpected NULL selfSender\n"
+            "  first = %p  pc = %p  %s + 0x%lx (dladdr reports nearest *exported* symbol)\n"
+            "  is_self=%d  is_interp=%d  is_compiled=%d  is_sentinel=%d\n"
+            "  ReturnOffTopOfProcess = %p\n",
+            first, first_pc, sym, off,
+            first->is_self_frame(),
+            first->is_interpreted_self_frame(),
+            first->is_compiled_self_frame(),
+            first->is_bottom_of_process_sentinel(),
+            (void*)&ReturnOffTopOfProcess);
+    first->print();
+    return NULL;
+  }
+  
   // check to see if we have returned since check_vfo_locals
   
   // if frame is no longer on stack, all vfos have been killed through the
@@ -1314,7 +1387,7 @@ void Process::traceAndLog_killVFrameOopsAndSetWatermark( frame* current,
       currentVF->print_frame(0);
       abstract_vframe* s = currentVF->sender();
       if (s) s->print_frame(1);
-    }
+   }
   }
 }
 
