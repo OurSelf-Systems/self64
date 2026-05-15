@@ -190,11 +190,22 @@ void NMethodLookupKey::switch_pointers(oop from, oop to) {
   SWITCH_POINTERS_TEMPLATE(&delegatee);
 }
 
-void NMethodLookupKey::oops_do(oopsDoFn f) {
-  OOPS_DO_TEMPLATE(&_receiverMapOop,f);
-  OOPS_DO_TEMPLATE(&_methodHolder_or_map,f);
-  OOPS_DO_TEMPLATE(&selector,f);
-  OOPS_DO_TEMPLATE(&delegatee,f);
+// Canonical body: the OopClosure overload walks the four captured oops.
+// -- dmu 5/26
+void MethodLookupKey::oops_do(OopClosure* c) {
+  c->do_oop((oop*)&selector);
+  c->do_oop((oop*)&delegatee);
+  c->do_oop((oop*)&_receiverMapOop);
+  c->do_oop((oop*)&_methodHolder_or_map);
 }
 
+
+// Adapter overload: wrap the function-pointer callback in an
+// OopLocationsDoer (OOPS_DO_TEMPLATE semantics — the callback receives
+// the slot address and can read/write *p) and delegate.
+// -- dmu 5/26
+void MethodLookupKey::oops_do(oopsDoFn f) {
+  OopLocationsDoer doer(f);
+  oops_do(&doer);
+}
 
