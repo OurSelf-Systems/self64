@@ -10,6 +10,13 @@
 # include <signal.h>
 # include <sys/utsname.h>
 # include <unistd.h>
+# include <cxxabi.h>
+# include <stdlib.h>
+# include <string.h>
+# include <errno.h>
+# include <pthread.h>
+# include <fcntl.h>
+# include <stdio.h>
 
 # if TARGET_OS_VERSION == MACOSX_VERSION
 #   include <mach/mach.h>
@@ -223,13 +230,180 @@ static void print_heap_layout() {
 }
 
 
-static void print_native_stack_trace() {
-  lprintf("\nNative stack trace:\n");
+// Write directly to a fd. Retries on EINTR / partial writes so signals
+// don't drop bytes. For stderr, callers should keep individual writes
+// < PIPE_BUF (512 on macOS) for atomicity vs. concurrent writers; regular
+// files are not subject to that limit.
+// -- dmu & claude, 5/26
+static void write_fd(int fd, const char* s, size_t n) {
+  if (fd < 0) return;
+  while (n > 0) {
+    ssize_t w = write(fd, s, n);
+    if (w < 0) { if (errno == EINTR) continue; break; }
+    if (w == 0) break;
+    s += w; n -= (size_t)w;
+  }
+}
+static void write_stderr(const char* s, size_t n) {
+  write_fd(STDERR_FILENO, s, n);
+}
+
+// Crash-trace file fd, set by print_native_backtrace_hybrid for the duration
+// of a single trace. -1 means no file sink (writes go only to stderr).
+// -- dmu & claude, 5/26
+static int trace_file_fd = -1;
+
+// Tee one logical line (always ends with '\n') to stderr and the trace file
+// (if open). Stderr write is one write() call <= 480 bytes so the kernel
+// won't split it against concurrent writers (macOS PIPE_BUF == 512).
+// -- dmu & claude, 5/26
+static void writeln_tee(const char* s) {
+  char buf[480];
+  size_t n = strlen(s);
+  if (n > sizeof(buf) - 2) n = sizeof(buf) - 2;
+  memcpy(buf, s, n);
+  buf[n++] = '\n';
+  write_stderr(buf, n);
+  write_fd(trace_file_fd, buf, n);
+}
+
+// Tee a line built from three parts (prefix + name + suffix) — used for the
+// demangled-line case to avoid extra string copies.
+// -- dmu & claude, 5/26
+static void writeln_tee3(const char* a, size_t alen,
+                         const char* b, size_t blen,
+                         const char* c, size_t clen) {
+  char buf[480];
+  size_t cap = sizeof(buf) - 1; // leave room for '\n'
+  size_t off = 0;
+  size_t take = alen < cap - off ? alen : cap - off;
+  memcpy(buf + off, a, take); off += take;
+  take = blen < cap - off ? blen : cap - off;
+  memcpy(buf + off, b, take); off += take;
+  take = clen < cap - off ? clen : cap - off;
+  memcpy(buf + off, c, take); off += take;
+  buf[off++] = '\n';
+  write_stderr(buf, off);
+  write_fd(trace_file_fd, buf, off);
+}
+
+// Parse one line of backtrace_symbols output and tee a demangled version
+// to stderr + crash-trace file.
+// Darwin format: "<frame#> <binary> <addr> <_mangled> + <offset>"
+// -- dmu & claude, 5/26
+static void emit_demangled_line(const char* line) {
+  const char* z = strstr(line, " __Z");
+  int skip = 2;
+  if (!z) { z = strstr(line, " _Z"); skip = 1; }
+  if (!z) { writeln_tee(line); return; }
+  const char* mangled = z + skip;
+  const char* end = mangled;
+  while (*end && *end != ' ') ++end;
+  size_t mlen = end - mangled;
+  char mcopy[256];
+  if (mlen >= sizeof(mcopy)) { writeln_tee(line); return; }
+  memcpy(mcopy, mangled, mlen);
+  mcopy[mlen] = '\0';
+
+  int status = 0;
+  char* demangled = abi::__cxa_demangle(mcopy, nullptr, nullptr, &status);
+  if (status == 0 && demangled) {
+    size_t prefix_len = (z + 1) - line;
+    writeln_tee3(line, prefix_len,
+                 demangled, strlen(demangled),
+                 end, strlen(end));
+    free(demangled);
+  } else {
+    char tail[320];
+    int n = snprintf(tail, sizeof(tail), "   [demangle status=%d, token=\"%s\"]",
+                     status, mcopy);
+    writeln_tee3(line, strlen(line), tail, n > 0 ? (size_t)n : 0, "", 0);
+  }
+}
+
+// Process-wide lock so two concurrent fatals (e.g. another thread also
+// crashing) don't interleave their traces. Uses a CAS spinlock instead of
+// pthread_mutex because this can be called from a signal handler where
+// pthread_mutex_lock is technically unsafe.
+static volatile int trace_lock = 0;
+
+static void acquire_trace_lock() {
+  // Up to ~1s of spinning, then proceed without the lock. We never want a
+  // fatal handler to deadlock here.
+  for (int i = 0; i < 10000; ++i) {
+    if (__sync_bool_compare_and_swap(&trace_lock, 0, 1)) return;
+    usleep(100);
+  }
+}
+static void release_trace_lock() {
+  __sync_bool_compare_and_swap(&trace_lock, 1, 0);
+}
+
+
+void print_native_backtrace_hybrid() {
+  acquire_trace_lock();
+  fflush(stderr);
+
+  // Open a dedicated crash-trace file. Stderr is best-effort (the Xcode
+  // debugger console silently drops bytes once its buffer fills); the file
+  // is the source of truth.
+  char trace_path[64];
+  snprintf(trace_path, sizeof(trace_path),
+           "/tmp/Self.crash_trace.%d.log", (int)getpid());
+  trace_file_fd = open(trace_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+  // Tell stderr where the durable copy lives, before printing the trace.
+  char ptr_msg[128];
+  snprintf(ptr_msg, sizeof(ptr_msg),
+           "(full native trace also written to %s)", trace_path);
+  writeln_tee("");
+  writeln_tee(ptr_msg);
+
   void* frames[64];
   int n = backtrace(frames, 64);
-  // Write directly to stderr to avoid malloc (backtrace_symbols is not signal-safe).
-  // This bypasses lprintf, so the backtrace won't appear in the VM log file.
-  backtrace_symbols_fd(frames, n, STDERR_FILENO);
+
+  writeln_tee("==================================================================");
+  writeln_tee("  NATIVE STACK TRACE -- RAW (async-signal-safe, always mangled)");
+  writeln_tee("==================================================================");
+  writeln_tee("");
+  // We use backtrace_symbols (not _fd) so each frame can be teed to both
+  // stderr and the trace file. backtrace_symbols allocates with malloc and
+  // is not async-signal-safe, but if heap is corrupt we still got the rest
+  // of the trace context above (the raw banner) before this point.
+  char** symbols = backtrace_symbols(frames, n);
+  if (symbols) {
+    for (int i = 0; i < n; ++i) writeln_tee(symbols[i]);
+  } else {
+    // Fallback: backtrace_symbols failed. Use the async-signal-safe fd
+    // variant so we still get *something* on stderr (won't reach the file).
+    backtrace_symbols_fd(frames, n, STDERR_FILENO);
+  }
+
+  writeln_tee("");
+  writeln_tee("==================================================================");
+  writeln_tee("  NATIVE STACK TRACE -- DEMANGLED (best-effort, may fail on heap bugs)");
+  writeln_tee("==================================================================");
+  writeln_tee("");
+  if (symbols) {
+    for (int i = 0; i < n; ++i) emit_demangled_line(symbols[i]);
+    free(symbols);
+  } else {
+    writeln_tee("  (backtrace_symbols failed)");
+  }
+  writeln_tee("==================================================================");
+  writeln_tee(ptr_msg);
+  writeln_tee("");
+
+  // Flush + close before returning. fatal_handler is about to call
+  // simulate_fatal_signal / OS::terminate; without fsync, buffered bytes
+  // could be lost.
+  if (trace_file_fd >= 0) {
+    fsync(trace_file_fd);
+    close(trace_file_fd);
+    trace_file_fd = -1;
+  }
+
+  release_trace_lock();
 }
 
 
@@ -247,7 +421,7 @@ void print_crash_diagnostics(int sig, char* addr, int32 code) {
   lprintf("\nRegisters:\n");
   InterruptedContext::print_registers();
 
-  print_native_stack_trace();
+  print_native_backtrace_hybrid();
 
   lprintf("--------------------------\n");
 }
