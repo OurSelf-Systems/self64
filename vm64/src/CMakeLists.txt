@@ -290,6 +290,8 @@ set(SRC_any
   any/runtime/debug.hh
   any/runtime/debugPrintable.cpp
   any/runtime/debugPrintable.hh
+  any/runtime/diag_toggles.cpp
+  any/runtime/diag_toggles.hh
   any/runtime/error.hh
   any/runtime/eventlog.cpp
   any/runtime/eventlog.hh
