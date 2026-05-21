@@ -73,6 +73,22 @@ void InterruptedContext::setupPreemptionFromSignal() {
     return  (int*) &scp->uc_mcontext.mc_gpregs.gp_x[29];
   }
 
+# elif TARGET_OS_VERSION == NETBSD_VERSION
+
+  // NetBSD/aarch64 mcontext_t (from <aarch64/mcontext.h> → <arm/mcontext.h>):
+  //   __gregs[_NGREG] indexed by _REG_X0..X30, _REG_SP, _REG_PC (= _REG_ELR),
+  //   _REG_SPSR, _REG_TPIDR. _REG_FP and _REG_LR are convenience aliases for
+  //   _REG_X29 and _REG_X30 respectively.
+  char** InterruptedContext::pc_addr() {
+    return  (char**) &scp->uc_mcontext.__gregs[_REG_PC];
+  }
+  int* InterruptedContext::sp_addr() {
+    return  (int*) &scp->uc_mcontext.__gregs[_REG_SP];
+  }
+  int* InterruptedContext::fp_addr() {
+    return  (int*) &scp->uc_mcontext.__gregs[_REG_FP];
+  }
+
 # else
   # error Unsupported OS for aarch64
 # endif
@@ -139,6 +155,24 @@ void InterruptedContext::print_registers() {
     lprintf("sp        = 0x%lx\n", mc->mc_gpregs.gp_sp);
     lprintf("pc        = 0x%lx\n", mc->mc_gpregs.gp_elr);
     lprintf("spsr      = 0x%x\n",  mc->mc_gpregs.gp_spsr);
+
+  # elif TARGET_OS_VERSION == NETBSD_VERSION
+
+    const mcontext_t *mc = &ic->scp->uc_mcontext;
+    lprintf("x0        = 0x%lx\n", (unsigned long)mc->__gregs[_REG_X0]);
+    lprintf("x1        = 0x%lx\n", (unsigned long)mc->__gregs[_REG_X1]);
+    lprintf("x2        = 0x%lx\n", (unsigned long)mc->__gregs[_REG_X2]);
+    lprintf("x3        = 0x%lx\n", (unsigned long)mc->__gregs[_REG_X3]);
+    lprintf("x4        = 0x%lx\n", (unsigned long)mc->__gregs[_REG_X4]);
+    lprintf("x5        = 0x%lx\n", (unsigned long)mc->__gregs[_REG_X5]);
+    lprintf("x6        = 0x%lx\n", (unsigned long)mc->__gregs[_REG_X6]);
+    lprintf("x7        = 0x%lx\n", (unsigned long)mc->__gregs[_REG_X7]);
+    lprintf("x8        = 0x%lx\n", (unsigned long)mc->__gregs[_REG_X8]);
+    lprintf("x29 (fp)  = 0x%lx\n", (unsigned long)mc->__gregs[_REG_X29]);
+    lprintf("x30 (lr)  = 0x%lx\n", (unsigned long)mc->__gregs[_REG_X30]);
+    lprintf("sp        = 0x%lx\n", (unsigned long)mc->__gregs[_REG_SP]);
+    lprintf("pc        = 0x%lx\n", (unsigned long)mc->__gregs[_REG_PC]);
+    lprintf("spsr      = 0x%x\n",  (unsigned int) mc->__gregs[_REG_SPSR]);
 
   # else
     # error Unsupported OS for aarch64

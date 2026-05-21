@@ -55,6 +55,10 @@ endif()
 # NB: only available since NetBSD 9
 list(APPEND EXTRA_LIBRARIES jemalloc)
 
+# On NetBSD, backtrace() / backtrace_symbols() / backtrace_symbols_fd()
+# live in libexecinfo (used by the crash-diagnostics native backtrace).
+list(APPEND EXTRA_LIBRARIES execinfo)
+
 # if(clang)
 #   #
 #   # clang 3.0 integrated assembler on linux

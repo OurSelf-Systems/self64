@@ -108,14 +108,17 @@ void InterruptedContext::setupPreemptionFromSignal() {
 
 # elif TARGET_OS_VERSION == NETBSD_VERSION
 
+  // NetBSD/amd64 mcontext_t: __gregs[_NGREG] indexed by _REG_R{AX,BX,CX,DX,
+  // BP,SP,DI,SI,R8..R15,RIP,...}. Bypass the _UC_MACHINE_* convenience macros
+  // because their expansions don't yield an lvalue on amd64 under g++.
   char** InterruptedContext::pc_addr() {
-    return  (char**) &_UC_MACHINE_PC(scp);
+    return  (char**) &scp->uc_mcontext.__gregs[_REG_RIP];
   }
   int* InterruptedContext::sp_addr() {
-    return  (int*) &_UC_MACHINE_SP(scp);
+    return  (int*) &scp->uc_mcontext.__gregs[_REG_RSP];
   }
   int* InterruptedContext::ebp_addr() {
-    return  (int*) &_UC_MACHINE_FP(scp);
+    return  (int*) &scp->uc_mcontext.__gregs[_REG_RBP];
   }
 
 
@@ -217,26 +220,22 @@ void InterruptedContext::print_registers() {
 
   # elif TARGET_OS_VERSION == NETBSD_VERSION
 
+    // NetBSD/amd64 only defines 64-bit register names in __gregs
+    // (_REG_R{AX,BX,...}, no _REG_E*). The legacy 32-bit register
+    // dump from the i386 era doesn't apply on amd64.
     __greg_t *gregs = ic->scp->uc_mcontext.__gregs;
-    lprintf("eax       = 0x%x\n", gregs[_REG_EAX]);
-    lprintf("ebx       = 0x%x\n", gregs[_REG_EBX]);
-    lprintf("ecx       = 0x%x\n", gregs[_REG_ECX]);
-    lprintf("edx       = 0x%x\n", gregs[_REG_EDX]);
-    lprintf("esi       = 0x%x\n", gregs[_REG_ESI]);
-    lprintf("edi       = 0x%x\n", gregs[_REG_EDI]);
-    lprintf("ebp       = 0x%x\n", gregs[_REG_EBP]);
-    lprintf("esp       = 0x%x\n", gregs[_REG_ESP]);
-    lprintf("ss        = 0x%x\n", gregs[_REG_SS]);
-    lprintf("efl       = 0x%x\n", gregs[_REG_EFL]);
-    lprintf("eip       = 0x%x\n", gregs[_REG_EIP]);
-    lprintf("cs        = 0x%x\n", gregs[_REG_CS]);
-    lprintf("ds        = 0x%x\n", gregs[_REG_DS]);
-    lprintf("es        = 0x%x\n", gregs[_REG_ES]);
-    lprintf("fs        = 0x%x\n", gregs[_REG_FS]);
-    lprintf("gs        = 0x%x\n", gregs[_REG_GS]);
-    lprintf("trapno    = 0x%x\n", gregs[_REG_TRAPNO]);
-    lprintf("err       = 0x%x\n", gregs[_REG_ERR]);
-    lprintf("uesp      = 0x%x\n", gregs[_REG_UESP]);
+    lprintf("rax       = 0x%lx\n", (unsigned long)gregs[_REG_RAX]);
+    lprintf("rbx       = 0x%lx\n", (unsigned long)gregs[_REG_RBX]);
+    lprintf("rcx       = 0x%lx\n", (unsigned long)gregs[_REG_RCX]);
+    lprintf("rdx       = 0x%lx\n", (unsigned long)gregs[_REG_RDX]);
+    lprintf("rsi       = 0x%lx\n", (unsigned long)gregs[_REG_RSI]);
+    lprintf("rdi       = 0x%lx\n", (unsigned long)gregs[_REG_RDI]);
+    lprintf("rbp       = 0x%lx\n", (unsigned long)gregs[_REG_RBP]);
+    lprintf("rsp       = 0x%lx\n", (unsigned long)gregs[_REG_RSP]);
+    lprintf("rflags    = 0x%lx\n", (unsigned long)gregs[_REG_RFLAGS]);
+    lprintf("rip       = 0x%lx\n", (unsigned long)gregs[_REG_RIP]);
+    lprintf("trapno    = 0x%lx\n", (unsigned long)gregs[_REG_TRAPNO]);
+    lprintf("err       = 0x%lx\n", (unsigned long)gregs[_REG_ERR]);
 
   # elif TARGET_OS_VERSION == FREEBSD_VERSION
 
