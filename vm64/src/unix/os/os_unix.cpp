@@ -899,5 +899,19 @@ extern "C" {
 
 
 int OS::make_memory_executable(void* addr, size_t len) {
-  return mprotect(addr, len, PROT_READ|PROT_WRITE|PROT_EXEC);
+  int err = mprotect(addr, len, PROT_READ|PROT_WRITE|PROT_EXEC);
+# if TARGET_OS_VERSION == MACOSX_VERSION && defined(__aarch64__)
+  if (err) {
+    // Apple Silicon forbids RWX pages (W^X).  Until the aarch64 code
+    // generator lands -- which will allocate the zone with MAP_JIT and
+    // toggle pthread_jit_write_protect_np around emission -- leave the
+    // zone writable but not executable.  Nothing executes generated code
+    // yet, so this only matters once the backend exists.
+    // TODO(new-sic): replace with the MAP_JIT discipline.
+    warning("zone is writable but NOT executable on this platform "
+            "(W^X); aarch64 code generation is not yet implemented anyway");
+    err = mprotect(addr, len, PROT_READ|PROT_WRITE);
+  }
+# endif
+  return err;
 }

@@ -452,6 +452,13 @@ void sendDesc::init() {
   # if HOST_ARCH == PPC_ARCH && TARGET_ARCH == I386_ARCH
     if (true) return; // just testing asm
   # endif
+  # if TARGET_ARCH == AARCH64_ARCH
+    // The EnterSelf assembly stub (and the inline sendDesc it carries) is
+    // not yet written for aarch64; firstSelfFrame_returnPC is a fatal stub,
+    // so there is no first sendDesc to validate.  TODO(new-sic): remove
+    // this early return once the aarch64 EnterSelf stub exists.
+    if (true) return;
+  # endif
   sendDesc* f = sendDesc::first_sendDesc();
 
   // cannot do this test on sparc, it has a register-call which does not read as a call

@@ -40,17 +40,19 @@ oop get_default_space_sizes_prim(oop);
 // The 512MB boundary was a SPARCstation constraint that doesn't apply here.
 #if defined(__APPLE__) && defined(__aarch64__)
 // ARM64 macOS: heap at 32GB (above system libraries at ~8GB),
-// code zones at 64GB (above heap, giving 32GB MaxHeapSize).
-// No JIT on ARM64 so code zones are minimal, but addresses must be valid.
+// code zones at 48GB (above heap, giving 16GB MaxHeapSize).
+// 64GB exceeded the default mmap ceiling on Apple Silicon (MAP_FIXED
+// there returns ENOMEM even though the heap maps fine at 32GB), so the
+// zone block sits at 48GB, comfortably inside the user VA range.
 const caddr_t HeapStart=        (caddr_t)(32LL * 1024 * 1024 * 1024);              //   32 GB
-const caddr_t NMethodStart=     (caddr_t)(64LL * 1024 * 1024 * 1024);              //   64 GB
-const caddr_t StubsStart=       (caddr_t)(64LL * 1024 * 1024 * 1024 +  58 * 1024 * 1024LL);
-const caddr_t DepsStart=        (caddr_t)(64LL * 1024 * 1024 * 1024 +  74 * 1024 * 1024LL);
-const caddr_t ScopesStart=      (caddr_t)(64LL * 1024 * 1024 * 1024 +  90 * 1024 * 1024LL);
-const caddr_t ZoneIDStart=      (caddr_t)(64LL * 1024 * 1024 * 1024 + 106 * 1024 * 1024LL);
-const caddr_t CountStubIDStart= (caddr_t)(64LL * 1024 * 1024 * 1024 + 108 * 1024 * 1024LL);
-const caddr_t UseCountStart=    (caddr_t)(64LL * 1024 * 1024 * 1024 + 110 * 1024 * 1024LL);
-const caddr_t AddrSpaceEnd=     (caddr_t)(64LL * 1024 * 1024 * 1024 + 112 * 1024 * 1024LL);
+const caddr_t NMethodStart=     (caddr_t)(48LL * 1024 * 1024 * 1024);              //   48 GB
+const caddr_t StubsStart=       (caddr_t)(48LL * 1024 * 1024 * 1024 +  58 * 1024 * 1024LL);
+const caddr_t DepsStart=        (caddr_t)(48LL * 1024 * 1024 * 1024 +  74 * 1024 * 1024LL);
+const caddr_t ScopesStart=      (caddr_t)(48LL * 1024 * 1024 * 1024 +  90 * 1024 * 1024LL);
+const caddr_t ZoneIDStart=      (caddr_t)(48LL * 1024 * 1024 * 1024 + 106 * 1024 * 1024LL);
+const caddr_t CountStubIDStart= (caddr_t)(48LL * 1024 * 1024 * 1024 + 108 * 1024 * 1024LL);
+const caddr_t UseCountStart=    (caddr_t)(48LL * 1024 * 1024 * 1024 + 110 * 1024 * 1024LL);
+const caddr_t AddrSpaceEnd=     (caddr_t)(48LL * 1024 * 1024 * 1024 + 112 * 1024 * 1024LL);
 #else
 const caddr_t HeapStart=        (caddr_t)(64LL * 1024 * 1024);                      //   64 MB
 const caddr_t NMethodStart=     (caddr_t)(16LL * 1024 * 1024 * 1024);               //   16 GB
