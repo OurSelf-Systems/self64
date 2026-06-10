@@ -83,6 +83,10 @@ void Assembler::str_zero(Location rn, fint byte_offset) {
   else if (fits_simm9(byte_offset)) emit32(a64_stur(a64_xzr, rn, (int)byte_offset));
   else fatal1("str_zero offset out of range: %ld", (long)byte_offset);
 }
+void Assembler::strb_zero(Location rn, fint byte_offset) {
+  assert(byte_offset >= 0 && byte_offset <= 4095, "strb_zero offset");
+  emit32(a64_strb_uoff(a64_xzr, rn, (unsigned)byte_offset));
+}
 void Assembler::str_zero32(Location rn, fint byte_offset) {
   assert(byte_offset >= 0 && (byte_offset & 3) == 0 && byte_offset <= 16380, "str_zero32 offset");
   emit32(a64_strw_uoff(a64_xzr, rn, (unsigned)(byte_offset >> 2)));

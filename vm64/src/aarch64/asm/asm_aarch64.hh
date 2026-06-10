@@ -51,6 +51,7 @@ class Assembler: public BaseAssembler {
   // zero stores (encode XZR as the source)
   void str_zero  (Location rn, fint byte_offset);
   void str_zero32(Location rn, fint byte_offset);
+  void strb_zero (Location rn, fint byte_offset);
 
   // ---- constants ------------------------------------------------------
   void mov_imm(Location rd, smi value);          // movz/movk sequence, no addrDesc

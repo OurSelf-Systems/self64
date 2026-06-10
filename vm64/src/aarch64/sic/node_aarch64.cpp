@@ -88,21 +88,96 @@ static void gen_SPLimit_test();
     }
   }
 
-  void AssignNode::genOop() { unimplemented_gen("AssignNode::genOop"); }
+  void AssignNode::genOop() {
+    ConstPReg* value = (ConstPReg*)_src;
+    Location src = value->loc;
+    if (src != UnAllocated) {
+      // value is already in src register
+      genHelper->moveRegToLoc(src, _dest->loc);
+    }
+    else if (isRegister(_dest->loc)) {
+      genHelper->loadImmediateOop(value->constant, _dest->loc);
+    }
+    else {
+      genHelper->loadImmediateOop(value->constant, Temp2);
+      Location b;  int32 d;  OperandType t;
+      reg_disp_type_of_loc(&b, &d, &t, _dest->loc);
+      theAssembler->str(Temp2, b, d);
+    }
+  }
+
+  static a64_cond cond_for_branch(BranchOpCode op) {
+    switch (op) {
+     case EQBranchOp:   return a64_eq;
+     case NEBranchOp:   return a64_ne;
+     case LTBranchOp:   return a64_lt;
+     case LEBranchOp:   return a64_le;
+     case LTUBranchOp:  return a64_cc;
+     case LEUBranchOp:  return a64_ls;
+     case GTBranchOp:   return a64_gt;
+     case GEBranchOp:   return a64_ge;
+     case GTUBranchOp:  return a64_hi;
+     case GEUBranchOp:  return a64_cs;
+     case VSBranchOp:   return a64_vs;
+     case VCBranchOp:   return a64_vc;
+     default:           ShouldNotReachHere(); return a64_al;
+    }
+  }
 
   void BranchNode::gen() {
     BasicNode::gen();
-    unimplemented_gen("BranchNode::gen");
+    Label* l_ = new Label(theAssembler->printing);
+    if (op == ALBranchOp) theAssembler->b(l_);
+    else                  theAssembler->b(cond_for_branch(op), l_);
+    Node* n = next1();
+    n->l = l_->unify(n->l);
   }
 
-  void TBranchNode::genCompare(bool ifEqual, Location l1, Location l2) {
-    Unused(ifEqual); Unused(l1); Unused(l2);
-    unimplemented_gen("TBranchNode::genCompare");
+  // load a Location's value into a register (using t if not already in one)
+  static Location to_reg(Location loc, Location t) {
+    if (isRegister(loc)) return loc;
+    genHelper->load(SP, genHelper->spOffset(loc), t);
+    return t;
   }
 
-  void TBranchNode::testTagsIfNecessary(bool ifInt, Location l1, Location l2) {
-    Unused(ifInt); Unused(l1); Unused(l2);
-    unimplemented_gen("TBranchNode::testTagsIfNecessary");
+  void TBranchNode::genCompare(bool haveImmediate, Location rcvrReg, Location argReg) {
+    Location r = to_reg(rcvrReg, Temp1);
+    if (!intRcvr) {
+      // check that rcvr is a smiOop
+      theAssembler->tst(r, Tag_Mask);
+      Label*& primFailure = ((MergeNode*)nexti(2))->l;
+      Label* l = new Label(theAssembler->printing);
+      theAssembler->b(a64_ne, l);
+      primFailure = primFailure->unify(l);
+    }
+    Location a_ = haveImmediate ? IllegalLocation : to_reg(argReg, Temp2);
+    if (!intArg) {
+      assert(!haveImmediate, "???");
+      // check that arg is a smiOop
+      theAssembler->tst(a_, Tag_Mask);
+      Label*& primFailure = ((MergeNode*)nexti(2))->l;
+      Label* l = new Label(theAssembler->printing);
+      theAssembler->b(a64_ne, l);
+      primFailure = primFailure->unify(l);
+    }
+    // we're here iff arg and rcvr are smiOops.  do the actual comparison
+    if (haveImmediate) {
+      smi val = smi(((ConstPReg*)arg)->constant);  // tagged value
+      if (val >= 0 && val <= 4095) {
+        theAssembler->cmp(r, (fint)val);
+      } else {
+        theAssembler->mov_imm(x16, val);
+        theAssembler->cmp(r, x16);
+      }
+    } else {
+      theAssembler->cmp(r, a_);
+    }
+  }
+
+  void TBranchNode::testTagsIfNecessary(bool haveImmediate, Location rcvrReg, Location argReg) {
+    // nothing to do: like i386, tags are checked up front in genCompare,
+    // so an overflow is a real integer overflow (cf. SPARC)
+    Unused(haveImmediate); Unused(rcvrReg); Unused(argReg);
   }
 
   bool ArrayAtNode::genAccess(Location arr, Location index, Location dest) {
@@ -129,23 +204,124 @@ static void gen_SPLimit_test();
     return false;
   }
 
+  static void check_overflow_a64(Node* failNode) {
+    if (failNode == NULL) return;
+    Label* l_ = new Label(theAssembler->printing);
+    theAssembler->b(a64_vs, l_);
+    failNode->l = l_->unify(failNode->l);
+  }
+
+  // materialize an arith operand value (possibly an immediate) in a register
+  static Location arith_operand_reg(PReg* r, Location t) {
+    if (r->isConstPReg() && r->loc == UnAllocated) {
+      theAssembler->mov_imm(t, smi(((ConstPReg*)r)->constant)); // tagged value
+      return t;
+    }
+    return genHelper->moveToReg(r, t);
+  }
+
+  // Three-operand A64 arithmetic: compute s OP o into out (or just set
+  // flags when out == NoReg).  Ops with overflow semantics use the
+  // flag-setting forms; the caller branches on V (check_overflow_a64).
+  static Location a64_arith_core(Location s, PReg* oper, ArithOpCode op,
+                                 Location out, Node* failNode) {
+    Unused(failNode);
+    Assembler* a = theAssembler;
+    bool ccOnly = (out == NoReg);
+    Location dst = ccOnly ? Temp1 : out;
+
+    // constant shift counts have a direct form
+    if ((op == TARShiftCCArithOp || op == TLRShiftCCArithOp)
+        && oper->isConstPReg()) {
+      smi count = smiOop(((ConstPReg*)oper)->constant)->value();
+      if (count < 0 || count > 61) { a->mov_imm(dst, 0); return dst; }
+      if (op == TARShiftCCArithOp) a->asr(dst, s, (fint)count);
+      else                         a->lsr(dst, s, (fint)count);
+      a->andd(dst, dst, ~smi(Tag_Mask));    // clear dragged-in tag bits
+      return dst;
+    }
+
+    Location o = arith_operand_reg(oper, x16);
+    switch (op) {
+     case TAddCCArithOp: case AddCCArithOp:
+      a->emit32(a64_add_reg(ccOnly ? a64_xzr : dst, s, o, 0, true));  break;
+     case AddArithOp:
+      a->add(dst, s, o);                                              break;
+     case TSubCCArithOp: case SubCCArithOp:
+      a->emit32(a64_sub_reg(ccOnly ? a64_xzr : dst, s, o, 0, true));  break;
+     case SubArithOp:
+      a->sub(dst, s, o);                                              break;
+     case TAndCCArithOp: case AndCCArithOp:
+      a->emit32(a64_ands_reg(ccOnly ? a64_xzr : dst, s, o));          break;
+     case AndArithOp:
+      a->emit32(a64_and_reg(dst, s, o));                              break;
+     case TOrCCArithOp: case OrCCArithOp: case OrArithOp:
+      a->orr(dst, s, o);                                              break;
+     case TXorCCArithOp: case XOrArithOp:
+      a->eor(dst, s, o);                                              break;
+     default:
+      ShouldNotReachHere(); // op should have been rejected by isOpInlinable
+    }
+    return ccOnly ? NoReg : dst;
+  }
+
   void ArithRCNode::gen() {
     BasicNode::gen();
-    unimplemented_gen("ArithRCNode::gen");
+    // reg OP raw-constant (untagged numbers; see SPrimScope::genPrimFailure)
+    Assembler* a = theAssembler;
+    if (_dest->isNoPReg()) {
+      Location d = genHelper->moveToReg(_src, Temp1);
+      switch (op) {
+       case SubCCArithOp:
+        if (oper >= 0 && oper <= 4095) a->cmp(d, (fint)oper);
+        else { a->mov_imm(x16, oper); a->cmp(d, x16); }
+        return;
+       case AndCCArithOp:
+        a->tst(d, oper);
+        return;
+       default: break;
+      }
+    }
+    Location dest = isRegister(_dest->loc) ? _dest->loc
+                  : _src->loc == Temp1 ? Temp2 : Temp1;
+    Location s = genHelper->moveToReg(_src, dest);
+    a->mov_imm(x16, oper);
+    switch (op) {
+     case AddCCArithOp:
+     case AddArithOp:   a->add(dest, s, x16);                   break;
+     case SubCCArithOp:
+     case SubArithOp:   a->sub(dest, s, x16);                   break;
+     case AndCCArithOp:
+     case AndArithOp:   a->emit32(a64_and_reg(dest, s, x16));   break;
+     case OrCCArithOp:
+     case OrArithOp:    a->orr(dest, s, x16);                   break;
+     case XOrArithOp:   a->eor(dest, s, x16);                   break;
+     case ArithmeticLeftShiftArithOp:
+     case LogicalLeftShiftArithOp:   a->lsl(dest, s, oper);     break;
+     case ArithmeticRightShiftArithOp: a->asr(dest, s, oper);   break;
+     case LogicalRightShiftArithOp:  a->lsr(dest, s, oper);     break;
+     default:           ShouldNotReachHere(); // unexpected arith type
+    }
+    if (dest != _dest->loc) {
+      a->str(dest, SP, genHelper->spOffset(_dest->loc));
+    }
   }
 
   Location arith_genHelper(PReg* sreg, PReg* oper, PReg* dest,
                            ArithOpCode op,
                            Location& t1, Location& t2, bool& reversed) {
-    Unused(sreg); Unused(oper); Unused(dest); Unused(op);
-    Unused(t1); Unused(t2); Unused(reversed);
-    unimplemented_gen("arith_genHelper");
-    return IllegalLocation;
+    Unused(t1); Unused(t2); reversed = false;
+    Location s = arith_operand_reg(sreg, Temp1);
+    Location out = dest->isNoPReg() ? NoReg
+                 : isRegister(dest->loc) ? dest->loc : Temp1;
+    return a64_arith_core(s, oper, op, out, NULL);
   }
 
   void BlockZapNode::gen() {
     BasicNode::gen();
-    unimplemented_gen("BlockZapNode::gen");
+    Location t = genHelper->moveToReg(block(), Temp1);
+    theAssembler->mov_imm(Temp2, 0);
+    theAssembler->str(Temp2, t, scope_offset());  // odd tagged offset: ldur/stur form
   }
 
   void RestartNode::gen() {
@@ -159,13 +335,34 @@ static void gen_SPLimit_test();
   }
 
   void DeadEndNode::gen() {
-    BasicNode::gen();
-    unimplemented_gen("DeadEndNode::gen");
+    // this node is unreachable - generate a trap for debugging
+#   if GENERATE_DEBUGGING_AIDS
+    if (CheckAssertions) {
+      BasicNode::gen();
+      theAssembler->brk(0xDEAD & 0xFFFF);
+    }
+#   endif
   }
 
   void BlockCreateNode::gen() {
     BasicNode::gen();
-    unimplemented_gen("BlockCreateNode::gen");
+    if (block()->primFailBlockScope) {
+      // must generate block (in primitive fail branch)
+      assert(!isMemoized(), "shouldn't be memoized");
+      genCall();
+    } else if (isMemoized()) {
+      // test if already created
+      theAssembler->Comment("test memoized block");
+      Location t = genHelper->moveToReg(block(), Temp1);
+      genHelper->loadImmediateOop(deadBlockPR->constant, x16);
+      theAssembler->cmp(t, x16);
+      Label done(theAssembler->printing);
+      theAssembler->b(a64_ne, &done); // optimize fast case, so predict-weird
+      genCall();
+      done.define();
+    } else {
+      // block has already been created (by initial BlockClone node)
+    }
   }
 
   void BlockCloneNode::genCall() {
@@ -235,7 +432,42 @@ static void gen_SPLimit_test();
 
   void StoreOffsetNode::gen() {
     BasicNode::gen();
-    unimplemented_gen("StoreOffsetNode::gen");
+    Location dstBase = genHelper->moveToReg(base, Temp1);
+    if (_src->isConstPReg()) {
+      // store constant
+      ConstPReg* value = (ConstPReg*)_src;
+      oop p = value->constant;
+      // don't need to check-store if oop is old - old objs will never become
+      // new again
+      needCheckStore = needCheckStore && p->is_new(); // ints/floats aren't new
+      genHelper->loadImmediateOop(p, Temp2);
+      theAssembler->str(Temp2, dstBase, offset);
+    }
+    else if (isRegister(_src->loc)) {
+      theAssembler->str(_src->loc, dstBase, offset);
+    }
+    else {
+      Location b;  int32 d;  OperandType tt;
+      reg_disp_type_of_loc(&b, &d, &tt, _src->loc);
+      theAssembler->ldr(Temp2, b, d);
+      theAssembler->str(Temp2, dstBase, offset);
+    }
+    if (needCheckStore) {
+      theAssembler->Comment("record store");
+      assert(isRegister(dstBase), "base reg of check_store must be in a register");
+      if (offset > card_size || !AllowOffsetCheckStores) {
+        // use slow check-store sequence
+        // (marked card may be off by one, but not more)
+        theAssembler->add(Temp1, dstBase, offset);
+        dstBase = Temp1;
+      }
+      if (dstBase != Temp1) theAssembler->mov(Temp1, dstBase);
+      theAssembler->lsr(Temp1, Temp1, card_shift);          // card index
+      theAssembler->loadAddressLiteral(x16, (void*)&byte_map_base, VMAddressOperand);
+      theAssembler->ldr(x16, x16, 0);                       // byte map base
+      theAssembler->add(Temp1, Temp1, x16);
+      theAssembler->strb_zero(Temp1, 0);                    // mark the card
+    }
   }
 
   void TypeTestNode::gen() {
@@ -245,18 +477,21 @@ static void gen_SPLimit_test();
 
   void UncommonNode::gen() {
     BasicNode::gen();
-    unimplemented_gen("UncommonNode::gen");
+    genPcDesc();
+    // BRK is the aarch64 "unimp"; the restart flag lives in the immediate
+    // (trap-count bookkeeping comes with the deopt work)
+    theAssembler->brk(restartSend ? 1 : 0);
   }
 
   bool AbstractArrayAtNode::canCopyPropagateFrom(PReg* d) {
+    // covers AbstractArrayAtPut and both ats
     Unused(d);
-    unimplemented_gen("AbstractArrayAtNode::canCopyPropagateFrom");
-    return false;
+    return true;
   }
 
   void AbstractArrayAtNode::markAllocated(fint* use_count, fint* def_count) {
-    Unused(use_count); Unused(def_count);
-    unimplemented_gen("AbstractArrayAtNode::markAllocated");
+    U_CHECK(_src); D_CHECK(_dest); U_CHECK(arg);
+    if (error) D_CHECK(error);
   }
 
   Label* ByteArrayAtPutNode::testArg2() {
@@ -373,34 +608,63 @@ static void gen_SPLimit_test();
   }
 
   void BasicNode::genBranch() {
-    unimplemented_gen("BasicNode::genBranch");
+    Label* l2 = new Label(theAssembler->printing);
+    theAssembler->b(l2);
+    l = l->unify(l2);
   }
 
-  void FlushNode::flushRegister(PReg* r) {
-    Unused(r);
-    unimplemented_gen("FlushNode::flushRegister");
+  void FlushNode::flushRegister(PReg* pr) {
+    // a nop on aarch64, since args always passed in memory (cf. i386)
+    Unused(pr);
   }
 
-  bool TArithRRNode::isOpInlinable(ArithOpCode o) {
-    Unused(o);
-    // conservatively: nothing inlinable until the aarch64 backend exists
-    return false;
+  bool TArithRRNode::isOpInlinable(ArithOpCode op) {
+    // Mul/Div/Mod and left shifts need overflow machinery that isn't
+    // written yet; the SIC calls the real primitive for those instead.
+    switch (op) {
+     case AddArithOp:  case AddCCArithOp:  case TAddCCArithOp:
+     case SubArithOp:  case SubCCArithOp:  case TSubCCArithOp:
+     case AndArithOp:  case AndCCArithOp:  case TAndCCArithOp:
+     case OrArithOp:   case OrCCArithOp:   case TOrCCArithOp:
+     case XOrArithOp:  case TXorCCArithOp:
+     case TARShiftCCArithOp:  case TLRShiftCCArithOp:
+      return true;
+     default:
+      return false;
+    }
   }
 
   bool TArithRRNode::canCopyPropagateFrom(PReg* d) {
     Unused(d);
-    unimplemented_gen("TArithRRNode::canCopyPropagateFrom");
-    return false;
+    return true;  // no fixed-register ops are inlined (no idiv equivalent)
   }
 
   void TArithRRNode::markAllocated(fint* use_count, fint* def_count) {
-    Unused(use_count); Unused(def_count);
-    unimplemented_gen("TArithRRNode::markAllocated");
+    U_CHECK(_src); D_CHECK(_dest); U_CHECK(oper);
   }
 
   void TArithRRNode::gen() {
+    // See SPrimScope::inlineIntArithmetic
     BasicNode::gen();
-    unimplemented_gen("TArithRRNode::gen");
+    if (constResult) {
+      genHelper->loadImmediateOop(constResult->constant, Temp2);
+      Location b;  int32 d;  OperandType t;
+      reg_disp_type_of_loc(&b, &d, &t, _dest->loc);
+      if (isRegister(_dest->loc)) theAssembler->mov(_dest->loc, Temp2);
+      else                        theAssembler->str(Temp2, b, d);
+      return;
+    }
+    Location s = arith_operand_reg(_src, Temp1);
+    Location out = _dest->isNoPReg() ? NoReg
+                 : isRegister(_dest->loc) ? _dest->loc : Temp1;
+    Location dest = a64_arith_core(s, oper, op, out, next1());
+    bool canOverflow = op == TAddCCArithOp || op == TSubCCArithOp;
+    if (canOverflow)
+      check_overflow_a64(next1());
+    if (dest != NoReg && dest != _dest->loc && !_dest->isNoPReg()) {
+      // store result on stack (success case)
+      theAssembler->str(dest, SP, genHelper->spOffset(_dest->loc));
+    }
   }
 
 # endif // SIC_COMPILER
