@@ -57,6 +57,21 @@ nmethod* SICompiler::compileAccessMethod() {
     genHelper->memOop_prologue((mapOop)rmap, miss);
   _verifiedOffset       = a->offset();
   _diCheckOffset        = a->offset();
+
+  // dynamic inheritance: verify assignable parents, exactly as
+  // PrologueNode::verifyAssignableParents does for full methods --
+  // otherwise a reassigned parent would keep hitting this stale access
+  // method through the code table
+  {
+    fint assignableParents = L->adeps->length();
+    fint count = 0;
+    for (fint i = 0; i < assignableParents; ++i) {
+      objectLookupTarget* target = L->adeps->start()[i];
+      Location t = genHelper->loadPath(Temp2, target, LReceiverReg);
+      count = genHelper->verifyParents(target, t, count);
+    }
+  }
+
   _frameCreationOffset  = a->offset();
 
   MethodLookupKey* k = new_MethodLookupKey(L->key);
