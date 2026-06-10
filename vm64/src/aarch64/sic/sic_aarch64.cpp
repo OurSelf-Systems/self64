@@ -100,14 +100,14 @@ nmethod* SICompiler::compileAccessMethod() {
     realSlotRef* res = L->result()->as_real();
     lookupTarget* h  = res->holder;
     slotDesc* dataSlot = h->map()->find_slot(res->desc->name);
-    if (!h->is_receiver())
-      fatal("unimplemented: assignment through a non-receiver holder");
     fint slotOffset = smiOop(dataSlot->data)->value() * oopSize - Mem_Tag;
-    a->ldr(Temp1, SP, leaf_rcvr_offset * oopSize);        // receiver
+    // the holder may be the receiver or an object reached through the
+    // lookup path (e.g. an assignable slot in a shared parent)
+    Location holder = genHelper->loadPath(Temp1, h, LReceiverReg);
     a->ldr(Temp2, SP, (leaf_rcvr_offset + 1) * oopSize);  // argument
-    a->str(Temp2, Temp1, slotOffset);
+    a->str(Temp2, holder, slotOffset);
     // check-store: mark the card for the written-to address
-    a->add(Temp1, Temp1, slotOffset);
+    a->add(Temp1, holder, slotOffset);
     a->lsr(Temp1, Temp1, card_shift);
     a->loadAddressLiteral(x16, (void*)&byte_map_base, VMAddressOperand);
     a->ldr(x16, x16, 0);
