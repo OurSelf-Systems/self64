@@ -22,6 +22,7 @@ char* sendDesc::jump_addr() {
 }
 
 void sendDesc::set_jump_addr(char* t) {
+  JITWriteScope ws;
   *jump_addr_addr() = t;
 }
 

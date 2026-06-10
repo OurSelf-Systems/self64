@@ -17,6 +17,7 @@ pc_t DIDesc::jump_addr() {
 
 
 void DIDesc::set_jump_addr(pc_t insts) {
+  JITWriteScope ws;
   *(pc_t*)jump_addr_addr() = insts;
 }
 

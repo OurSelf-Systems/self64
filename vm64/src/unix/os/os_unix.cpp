@@ -898,20 +898,53 @@ extern "C" {
 # endif
 
 
-int OS::make_memory_executable(void* addr, size_t len) {
-  int err = mprotect(addr, len, PROT_READ|PROT_WRITE|PROT_EXEC);
 # if TARGET_OS_VERSION == MACOSX_VERSION && defined(__aarch64__)
-  if (err) {
-    // Apple Silicon forbids RWX pages (W^X).  Until the aarch64 code
-    // generator lands -- which will allocate the zone with MAP_JIT and
-    // toggle pthread_jit_write_protect_np around emission -- leave the
-    // zone writable but not executable.  Nothing executes generated code
-    // yet, so this only matters once the backend exists.
-    // TODO(new-sic): replace with the MAP_JIT discipline.
-    warning("zone is writable but NOT executable on this platform "
-            "(W^X); aarch64 code generation is not yet implemented anyway");
-    err = mprotect(addr, len, PROT_READ|PROT_WRITE);
-  }
-# endif
-  return err;
+
+static bool zone_is_map_jit = false;
+
+void OS::set_jit_writable(bool writable) {
+  if (zone_is_map_jit)
+    pthread_jit_write_protect_np(!writable);
 }
+
+// Apple Silicon W^X: MAP_JIT regions execute, but the kernel refuses
+// MAP_FIXED for them and ignores address hints, so the code zone lives
+// at a kernel-chosen address (zone code only ever uses its `bottom`
+// pointer, never the NMethodStart constant, so this is fine).  The
+// per-thread toggle in set_jit_writable selects write vs execute.
+char* OS::allocate_jit_area(smi &size, const char* name) {
+  smi align = idealized_page_size;
+  if (get_page_size() > align) align = get_page_size();
+  size = roundTo(size, align);
+  char* p = (char*)mmap(NULL, size,
+                        PROT_READ|PROT_WRITE|PROT_EXEC,
+                        MAP_PRIVATE|MAP_ANON|MAP_JIT,
+                        -1, 0);
+  if (p == MAP_FAILED) {
+    allocate_failed(name);
+    return NULL;
+  }
+  zone_is_map_jit = true;
+  set_jit_writable(true);   // VM starts in compile/patch mode
+  return p;
+}
+
+int OS::make_memory_executable(void* addr, size_t len) {
+  if (zone_is_map_jit) return 0;   // already executable via MAP_JIT
+  Unused(addr); Unused(len);
+  warning("zone is writable but NOT executable (no MAP_JIT region)");
+  return 0;
+}
+
+# else
+
+char* OS::allocate_jit_area(smi &size, const char* name) {
+  // non-Apple platforms allow RWX; use the normal fixed-address path
+  return allocate_idealized_page_aligned(size, name, NMethodStart);
+}
+
+int OS::make_memory_executable(void* addr, size_t len) {
+  return mprotect(addr, len, PROT_READ|PROT_WRITE|PROT_EXEC);
+}
+
+# endif

@@ -190,7 +190,7 @@ void zone::set_sizes_and_allocate_code_and_stub_area(smi& codeSize, smi& stubSiz
     // allocate stubs and code together for span-limited branches -- dmu
     // Warning: PPC Assembler::Assembler counts on stubs being after izone
     // See zone::code_start() and zone::code::end()
-    bottom= (int32*)OS::allocate_idealized_page_aligned(codeAndStubSize_p, "nmethod zone (inst + stubs)", NMethodStart);
+    bottom= (int32*)OS::allocate_jit_area(codeAndStubSize_p, "nmethod zone (inst + stubs)");
     stb= (char*)bottom + codeSize_p; 
   
     if (OS::make_memory_executable(bottom, codeAndStubSize_p))
@@ -266,6 +266,7 @@ void zone::allocate_useCount(fint maxNMs) {
 }
 
 void zone::clear() {
+  JITWriteScope jit_write_scope;
   table->clear();
   debugTable->clear();
   rememberLink.init();

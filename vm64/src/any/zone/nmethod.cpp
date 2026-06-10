@@ -76,6 +76,7 @@ void* nmethod::operator new(size_t size) {
 }
 
 nmethod::nmethod(AbstractCompiler* c, bool generateDebugCode) {
+  JITWriteScope jit_write_scope;
   CHECK_VTBL_VALUE;
   _instsLen  = roundTo(iLen, oopSize);
   _locsLen   = ilLen;

@@ -41,6 +41,7 @@ class LocChange {
 };
 
 bool OopNCode::scavenge_contents() {
+  JITWriteScope jit_write_scope;
   ResourceMark m;
   bool needToInvalICache = false;
   char* bound = Memory->new_gen->boundary();
@@ -68,6 +69,7 @@ bool OopNCode::scavenge_contents() {
 }
 
 void OopNCode::gc_mark_contents() {
+  JITWriteScope jit_write_scope;
   ResourceMark m;
   addrDesc* p = locs(), *end = locsEnd();
   LocChange* changes = NEW_RESOURCE_ARRAY( LocChange, end - p);
@@ -119,6 +121,7 @@ bool OopNCode::gc_unmark_contents() {
 }
 
 void OopNCode::relocate() {
+  JITWriteScope jit_write_scope;
   ResourceMark m;
   addrDesc* p = locs(), *end = locsEnd();
   LocChange* changes = NEW_RESOURCE_ARRAY( LocChange, end - p);
@@ -146,6 +149,7 @@ void OopNCode::relocate() {
 
 bool OopNCode::switch_pointers(oop from, oop to,
                                nmethodBList* nmethods_to_invalidate) {
+  JITWriteScope jit_write_scope;
   Unused(nmethods_to_invalidate);
   ResourceMark m;
   bool needToInvalICache = false;
