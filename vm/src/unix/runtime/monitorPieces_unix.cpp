@@ -187,7 +187,16 @@ void InterruptedFrameMonitor::get_frame_and_pc( frame*& f, char*& pc ) {
   InterruptedContext::the_interrupted_context->must_be_in_self_thread();
   
 
+# if defined(__aarch64__)
+  // aarch64 frames are fp-anchored: the raw sp is the bottom of the current
+  // frame's locals, not a linkage record, so querying it as a frame walks
+  // garbage.  The fp (x29) is a valid linkage record (and, under the macOS
+  // arm64 ABI, is maintained in C++ code too), so is_interpreted_self_frame
+  // can safely classify it.
+  f  = InterruptedContext::the_interrupted_context->fp();
+# else
   f  = InterruptedContext::the_interrupted_context->sp();
+# endif
   pc = InterruptedContext::the_interrupted_context->pc();
 }
 

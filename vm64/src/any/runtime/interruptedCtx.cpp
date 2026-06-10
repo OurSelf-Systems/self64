@@ -225,10 +225,17 @@ char* InterruptedContext::pc() { return *pc_addr(); }
 void  InterruptedContext::set_pc(void *pc) { *pc_addr() = (char*)pc; }
 
 
-frame* InterruptedContext::sp() { 
-  return !is_set() ? NULL : (frame*) *sp_addr(); } 
-  
-void InterruptedContext::set_sp(void* sp) { *sp_addr() = (smi) sp; }
+frame* InterruptedContext::sp() {
+  // sp_addr() points at a pointer-width register slot; read the whole thing
+  // (a plain *(int*) would truncate a 64-bit stack pointer)
+  return !is_set() ? NULL : (frame*) *(intptr_t*)sp_addr(); }
+
+void InterruptedContext::set_sp(void* sp) { *(intptr_t*)sp_addr() = (intptr_t) sp; }
+
+# if defined(__aarch64__)
+frame* InterruptedContext::fp() {
+  return !is_set() ? NULL : (frame*) *(intptr_t*)fp_addr(); }
+# endif
 
 
 int InterruptedContext::code_at_pc() {
