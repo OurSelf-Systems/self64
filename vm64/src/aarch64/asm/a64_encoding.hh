@@ -39,6 +39,18 @@ inline a64_inst a64_stur(int rt, int rn, int simm9) {
 inline a64_inst a64_ldr_lit(int rt, int offset_words) {
   return 0x58000000u | ((offset_words & 0x7FFFF) << 5) | (rt & 31);
 }
+// LDR Wt, [Xn, #uimm12*4] / STR -- 32-bit forms (e.g. int32 counters)
+inline a64_inst a64_ldrw_uoff(int rt, int rn, unsigned uimm12) {
+  return 0xB9400000u | ((uimm12 & 0xFFFu) << 10) | ((rn & 31) << 5) | (rt & 31);
+}
+inline a64_inst a64_strw_uoff(int rt, int rn, unsigned uimm12) {
+  return 0xB9000000u | ((uimm12 & 0xFFFu) << 10) | ((rn & 31) << 5) | (rt & 31);
+}
+// ADD Wd, Wn, #imm12 -- 32-bit add for counter bumps
+inline a64_inst a64_addw_imm(int rd, int rn, unsigned imm12) {
+  return 0x11000000u | ((imm12 & 0xFFFu) << 10) | ((rn & 31) << 5) | (rd & 31);
+}
+
 // LDRB Wt, [Xn, #uimm12] / STRB
 inline a64_inst a64_ldrb_uoff(int rt, int rn, unsigned uimm12) {
   return 0x39400000u | ((uimm12 & 0xFFFu) << 10) | ((rn & 31) << 5) | (rt & 31);

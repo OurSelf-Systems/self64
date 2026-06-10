@@ -45,6 +45,9 @@ int main() {
   CASE("stur x12, [x29, #-256]",  a64_stur(12, 29, -256));
   CASE("ldr x5, . + 16",          a64_ldr_lit(5, 4));
   CASE("ldr x16, . - 4",          a64_ldr_lit(16, -1));
+  CASE("ldr w4, [x9, #8]",        a64_ldrw_uoff(4, 9, 2));
+  CASE("str w4, [x9, #8]",        a64_strw_uoff(4, 9, 2));
+  CASE("add w4, w4, #1",          a64_addw_imm(4, 4, 1));
   CASE("ldrb w4, [x9, #3]",       a64_ldrb_uoff(4, 9, 3));
   CASE("strb w4, [x9, #3]",       a64_strb_uoff(4, 9, 3));
 

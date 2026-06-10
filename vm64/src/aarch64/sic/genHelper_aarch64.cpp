@@ -8,90 +8,168 @@
 
 // aarch64 SICGenHelper.
 //
-// Runtime-fatal stubs until the AsmJit-backed code generator lands;
-// see node_aarch64.cpp.
+// Tag scheme (64-bit): Int_Tag=0, Mem_Tag=1, Float_Tag=2, Tag_Mask=3.
+// x16 is reserved for far-branch sequences (regs_aarch64.hh), so the
+// miss paths below may clobber it freely.
 
 static void unimplemented_helper(const char* who) {
   fatal1("aarch64 SICGenHelper not yet implemented: %s", who);
 }
 
-void SICGenHelper::smiOop_prologue(char* miss) {
-  Unused(miss);
-  unimplemented_helper("smiOop_prologue");
+// branch to a VM routine when the condition does NOT hold:
+//   b.<cond> ok; ldr x16, =target; br x16; ok:
+// (no range limit, and the pool word is patchable like any other)
+static void branch_to_vm_unless(a64_cond cond, void* target) {
+  Assembler* a = theAssembler;
+  Label ok(a->printing);
+  a->b(cond, &ok);
+  a->loadAddressLiteral(x16, target, PVMAddressOperand);
+  a->br(x16);
+  ok.define();
 }
 
-void SICGenHelper::memOop_prologue(mapOop receiverMapOop, char* miss) {
-  Unused(receiverMapOop); Unused(miss);
-  unimplemented_helper("memOop_prologue");
-}
-
-void SICGenHelper::genCountCode(int32* counter) {
-  Unused(counter);
-  unimplemented_helper("genCountCode");
-}
-
-Location SICGenHelper::loadImmediateOop(ConstPReg* p, Location dest, bool mustMove) {
-  Unused(p); Unused(dest); Unused(mustMove);
-  unimplemented_helper("loadImmediateOop(ConstPReg*)");
-  return IllegalLocation;
-}
-
-void SICGenHelper::loadImmediateOop(oop p, Location dest, bool isInt) {
-  Unused(p); Unused(dest); Unused(isInt);
-  unimplemented_helper("loadImmediateOop(oop)");
-}
-
-void SICGenHelper::moveRegToReg(Location srcReg, Location destReg) {
-  Unused(srcReg); Unused(destReg);
-  unimplemented_helper("moveRegToReg");
-}
-
-void SICGenHelper::setToZeroA(void* addr, Location tempReg) {
-  Unused(addr); Unused(tempReg);
-  unimplemented_helper("setToZeroA");
-}
-
-fint SICGenHelper::verifyParents(objectLookupTarget* target, Location t, fint count) {
-  Unused(target); Unused(t); Unused(count);
-  unimplemented_helper("verifyParents");
-  return 0;
-}
 
 fint SICGenHelper::spOffset(Location l) {
-  Unused(l);
-  unimplemented_helper("spOffset");
-  return 0;
+  Location b;  int32 d;  OperandType t;
+  reg_disp_type_of_loc(&b, &d, &t, l);
+  // had better be used for active frame, not a saved one,
+  // because sp of saved frame is two words lower! -- dmu 5/06
+  return b == SP  ?  d  :  d  +  (theSIC->frameSize() - linkage_area_size) * oopSize;
 }
 
 fint SICGenHelper::spOffset(Location l, nmethod* nm) {
-  Unused(l); Unused(nm);
-  unimplemented_helper("spOffset(nmethod)");
-  return 0;
+  Location b;  int32 d;  OperandType t;
+  reg_disp_type_of_loc(&b, &d, &t, l);
+  // and this one is for a saved frame!
+  // So, the "SP" is really going to be the fp, cause that's what blocks store -- dmu 5/06
+# if GENERATE_DEBUGGING_AIDS
+    if (CheckAssertions  &&  b != fp)  warning("untested");
+# endif
+  return b == fp  ?  d  :  d - (nm->frameSize() - linkage_area_size) * oopSize;
 }
 
-void SICGenHelper::floatOop_prologue(char* miss) {
-  Unused(miss);
-  unimplemented_helper("floatOop_prologue");
+// Warning: this clobbers the count register
+void SICGenHelper::jumpTo(void* target, Location reg, Location link) {
+  Unused(target); Unused(reg); Unused(link);
+  fatal("not used on aarch64 (cf. Intel)");
 }
 
-void SICGenHelper::checkOop(Label& general, oop what, Location reg) {
-  Unused(general); Unused(what); Unused(reg);
-  unimplemented_helper("checkOop");
+void SICGenHelper::genCountCode(int32* counter) {
+  a->Comment("count # calls");
+  a->loadAddressLiteral(x16, counter, VMAddressOperand);
+  a->ldr32 (x17, x16, 0);
+  a->add32 (x17, x17, 1);
+  a->str32 (x17, x16, 0);
+}
+
+
+Location SICGenHelper::loadImmediateOop(ConstPReg* r, Location dest, bool mustMove) {
+  // load oop from ConstPR; return location containing the oop
+  if (r->loc == UnAllocated) {
+    loadImmediateOop(r->constant, dest);
+    return dest;
+  } else if (mustMove) {
+    warning("untested: loadImmediateOop with mustMove");
+    moveRegToReg(r->loc, dest);
+    return dest;
+  }
+  else
+    return r->loc;
+}
+
+void SICGenHelper::loadImmediateOop(oop p, Location dest, bool isInt) {
+  Unused(isInt);
+  assert(isRegister(dest), "must be a register");
+  if (p->is_mem()) {
+    a->loadOopLiteral(dest, p);     // GC-visible pool word
+  } else {
+    a->mov_imm(dest, smi(p));       // immediates (smis, floats) never move
+  }
 }
 
 void SICGenHelper::load(Location src, fint srcOffset, Location dest) {
-  Unused(src); Unused(srcOffset); Unused(dest);
-  unimplemented_helper("load");
+  assert(isRegister(src) && isRegister(dest), "not a register");
+  a->ldr(dest, src, srcOffset);
 }
 
 void SICGenHelper::store(Location src, fint dstOffset, Location dest) {
-  Unused(src); Unused(dstOffset); Unused(dest);
-  unimplemented_helper("store");
+  assert(isRegister(src) && isRegister(dest), "not a register");
+  a->str(src, dest, dstOffset);
+}
+
+void SICGenHelper::moveRegToReg(Location srcReg, Location destReg) {
+  assert(isRegister(srcReg) && isRegister(destReg), "not a register");
+  a->mov(destReg, srcReg);
+}
+
+// must be a VMAddressOperand operand
+void SICGenHelper::setToZeroA(void* addr, Location tempReg) {
+  a->loadAddressLiteral(tempReg, addr, VMAddressOperand);
+  a->str_zero(tempReg, 0);
 }
 
 void SICGenHelper::setToZero(Location dest) {
-  Unused(dest);
-  unimplemented_helper("setToZero");
+  Location b;  int32 d;  OperandType t;
+  reg_disp_type_of_loc(&b, &d, &t, dest);
+  if (isRegister(dest)) a->mov_imm(dest, 0);
+  else                  a->str_zero(b, d);
+}
+
+
+// ---- prologue type checks -------------------------------------------------
+// On entry the receiver sits at [sp + leaf_rcvr_offset*oopSize]
+// (frame not created yet; lr holds the return address).
+
+void SICGenHelper::smiOop_prologue(char* missHandler) {
+  a->ldr(Temp1, SP, leaf_rcvr_offset * oopSize);
+  a->tst(Temp1, Tag_Mask);              // Int_Tag == 0
+  branch_to_vm_unless(a64_eq, missHandler);
+}
+
+void SICGenHelper::floatOop_prologue(char* missHandler) {
+  a->ldr (Temp1, SP, leaf_rcvr_offset * oopSize);
+  a->andd(Temp2, Temp1, Tag_Mask);
+  a->cmp (Temp2, Float_Tag);
+  branch_to_vm_unless(a64_eq, missHandler);
+}
+
+void SICGenHelper::memOop_prologue(mapOop receiverMapOop, char* missHandler) {
+  a->ldr (Temp1, SP, leaf_rcvr_offset * oopSize);
+  a->andd(Temp2, Temp1, Tag_Mask);
+  a->cmp (Temp2, Mem_Tag);
+  branch_to_vm_unless(a64_eq, missHandler);
+  // check_map:
+  a->ldr (Temp2, Temp1, map_offset());  // tagged-pointer offset; ldur form
+  a->loadOopLiteral(x16, receiverMapOop);
+  a->cmp (Temp2, x16);
+  branch_to_vm_unless(a64_eq, missHandler);
+}
+
+
+void SICGenHelper::checkOop(Label& general, oop what, Location loc_to_check) {
+  // test for inline cache hit (selector, delegatee)
+  Unused(general);
+  moveLocToReg(loc_to_check, Temp2);
+  loadImmediateOop(what, x16);
+  a->cmp(Temp2, x16);
+  branch_to_vm_unless(a64_eq, (void*)SendMessage_stub);
+}
+
+
+// ---- dynamic-inheritance parent verification: not yet implemented ----------
+// (DI sends are rare; the DI check machinery with its backpatchable nmln
+// blocks ports later, alongside diDesc emission.)
+
+fint SICGenHelper::verifyParents(objectLookupTarget* target, Location t, fint count) {
+  Unused(target); Unused(t); Unused(count);
+  unimplemented_helper("verifyParents (dynamic inheritance)");
+  return 0;
+}
+
+
+void SICGenHelper::moveToExactlyThisReg(PReg* pr, Location reg) {
+  Location r = moveToReg(pr, reg);
+  if (r != reg) a->mov(reg, r);
 }
 
 # endif // SIC_COMPILER

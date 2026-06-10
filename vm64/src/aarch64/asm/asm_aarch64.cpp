@@ -66,6 +66,26 @@ void Assembler::ldp(Location rt1, Location rt2, Location rn, fint byte_offset) {
   assert((byte_offset & 7) == 0 && byte_offset >= -512 && byte_offset <= 504, "ldp offset");
   emit32(a64_ldp(rt1, rt2, rn, (int)(byte_offset >> 3)));
 }
+void Assembler::ldr32(Location rt, Location rn, fint byte_offset) {
+  assert(byte_offset >= 0 && (byte_offset & 3) == 0 && byte_offset <= 16380, "ldr32 offset");
+  emit32(a64_ldrw_uoff(rt, rn, (unsigned)(byte_offset >> 2)));
+}
+void Assembler::str32(Location rt, Location rn, fint byte_offset) {
+  assert(byte_offset >= 0 && (byte_offset & 3) == 0 && byte_offset <= 16380, "str32 offset");
+  emit32(a64_strw_uoff(rt, rn, (unsigned)(byte_offset >> 2)));
+}
+void Assembler::add32(Location rd, Location rn, fint imm) {
+  assert(imm >= 0 && imm <= 4095, "add32 imm range");
+  emit32(a64_addw_imm(rd, rn, (unsigned)imm));
+}
+void Assembler::str_zero(Location rn, fint byte_offset) {
+  assert(fits_uoff8(byte_offset), "str_zero offset");
+  emit32(a64_str_uoff(a64_xzr, rn, (unsigned)(byte_offset >> 3)));
+}
+void Assembler::str_zero32(Location rn, fint byte_offset) {
+  assert(byte_offset >= 0 && (byte_offset & 3) == 0 && byte_offset <= 16380, "str_zero32 offset");
+  emit32(a64_strw_uoff(a64_xzr, rn, (unsigned)(byte_offset >> 2)));
+}
 
 
 // ---- constants ----------------------------------------------------------

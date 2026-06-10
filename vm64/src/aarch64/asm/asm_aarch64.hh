@@ -44,6 +44,13 @@ class Assembler: public BaseAssembler {
   void strb(Location rt, Location rn, fint byte_offset);
   void stp (Location rt1, Location rt2, Location rn, fint byte_offset);
   void ldp (Location rt1, Location rt2, Location rn, fint byte_offset);
+  // 32-bit forms (int32 counters and the like)
+  void ldr32(Location rt, Location rn, fint byte_offset);
+  void str32(Location rt, Location rn, fint byte_offset);
+  void add32(Location rd, Location rn, fint imm);
+  // zero stores (encode XZR as the source)
+  void str_zero  (Location rn, fint byte_offset);
+  void str_zero32(Location rn, fint byte_offset);
 
   // ---- constants ------------------------------------------------------
   void mov_imm(Location rd, smi value);          // movz/movk sequence, no addrDesc
