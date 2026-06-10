@@ -91,6 +91,7 @@ bool sendDesc::checkLookupTypeAndEntryPoint(nmethod *nm, char *entryPoint) {
 
 void sendDesc::extend(nmethod* nm, mapOop receiverMapOop,
                       CountStub *cs_from_pic) {
+  JITWriteScope jit_write_scope;  // IC and dependency-link words live in the zone
   char *addr;
   bool isPerform= isPerformLookupType(raw_lookupType());
   if (   PIC && !isPerform
@@ -132,6 +133,7 @@ void sendDesc::extend(nmethod* nm, mapOop receiverMapOop,
 
 // rebind the sendDesc to nm at addr, with cs_from_pic if non-NULL
 void sendDesc::rebind(nmethod* nm, char* addr, CountStub *cs_from_pic) {
+  JITWriteScope jit_write_scope;  // IC and dependency-link words live in the zone
   if (VerifyZoneOften) {
     nm->linkedSends.verify_list_integrity();
     if (dependency()->next == NULL  &&  dependency()->prev == NULL)

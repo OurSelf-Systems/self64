@@ -966,7 +966,7 @@ ScopeDescRecorder::ScopeDescRecorder(fint byte_size, fint pcDesc_size) {
   _hasCodeBeenGenerated = false;
 }
 
-void ScopeDescRecorder::copyTo(VtblPtr_t* addr, int32 backPointer) {
+void ScopeDescRecorder::copyTo(VtblPtr_t* addr, smi backPointer) {
   { nmethodScopes d;
     addr[0] = d.vtbl_value();
   }
