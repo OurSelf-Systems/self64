@@ -21,6 +21,9 @@ pc_t* addrDesc::addr(OopNCode* m) {
   if (off < nm->scopes->length()) {
     return (pc_t*) nm->scopes->at(off);
   }
+  lprintf("[addrDesc::addr] off=%ld instsLen=%ld desc=%#lx isNM=%d\n",
+          (long)offset(), (long)m->instsLen(),
+          (unsigned long)desc, (int)m->isNMethod());
   ShouldNotReachHere(); // there should be no addrDescs beyond scopes
   return NULL;
 }

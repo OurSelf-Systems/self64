@@ -203,6 +203,17 @@ inline a64_inst a64_asr_imm(int rd, int rn, int sh) {
        | ((rn & 31) << 5) | (rd & 31);
 }
 
+// variable shifts: LSLV/LSRV/ASRV Xd, Xn, Xm
+inline a64_inst a64_lslv(int rd, int rn, int rm) {
+  return 0x9AC02000u | ((rm & 31) << 16) | ((rn & 31) << 5) | (rd & 31);
+}
+inline a64_inst a64_lsrv(int rd, int rn, int rm) {
+  return 0x9AC02400u | ((rm & 31) << 16) | ((rn & 31) << 5) | (rd & 31);
+}
+inline a64_inst a64_asrv(int rd, int rn, int rm) {
+  return 0x9AC02800u | ((rm & 31) << 16) | ((rn & 31) << 5) | (rd & 31);
+}
+
 // ---------------------------------------------------------------- branches
 
 enum a64_cond {  // condition codes for b.cond

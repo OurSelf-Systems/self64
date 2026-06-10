@@ -148,9 +148,10 @@ void Assembler::flushLiteralPool() {
     if (_lits[i].type == OopOperand) {
       Data(oop(_lits[i].value));      // records oop addrDesc for mem oops
     } else {
-      // VM address: no GC tracking needed; record primitive call slots so
-      // verifiers can identify them
-      if (_lits[i].type == PVMAddressOperand) doAddOffset(_lits[i].type, false);
+      // plain VMAddressOperand words need no loc; primitive, code-address
+      // and backpatchable-send words are recorded so the PIC/sendDesc
+      // machinery can find and repatch them
+      if (_lits[i].type != VMAddressOperand) doAddOffset(_lits[i].type, false);
       Alloc(smi);
       *data = _lits[i].value;
     }

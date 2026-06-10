@@ -241,13 +241,18 @@ static void gen_SPLimit_test();
     bool ccOnly = (out == NoReg);
     Location dst = ccOnly ? Temp1 : out;
 
-    // constant shift counts have a direct form
-    if ((op == TARShiftCCArithOp || op == TLRShiftCCArithOp)
-        && oper->isConstPReg()) {
-      smi count = smiOop(((ConstPReg*)oper)->constant)->value();
-      if (count < 0 || count > 61) { a->mov_imm(dst, 0); return dst; }
-      if (op == TARShiftCCArithOp) a->asr(dst, s, (fint)count);
-      else                         a->lsr(dst, s, (fint)count);
+    if (op == TARShiftCCArithOp || op == TLRShiftCCArithOp) {
+      if (oper->isConstPReg()) {            // constant count: direct form
+        smi count = smiOop(((ConstPReg*)oper)->constant)->value();
+        if (count < 0 || count > 61) { a->mov_imm(dst, 0); return dst; }
+        if (op == TARShiftCCArithOp) a->asr(dst, s, (fint)count);
+        else                         a->lsr(dst, s, (fint)count);
+      } else {                              // variable count: untag, shift
+        Location o = arith_operand_reg(oper, x16);
+        a->asr(x17, o, Tag_Size);           // raw shift count
+        if (op == TARShiftCCArithOp) a->emit32(a64_asrv(dst, s, x17));
+        else                         a->emit32(a64_lsrv(dst, s, x17));
+      }
       a->andd(dst, dst, ~smi(Tag_Mask));    // clear dragged-in tag bits
       return dst;
     }

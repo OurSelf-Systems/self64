@@ -1,1 +1,23 @@
-../../amd64/lookup/cacheStub_amd64.hh
+# if defined(__aarch64__)
+
+/* Copyright 1992-2026 AUTHORS.
+   See the LICENSE file for license information. */
+
+# ifdef INTERFACE_PRAGMAS
+  # pragma interface
+# endif
+
+
+# if  defined(FAST_COMPILER) || defined(SIC_COMPILER)
+
+// included into class CacheStub
+
+ private:
+   Label* br_if_not_smi();
+   Label* br_if_not_float();
+   void  add_case(nmethod* nm, CountStub* stArg, pc_t addr);
+
+
+
+# endif  // defined(FAST_COMPILER) || defined(SIC_COMPILER)
+# endif // defined(__aarch64__)

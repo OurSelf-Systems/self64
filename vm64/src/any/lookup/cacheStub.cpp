@@ -136,7 +136,8 @@ CacheStub::CacheStub() {
 
   assert(realLocsLen(arity(), info.has_smi, info.has_float) == locsLen(),
          "wrong number of locs");
-  copy_oops((oop*)a->locsStart, (oop*)locs(), locsLen() / oopSize);
+  // addrDescs are 4-byte; an oop-unit copy truncates odd counts on 64-bit
+  copy_bytes((char*)a->locsStart, (char*)locs(), locsLen());
   for (addrDesc* p = locs(), *end = locsEnd(); p < end; p++) {
     if (p->isOop()  &&  oop(p->referent(this))->is_new()) remember();
 
