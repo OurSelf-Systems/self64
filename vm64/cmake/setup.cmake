@@ -19,6 +19,14 @@ if(NOT TARGET_ARCH STREQUAL "X86_64_ARCH" AND NOT TARGET_ARCH STREQUAL "AARCH64_
   )
 endif()
 
+# SIC experiment variant 2: enable BOTH compilers on 64-bit arches
+if(TARGET_ARCH STREQUAL "AARCH64_ARCH" OR TARGET_ARCH STREQUAL "X86_64_ARCH")
+  list(APPEND _defines
+    FAST_COMPILER
+    SIC_COMPILER
+  )
+endif()
+
 list(APPEND _defines
   NATIVE_ARCH=${platform_processor}
   ${DYNAMIC}
