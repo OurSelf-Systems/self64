@@ -37,6 +37,9 @@ class vframeLookup: public simpleLookup {
 // I go from lookups to nmethods
 
 class compilingLookup: public vframeLookup {
+ public:
+  sendDesc* debug_sd() { return sd; }  // TEMP(new-sic)
+
  protected:
   bool needDebug; // do we need to return a debug method?
   sendDesc *sd;

@@ -87,7 +87,7 @@ nmethod* SICompiler::compileAccessMethod() {
     slotDesc* dataSlot = h->map()->find_slot(res->desc->name);
     if (!h->is_receiver())
       fatal("unimplemented: assignment through a non-receiver holder");
-    fint slotOffset = smiOop(dataSlot->data)->byte_count() - Mem_Tag;
+    fint slotOffset = smiOop(dataSlot->data)->value() * oopSize - Mem_Tag;
     a->ldr(Temp1, SP, leaf_rcvr_offset * oopSize);        // receiver
     a->ldr(Temp2, SP, (leaf_rcvr_offset + 1) * oopSize);  // argument
     a->str(Temp2, Temp1, slotOffset);

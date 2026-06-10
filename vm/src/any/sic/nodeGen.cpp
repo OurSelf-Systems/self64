@@ -84,7 +84,7 @@
                            PReg* val,
                            bool checkStore) {
     COMMENT("Begin slot assignment");
-    int32 offset = smiOop(path->desc->data)->byte_count() - Mem_Tag;
+    int32 offset = smiOop(path->desc->data)->value() * oopSize - Mem_Tag  /* word index -> bytes */;
     if (path->holder->is_object_or_map()) {
       PReg* t = new TempPReg(currentScope());
       t = loadPath(path->holder, rcvr, t);
@@ -115,7 +115,7 @@
   void NodeGen::pathLookup(realSlotRef* path, PReg* receiver, PReg* dest) {
     if (path->holder->is_object_or_map()) {
       PReg* base = loadPath(path->holder, receiver, dest);
-      fint offset = smiOop(path->desc->data)->byte_count() - Mem_Tag;
+      fint offset = smiOop(path->desc->data)->value() * oopSize - Mem_Tag  /* word index -> bytes */;
       APPEND(new LoadOffsetNode(base, offset, dest));
     } else {
       fatal("don't support vframe lookups");

@@ -22,8 +22,11 @@
     int32 length;       // number of bits, not words
     int32* bits;
     
-    int32  indexFromNumber(int32 i) { return i >> LogBitsPerWord; }
-    int32 offsetFromNumber(int32 i) { return lowerBits(i, LogBitsPerWord); }
+    // the bit string is built of int32 words, NOT machine words:
+    // LogBitsPerWord is 6 on 64-bit targets and would overflow them
+    enum { LogBitsPerBVWord = 5 };
+    int32  indexFromNumber(int32 i) { return i >> LogBitsPerBVWord; }
+    int32 offsetFromNumber(int32 i) { return lowerBits(i, LogBitsPerBVWord); }
     
     bool getBitInWord(int32 i, int32 o) { return isSet(bits[i], o); }
     void setBitInWord(int32 i, int32 o) {       setNth(bits[i], o); }

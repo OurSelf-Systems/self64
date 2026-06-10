@@ -114,6 +114,7 @@ class simpleLookup: public ResourceObj {
   
   // the entry point for this group
   void lookupErrorCode(int32 perform_arg_count);
+  virtual sendDesc* debug_sd() { return NULL; }  // TEMP(new-sic) diagnostics
   void handleRecursiveLookupError();
   void generateLookupErrorMethod(int32 perform_arg_count);
 

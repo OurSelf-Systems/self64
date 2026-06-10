@@ -380,9 +380,12 @@ static void gen_SPLimit_test();
     theAssembler->Comment("block clone");
     Location dest = block()->loc;
 
+    // C args go in registers only.  Do NOT store into the outgoing area:
+    // unlike i386 (where CALL-pushed slots were fresh), the preallocated
+    // area may already hold a pending send's receiver/arguments, and the
+    // clone would clobber them.  The proto block oop is a literal-pool
+    // constant, so GC sees it without a stack copy.
     genHelper->loadImmediateOop(block()->block, Temp1); // load block Oop
-    theAssembler->str(Temp1, SP, leaf_rcvr_offset       * oopSize);
-    theAssembler->str(fp,    SP, (leaf_rcvr_offset + 1) * oopSize);
     theAssembler->mov(x0, Temp1);                       // C args: (block, fp)
     theAssembler->mov(x1, fp);
 

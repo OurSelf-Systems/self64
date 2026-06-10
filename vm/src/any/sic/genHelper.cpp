@@ -91,7 +91,9 @@
     Location t = isRegister(dest) ? dest : Temp1;
     if (path->holder->is_object_or_map()) {
       Location t1 = loadPath(t, path->holder, receiver);
-      load(t1, smiOop(path->desc->data)->byte_count() - Mem_Tag, t);
+      // slot data holds a word index; byte offset is index * oopSize
+      // (byte_count() bakes in the 32-bit tag-shift scale of 4)
+      load(t1, smiOop(path->desc->data)->value() * oopSize - Mem_Tag, t);
       // load data slot
     } else {
       fatal("don't support vframe lookups");
