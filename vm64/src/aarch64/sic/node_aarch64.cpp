@@ -579,8 +579,9 @@ static void gen_SPLimit_test();
     nlrCode();                                     // @8
     theAssembler->Data((int32)0, false);           // @12 pad
     assert((theAssembler->offset() & 7) == 0, "target word must be 8-aligned");
+    extern char* aarch64_SendMessage_stub();
     theAssembler->doAddOffset(BPVMAddressOperand, false);
-    theAssembler->DataPtr(smi(SendMessage_stub));  // @16 jump_address word
+    theAssembler->DataPtr(smi(aarch64_SendMessage_stub()));  // @16 jump_address
     theAssembler->DataPtr(0);                      // @24 nmln
     theAssembler->DataPtr(0);                      // @32 nmln
     if (sel != badOop) {

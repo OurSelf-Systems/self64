@@ -376,10 +376,9 @@ extern "C" oop CallPrimitiveFromInterpreter(void* entry_point, oop rcv,
 extern "C" oop EnterSelf(oop recv, char* entryPoint, oop arg1) {
 # ifdef SIC_COMPILER
   if (EnterSelf_generated == NULL) generate_EnterSelf();
-  OS::set_jit_writable(false);     // thread executes zone code now
-  oop res = EnterSelf_generated(recv, entryPoint, arg1);
-  OS::set_jit_writable(true);      // back to compile/patch mode
-  return res;
+  // the thread's default W^X state is execute; every zone writer brackets
+  // itself with a counted JITWriteScope, so no toggle is needed here
+  return EnterSelf_generated(recv, entryPoint, arg1);
 # else
   Unused(recv); Unused(entryPoint); Unused(arg1);
   fatal("EnterSelf called without JIT");

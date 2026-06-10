@@ -24,9 +24,10 @@ inline void simpleLookup::setResult(oop resultMethod, oop resultMethodHolderOrMa
 inline oop simpleLookup::evaluateResult(oop* argp, int32 nargs, nmethod* nm) {
 
 # if defined(FAST_COMPILER) || defined(SIC_COMPILER)
-  if (!Interpret) {
+  // mixed-mode rule: enter compiled code when an nmethod is in hand;
+  // interpret otherwise (interpreter callers always pass nm == NULL)
+  if (!Interpret && nm != NULL) {
     assert(nargs <= 1, "have not implemented compiled evaluation > 1 arg");
-    assert(nm != NULL, "need an nmethod");
     return EnterSelf( receiver,
                       nm->insts(),
                       nargs == 0  ?  badOop  :  argp[0]);

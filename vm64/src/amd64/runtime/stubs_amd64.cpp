@@ -45,6 +45,39 @@ oop ReturnResult_stub_result;
 // normal return (the result is already in x0).
 
 oop (*EnterSelf_generated)(oop recv, char* entryPoint, oop arg1) = NULL;
+static char* SendMessage_stub_generated = NULL;
+void generate_EnterSelf();   // below
+
+// the zone-resident lookup stub that empty/missed inline caches call;
+// generated alongside EnterSelf
+char* aarch64_SendMessage_stub() {
+  if (SendMessage_stub_generated == NULL) generate_EnterSelf();
+  return SendMessage_stub_generated;
+}
+
+// SendMessage_stub: reached through a send site's target word on an
+// inline-cache miss.  On entry lr is the send's return PC, which IS the
+// sendDesc; the receiver and arguments sit in the sender's outgoing area
+// ([sp+1] up), and fp is the sender's frame.  Call the C lookup (which
+// compiles and rebinds the cache), then tail-jump to the returned entry
+// point with lr restored so the callee's prologue saves the right PC.
+static void generate_SendMessage_stub(Assembler* a) {
+  a->Comment("SendMessage_stub");
+  a->sub(SP, SP, 16);
+  a->stp(fp, lr, SP, 0);          // scratch frame record (fp unchanged)
+  a->mov(x0, lr);                 // ic = the sendDesc
+  a->mov(x1, fp);                 // lookupFrame = the sending frame
+  a->ldr(x2, SP, 16 + 1*oopSize); // receiver from sender's outgoing area
+  a->mov_imm(x3, 0);              // perform_selector  (normal sends)
+  a->mov_imm(x4, 0);              // perform_delegatee
+  a->mov_imm(x5, 0);              // arg1
+  a->loadAddressLiteral(x16, (void*)&SendMessage, VMAddressOperand);
+  a->blr(x16);
+  a->mov(x17, x0);                // target entry point
+  a->ldp(fp, lr, SP, 0);
+  a->add(SP, SP, 16);
+  a->br(x17);
+}
 
 void generate_EnterSelf() {
   ResourceMark rm;
@@ -91,7 +124,10 @@ void generate_EnterSelf() {
   a->add(SP, SP, 16);
   a->ret();
 
-  assert(a->literalPoolIsEmpty(), "EnterSelf should be position-independent");
+  a->align(8);
+  fint sendMessage_offset = a->offset();
+  generate_SendMessage_stub(a);
+  a->flushLiteralPool();   // &SendMessage literal; ldr-lit is pc-relative
 
   // copy into the stub zone and publish (the allocator itself writes
   // free-list metadata inside the zone, so it needs write mode too)
@@ -108,6 +144,7 @@ void generate_EnterSelf() {
   firstSelfFrame_returnPC   = dst + retPC_offset;
   firstSelfFrameSendDescEnd = dst + descEnd_offset;
   EnterSelf_generated = (oop (*)(oop, char*, oop))dst;
+  SendMessage_stub_generated = dst + sendMessage_offset;
 
   // self-check: the generated block must parse as the first sendDesc
   sendDesc* f = sendDesc::sendDesc_from_return_PC(firstSelfFrame_returnPC);

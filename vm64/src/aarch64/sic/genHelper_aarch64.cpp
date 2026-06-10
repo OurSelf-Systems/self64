@@ -152,7 +152,8 @@ void SICGenHelper::checkOop(Label& general, oop what, Location loc_to_check) {
   moveLocToReg(loc_to_check, Temp2);
   loadImmediateOop(what, x16);
   a->cmp(Temp2, x16);
-  branch_to_vm_unless(a64_eq, (void*)SendMessage_stub);
+  extern char* aarch64_SendMessage_stub();
+  branch_to_vm_unless(a64_eq, (void*)aarch64_SendMessage_stub());
 }
 
 

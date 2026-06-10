@@ -95,6 +95,7 @@ void sweepTrigger() {
 
 
 zone::zone(smi& codeSize, smi& stubSize, smi& depSize, smi& debugSize) {
+  JITWriteScope jit_write_scope;  // Heap setup writes headers into the zone
   used_per_compiler[nm_nic]= 0;
   used_per_compiler[nm_sic]= 0;
   

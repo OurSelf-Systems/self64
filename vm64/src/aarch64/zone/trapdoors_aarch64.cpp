@@ -14,7 +14,9 @@ Trapdoors::Trapdoors(pc_t, int32) {}
 
 int32 Trapdoors::trapdoor_bytes() { return 0; }
 
-pc_t Trapdoors::  SendMessage_stub_td(Location) { return first_inst_addr(   ::SendMessage_stub); }
+extern char* aarch64_SendMessage_stub();  // stubs_aarch64.cpp; generated lazily
+
+pc_t Trapdoors::  SendMessage_stub_td(Location) { return aarch64_SendMessage_stub(); }
 pc_t Trapdoors::SendDIMessage_stub_td(Location) { return first_inst_addr( ::SendDIMessage_stub); }
 pc_t Trapdoors::    Recompile_stub_td(Location) { return first_inst_addr(     ::Recompile_stub); }
 pc_t Trapdoors::  DIRecompile_stub_td(Location) { return first_inst_addr(   ::DIRecompile_stub); }

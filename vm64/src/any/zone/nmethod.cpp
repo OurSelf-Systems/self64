@@ -28,6 +28,7 @@ static nmln* depsEndArg;
 static int32 dLen;
 
 nmethod* nmethod::new_nmethod(AbstractCompiler* c, bool generateDebugCode) {
+  JITWriteScope jit_write_scope;  // covers zone free-list writes in operator new
   // This grossness is brought to you by the great way in which C++
   // handles non-standard allocation...
   Assembler* instsA = c->instructions();
@@ -1522,6 +1523,7 @@ void nmethod_init() {
 
 static nmethod* constructDoItMethod_cont(oop receiver, oop method) {
   ResourceMark rm;
+  JITWriteScope jit_write_scope;  // compile + install + makeZombie write the zone
   compilingLookup L( receiver,
                      VMString[DO_IT],
                      NULL,     // delegatee

@@ -901,10 +901,20 @@ extern "C" {
 # if TARGET_OS_VERSION == MACOSX_VERSION && defined(__aarch64__)
 
 static bool zone_is_map_jit = false;
+static int  jit_write_depth = 0;
 
+// counted so JITWriteScopes nest; thread default is EXECUTE.  The depth
+// is tracked even before the JIT mapping exists, so a scope already open
+// when allocate_jit_area runs takes effect immediately.
 void OS::set_jit_writable(bool writable) {
-  if (zone_is_map_jit)
-    pthread_jit_write_protect_np(!writable);
+  if (writable) {
+    if (jit_write_depth++ == 0 && zone_is_map_jit)
+      pthread_jit_write_protect_np(0);
+  } else {
+    assert(jit_write_depth > 0, "unbalanced jit write scope");
+    if (--jit_write_depth == 0 && zone_is_map_jit)
+      pthread_jit_write_protect_np(1);
+  }
 }
 
 // Apple Silicon W^X: MAP_JIT regions execute, but the kernel refuses
@@ -925,7 +935,8 @@ char* OS::allocate_jit_area(smi &size, const char* name) {
     return NULL;
   }
   zone_is_map_jit = true;
-  set_jit_writable(true);   // VM starts in compile/patch mode
+  // honor any JITWriteScope already open (e.g. the zone constructor's)
+  pthread_jit_write_protect_np(jit_write_depth > 0 ? 0 : 1);
   return p;
 }
 

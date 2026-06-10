@@ -86,6 +86,7 @@ compilingLookup::compilingLookup(oop rcvr,
 
 // Compile an nmethod
 nmethod* compilingLookup::lookupNMethod() {
+  JITWriteScope jit_write_scope;  // compilation writes the code zone throughout
   if (result() == NULL)                                       
     perform_full_lookup();
 
