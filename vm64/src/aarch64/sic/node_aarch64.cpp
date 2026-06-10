@@ -443,8 +443,38 @@ static void gen_SPLimit_test();
   }
 
   void IndexedBranchNode::gen() {
+    // n-way indexed branch; fall through when non-int or out of bounds.
+    // A tagged smi index is value*4, exactly the byte offset of the
+    // value'th slot in a table of single 4-byte branch instructions.
     BasicNode::gen();
-    unimplemented_gen("IndexedBranchNode::gen");
+    Assembler* a = theAssembler;
+    r = genHelper->moveToReg(_src, Temp1);
+    Label end(a->printing);
+    if (!srcMustBeSmi) {
+      a->tst(r, Tag_Mask);
+      a->b(a64_ne, &end);
+    }
+    smi taggedBound = smi(as_smiOop(nCases));
+    if (taggedBound <= 4095) {
+      a->cmp(r, (fint)taggedBound);
+    } else {
+      a->mov_imm(x16, taggedBound);
+      a->cmp(r, x16);
+    }
+    a->b(a64_cs, &end);                  // unsigned >=: out of bounds
+    Location t = (r == Temp1) ? Temp2 : Temp1;
+    Label jumps(a->printing);
+    a->adr(t, &jumps);
+    a->add(t, t, r);
+    a->br(t);
+    jumps.define();
+    for (fint i = 0; i < nCases; ++i) {
+      Label* nthCase = new Label(a->printing);
+      a->b(nthCase);
+      Node* n = nexti(i + 1);
+      n->l = nthCase->unify(n->l);
+    }
+    end.define();
   }
 
   static void gen_SPLimit_test() {
