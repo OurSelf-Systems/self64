@@ -371,6 +371,11 @@
     topScope->describe();    // must come before gen to set scopeInfo   
     genHelper = new SICGenHelper;
     bbIterator->gen();
+# if TARGET_ARCH == AARCH64_ARCH
+    // lay down the oop/address literal pool before the buffer is copied
+    // into the zone (the pool words carry this method's oop addrDescs)
+    theAssembler->flushLiteralPool();
+# endif
     assert(theAssembler->verifyLabels(), "undefined labels");
 
     rec->generate();
