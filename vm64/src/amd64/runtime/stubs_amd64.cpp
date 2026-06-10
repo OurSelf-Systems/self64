@@ -30,6 +30,16 @@ oop ReturnResult_stub_result;
 extern "C" oop capture_NLR_parameters_from_registers(oop result,
                                                      smi target_frame,
                                                      int32 target_ID);
+extern "C" {
+  extern oop   NLRResultFromC;   // nlrSupport.cpp
+  extern smi   NLRHomeFromC;
+  extern int32 NLRHomeIDFromC;
+}
+
+// entry points handed to compiled senders whose send was interpreted by the
+// VM (see sendDesc::sendMessage); set by generate_runtime_stubs_into
+char* ReturnResult_entry = NULL;
+char* ReturnNLR_entry    = NULL;
 
 // EnterSelf: the C++ -> compiled-Self entry point.
 //
@@ -148,6 +158,29 @@ int32 generate_runtime_stubs_into(char* dst, int32 avail) {
   a->align(8);
   fint sendMessage_offset = a->offset();
   generate_SendMessage_stub(a);
+
+  // ReturnResult: a compiled sender's "callee" when the VM already
+  // interpreted the send; just delivers the prepared result.
+  a->Comment("ReturnResult");
+  fint returnResult_offset = a->offset();
+  a->loadAddressLiteral(x16, (void*)&ReturnResult_stub_result, VMAddressOperand);
+  a->ldr(ResultReg, x16, 0);
+  a->ret();
+
+  // ReturnNLR: ditto, but an NLR escaped the interpreted callee; load the
+  // NLR registers and divert to the send site's NLR entry (return PC + 8),
+  // exactly like a compiled callee's NLR epilogue.
+  a->Comment("ReturnNLR");
+  fint returnNLR_offset = a->offset();
+  a->loadAddressLiteral(x16, (void*)&NLRResultFromC, VMAddressOperand);
+  a->ldr(NLRResultReg, x16, 0);
+  a->loadAddressLiteral(x16, (void*)&NLRHomeFromC, VMAddressOperand);
+  a->ldr(NLRHomeReg, x16, 0);
+  a->loadAddressLiteral(x16, (void*)&NLRHomeIDFromC, VMAddressOperand);
+  a->ldr32(NLRHomeIDReg, x16, 0);
+  a->add(lr, lr, 8);
+  a->ret();
+
   a->flushLiteralPool();   // &SendMessage literal; ldr-lit is pc-relative
 
   // copy into the trapdoor area (zone base, outside both the nmethod and
@@ -163,6 +196,8 @@ int32 generate_runtime_stubs_into(char* dst, int32 avail) {
 
   firstSelfFrame_returnPC   = dst + retPC_offset;
   firstSelfFrameSendDescEnd = dst + descEnd_offset;
+  ReturnResult_entry        = dst + returnResult_offset;
+  ReturnNLR_entry           = dst + returnNLR_offset;
   EnterSelf_generated = (oop (*)(oop, char*, oop))dst;
   SendMessage_stub_generated = dst + sendMessage_offset;
 

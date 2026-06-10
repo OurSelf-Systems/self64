@@ -520,6 +520,33 @@ void sendDesc::sendMessagePrologue( oop  receiver, frame* lookupFrame ) {
 }
 
 
+extern char* ReturnResult_entry;   // stubs_aarch64.cpp
+extern char* ReturnNLR_entry;
+extern oop   ReturnResult_stub_result;
+
+// mixed mode: run a compiled sender's send in the interpreter (the lookup
+// produced no nmethod, e.g. a block whose home frame is interpreted, or
+// Interpret was switched back on).  Receiver and arguments live in the
+// sender's outgoing area just above the lookup frame record.
+static char* interpretSendForCompiledSender(compilingLookup* L,
+                                            frame* lookupFrame) {
+  oop* out = (oop*)lookupFrame + 2;   // [0] lr hole, [1] receiver, [2..] args
+  fint nargs = L->selector()->is_string()
+    ? stringOop(L->selector())->arg_count()
+    : 0;
+  oop res = L->result()->interpret(L->receiver, L->selector(), L->delegatee(),
+                                   &out[2], nargs);
+  if (NLRSupport::have_NLR_through_C()) {
+    // the compiled caller's NLR code takes over from here (pure register
+    // protocol), mirroring continue_NLR_into_compiled_Self
+    NLRSupport::reset_have_NLR_through_C();
+    return ReturnNLR_entry;
+  }
+  ReturnResult_stub_result = res;
+  return ReturnResult_entry;
+}
+
+
 static nmethod* SendMessage_cont( compilingLookup* L) {
   if ( Interpret ) {
     L->perform_full_lookup();
@@ -573,10 +600,9 @@ char* sendDesc::sendMessage( frame* lookupFrame,
   nmethod* nm = switchToVMStack( SendMessage_cont, &L );
   if (SilentTrace) LOG_EVENT1("sendDesc::sendMessage: found %#lx", nm);
 
-  if (Interpret) return L.interpretResultForCompiledSender(arg1);
-  if (nm == NULL)  // compile refused: block with an interpreted home frame
-    fatal("mixed-mode: compiled sender calling an interpreted-home block "
-          "is not yet bridged (see compilingLookup::lookupNMethod)");
+  Unused(arg1);
+  if (Interpret || nm == NULL)
+    return interpretSendForCompiledSender(&L, lookupFrame);
   return nm->verifiedEntryPoint();
 }
 
@@ -618,7 +644,8 @@ nmethod* sendDesc::lookup_compile_and_backpatch( compilingLookup* L ) {
   assert(zone::frame_chain_nesting == 0 || recompilee != NULL,
          "should not be nested");
   
-  if (InlineCache &&
+  if (nm != NULL &&
+      InlineCache &&
       (InlineCacheNonStatic || L->isReceiverStatic())) {
     // add to PIC
     extend(nm, L->receiverMapOop(), NULL);
