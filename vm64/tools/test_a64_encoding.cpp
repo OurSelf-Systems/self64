@@ -74,6 +74,11 @@ int main() {
   CASE("cmp x9, x10",                 a64_cmp_reg(9, 10));
   CASE("mul x4, x5, x6",              a64_mul(4, 5, 6));
   CASE("sdiv x4, x5, x6",             a64_sdiv(4, 5, 6));
+  CASE("lsl x3, x4, x5",              a64_lslv(3, 4, 5));
+  CASE("lsr x3, x4, x5",              a64_lsrv(3, 4, 5));
+  CASE("asr x3, x4, x5",              a64_asrv(3, 4, 5));
+  CASE("adr x7, . + 16",              a64_adr(7, 16));
+  CASE("adr x7, . - 8",               a64_adr(7, -8));
 
   // logical (register)
   CASE("and x1, x2, x3",              a64_and_reg(1, 2, 3));

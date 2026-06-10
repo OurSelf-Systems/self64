@@ -92,6 +92,7 @@ class Assembler: public BaseAssembler {
   void ret  ();
   void brk  (fint imm16);
   void nop  ();
+  void adr  (Location rd, Label* L);   // pc-relative address of a label
 
   // align instsEnd to a multiple of `bytes` with nops (e.g. before a send
   // site, whose return PC must be 8-aligned -- see sendDesc_aarch64.hh)

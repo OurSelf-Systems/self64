@@ -234,6 +234,16 @@ void Assembler::bl  (Label* L)               { EMIT_BRANCH(L, a64_bl(rel)); }
 
 # undef EMIT_BRANCH
 
+void Assembler::adr(Location rd, Label* L) {
+  pc_t site = instsEnd;
+  int rel = 0;
+  if (L != NULL && L->isDefined())
+    rel = (int)(L->target() - site);
+  else if (L != NULL)
+    L->unify(new Label(printing, site));
+  emit32(a64_adr(rd, rel));
+}
+
 void Assembler::br (Location rn) { emit32(a64_br(rn)); }
 void Assembler::blr(Location rn) { emit32(a64_blr(rn)); }
 void Assembler::ret()            { emit32(a64_ret()); }

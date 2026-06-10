@@ -203,6 +203,13 @@ inline a64_inst a64_asr_imm(int rd, int rn, int sh) {
        | ((rn & 31) << 5) | (rd & 31);
 }
 
+// ADR Xd, label -- pc-relative address, byte_offset in [-1MB, 1MB)
+inline a64_inst a64_adr(int rd, int byte_offset) {
+  unsigned immlo = byte_offset & 3;
+  unsigned immhi = (byte_offset >> 2) & 0x7FFFF;
+  return 0x10000000u | (immlo << 29) | (immhi << 5) | (rd & 31);
+}
+
 // variable shifts: LSLV/LSRV/ASRV Xd, Xn, Xm
 inline a64_inst a64_lslv(int rd, int rn, int rm) {
   return 0x9AC02000u | ((rm & 31) << 16) | ((rn & 31) << 5) | (rd & 31);
@@ -270,6 +277,7 @@ inline bool a64_is_b_or_bl(a64_inst w)   { return (w & 0x7C000000u) == 0x1400000
 inline bool a64_is_bcond(a64_inst w)     { return (w & 0xFF000010u) == 0x54000000u; }
 inline bool a64_is_cb(a64_inst w)        { return (w & 0x7E000000u) == 0x34000000u; }
 inline bool a64_is_ldr_lit(a64_inst w)   { return (w & 0xBF000000u) == 0x18000000u; }
+inline bool a64_is_adr(a64_inst w)       { return (w & 0x9F000000u) == 0x10000000u; }
 
 // Insert a branch offset (in words) into an already-emitted instruction.
 // Returns the patched word; callers store it back and need no icache flush
@@ -281,6 +289,8 @@ inline a64_inst a64_patch_branch(a64_inst w, int offset_words) {
     return (w & 0xFF00001Fu) | ((offset_words & 0x7FFFF) << 5);
   if (a64_is_cb(w) || a64_is_ldr_lit(w))
     return (w & 0xFF00001Fu) | ((offset_words & 0x7FFFF) << 5);
+  if (a64_is_adr(w))   // 4-aligned targets only: immlo stays 00
+    return (w & 0x9F00001Fu) | ((offset_words & 0x7FFFF) << 5);
   return 0; // not a patchable instruction; caller asserts
 }
 
