@@ -34,7 +34,8 @@ fint SICGenHelper::spOffset(Location l) {
   reg_disp_type_of_loc(&b, &d, &t, l);
   // had better be used for active frame, not a saved one,
   // because sp of saved frame is two words lower! -- dmu 5/06
-  return b == SP  ?  d  :  d  +  (theSIC->frameSize() - linkage_area_size) * oopSize;
+  // sp sits one pad word below the i386-style frame bottom (alignment)
+  return b == SP  ?  d  :  d  +  (theSIC->frameSize() - 1) * oopSize;
 }
 
 fint SICGenHelper::spOffset(Location l, nmethod* nm) {
@@ -45,7 +46,7 @@ fint SICGenHelper::spOffset(Location l, nmethod* nm) {
 # if GENERATE_DEBUGGING_AIDS
     if (CheckAssertions  &&  b != fp)  warning("untested");
 # endif
-  return b == fp  ?  d  :  d - (nm->frameSize() - linkage_area_size) * oopSize;
+  return b == fp  ?  d  :  d - (nm->frameSize() - 1) * oopSize;
 }
 
 // Warning: this clobbers the count register

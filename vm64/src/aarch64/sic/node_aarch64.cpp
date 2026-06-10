@@ -32,13 +32,20 @@ static void gen_SPLimit_test();
 
   void PrologueNode::postPrologue()     { }
 
+  // macOS arm64 enables hardware SP-alignment checking: any sp-based
+  // access faults unless sp is 16-aligned.  So frames are built without
+  // ever misaligning sp: the old fp is stored with a negative-offset
+  // store BEFORE sp moves, and sp descends by the full (16-aligned)
+  // frame size in one step, leaving one pad word at the frame bottom.
+  // fp-based accesses are not alignment-checked, so fp = entry_sp - 8
+  // keeps the i386/PPC frame layout intact.
+
   void BasicNode::restoreFrameAndReturn(bool haveStackFrame, fint offset) {
     Assembler* a = theAssembler;
     a->Comment("restoreFrameAndReturn");
     if (haveStackFrame) {
-      a->mov(SP, fp);            // discard locals
-      a->ldr(fp, SP, 0);         // restore old fp
-      a->add(SP, SP, oopSize);   // pop the fp slot; sp -> saved-pc slot
+      a->add(SP, fp, oopSize);   // sp = entry sp (16-aligned before any sp access)
+      a->ldr(fp, SP, -oopSize);  // old fp from [entry_sp - 8] (stur form)
     }
     a->ldr(lr, SP, leaf_pc_offset * oopSize);
     if (offset != 0)
@@ -48,11 +55,10 @@ static void gen_SPLimit_test();
 
   void PrologueNode::actuallyCreateStackFrame() {
     Assembler* a = theAssembler;
-    a->sub(SP, SP, oopSize);     // push old fp
-    a->str(fp, SP, 0);
-    a->mov(fp, SP);
+    a->str(fp, SP, -oopSize);    // save old fp at entry_sp-8 (sp unmoved)
+    a->sub(fp, SP, oopSize);     // fp = entry_sp - 8
     assert((thisFrameSize & (frame_word_alignment - 1)) == 0, "frame size check");
-    a->sub(SP, SP, (thisFrameSize - linkage_area_size) * oopSize);
+    a->sub(SP, SP, thisFrameSize * oopSize);  // even words: sp stays 16-aligned
 
     theSIC->_frameCreationOffset = a->offset();
   }
@@ -523,10 +529,6 @@ static void gen_SPLimit_test();
     theAssembler->Data(mask());                    // @4 used registers for GC
     if (pd->needsNLRCode()) {
       nlrCode();                                   // @8
-      if (theSIC->nlrLabel && !theSIC->nlrLabel->isDefined()) {
-        theSIC->nlrLabel->define();
-        restoreFrameAndReturn(true, sendDesc::non_local_return_offset);
-      }
     } else {
       theAssembler->nop();                         // @8 keep the shape
     }
@@ -534,6 +536,13 @@ static void gen_SPLimit_test();
     assert((theAssembler->offset() & 7) == 0, "target word must be 8-aligned");
     theAssembler->doAddOffset(PVMAddressOperand, false);
     theAssembler->DataPtr(smi(first_inst_addr(pd->fn())));  // @16
+    // the shared NLR epilogue is ordinary code; it must come AFTER the
+    // descriptor's fixed-offset words, never inside them
+    if (pd->needsNLRCode()
+        && theSIC->nlrLabel && !theSIC->nlrLabel->isDefined()) {
+      theSIC->nlrLabel->define();
+      restoreFrameAndReturn(true, sendDesc::non_local_return_offset);
+    }
     past_nlr.define();
   }
 
