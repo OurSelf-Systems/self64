@@ -386,10 +386,54 @@ extern "C" oop EnterSelf(oop recv, char* entryPoint, oop arg1) {
 # endif
 }
 
+// Unwind the C/VM frames and resume an NLR in compiled Self code.
+// addr is the send-site return PC that was live when Self called into the
+// VM, i.e. the saved-lr slot of the VM's entry record.  We walk our own
+// frame chain to that record -- SwitchStack leaves x29 alone, so the chain
+// spans the VM/process stack switch -- then restore the Self frame's fp/sp
+// and branch to the send site's NLR entry (return PC + 8; see
+// non_local_return_offset in sendDesc_aarch64.hh).
+//
+// Args land exactly in the NLR register convention (regs_aarch64.hh):
+// x0 = NLRResultReg, x1 = NLRHomeReg, x2 = NLRHomeIDReg.
+
+extern "C" {
+  extern oop   NLRResultFromC;   // set by NLRSupport::save_NLR_results
+  extern smi   NLRHomeFromC;
+  extern int32 NLRHomeIDFromC;
+}
+extern bool8 processSemaphore;   // process.hh
+
+extern "C" __attribute__((naked, noreturn))
+void ContinueNLR_unwind_and_jump(oop result, smi home, int32 homeID,
+                                 char* match, char* target) {
+  // naked: args are referenced directly by register (x0..x4)
+  __asm__ __volatile__(
+    "mov   x9, x29\n\t"
+  "1:\n\t"
+    "ldr   x10, [x9, #8]\n\t"   // saved lr of this record
+    "cmp   x10, x3\n\t"
+    "b.eq  2f\n\t"
+    "ldr   x9, [x9]\n\t"        // follow the frame chain
+    "cbnz  x9, 1b\n\t"
+    "brk   #0x9e\n\t"           // ran off the chain: no such return PC
+  "2:\n\t"
+    "ldr   x29, [x9]\n\t"       // the Self frame's fp
+    "add   x10, x9, #16\n\t"    // pop the entry record: the frame's sp
+    "mov   sp, x10\n\t"
+    "br    x4\n\t"
+  );
+}
+
 extern "C" oop volatile ContinueNLRFromC(char* addr, bool isInterpreted, bool isSelfIC) {
-  Unused(addr); Unused(isInterpreted); Unused(isSelfIC);
-  fatal("ContinueNLRFromC called without JIT");
-  return NULL;
+  Unused(isSelfIC);  // send and primitive descs both put NLR code at +8
+  if (isInterpreted)
+    fatal("interpreted NLR uses longjmp on 64-bit "
+          "(see continue_NLR_into_interpreted_Self)");
+  processSemaphore = false;
+  ContinueNLR_unwind_and_jump(NLRResultFromC, NLRHomeFromC, NLRHomeIDFromC,
+                              addr, addr + 8 /*non_local_return_offset*/);
+  return NULL; // not reached
 }
 
 // DiscardStack, check_saved_byte_map_base, set_flags_for_platform,

@@ -27,6 +27,10 @@ oop ReturnResult_stub_result;
 
 # if TARGET_ARCH == AARCH64_ARCH && defined(SIC_COMPILER)
 
+extern "C" oop capture_NLR_parameters_from_registers(oop result,
+                                                     smi target_frame,
+                                                     int32 target_ID);
+
 // EnterSelf: the C++ -> compiled-Self entry point.
 //
 // Generated into the stub zone at first use rather than written as static
@@ -109,9 +113,10 @@ int32 generate_runtime_stubs_into(char* dst, int32 avail) {
 
   fint retPC_offset = a->offset();
   Label done(a->printing);
+  Label nlr_through(a->printing);
   a->b(&done);                       // @0  branch around desc; normal return
   a->Data((int32)0, false);          // @4  mask
-  a->b(&done);                       // @8  NLR entry: result already in x0
+  a->b(&nlr_through);                // @8  NLR entry
   a->Data((int32)0, false);          // @12 pad
   a->DataPtr(0);                     // @16 jump_address (never rebound)
   a->DataPtr(0);                     // @24 nmln next
@@ -129,6 +134,16 @@ int32 generate_runtime_stubs_into(char* dst, int32 avail) {
   a->ldp(fp, lr, SP, 0);
   a->add(SP, SP, 16);
   a->ret();
+
+  // An NLR that propagates past the first Self frame must be recorded for
+  // the C++ caller (sets _have_NLR_through_C and the *FromC globals) before
+  // EnterSelf returns.  x0-x2 already hold result/home/homeID, matching the
+  // C argument registers; the call returns the result in x0.
+  nlr_through.define();
+  a->loadAddressLiteral(x16, (void*)capture_NLR_parameters_from_registers,
+                        VMAddressOperand);
+  a->blr(x16);
+  a->b(&done);
 
   a->align(8);
   fint sendMessage_offset = a->offset();
