@@ -817,16 +817,54 @@ static void gen_SPLimit_test();
       else                        theAssembler->str(Temp2, b, d);
       return;
     }
+    Assembler* a = theAssembler;
     Location s = arith_operand_reg(_src, Temp1);
+
+    // Operand smi-tag checks.  inlineIntArithmetic relies on this node to
+    // route a non-smi operand to the failure merge (next1) with the Z flag
+    // CLEAR, so the following BranchNode(EQBranchOp) reports a type error
+    // (NE), while an arithmetic overflow arrives with Z SET (overflow, EQ).
+    // Without this, a non-smi argument (e.g. a float) was silently
+    // integer-added to the receiver -- the classic smi+float bug.
+    bool typeErrorPossible = (!arg1IsInt || !arg2IsInt) && next1() != NULL;
+    if (typeErrorPossible) {
+      if (!arg1IsInt) {
+        a->tst(s, Tag_Mask);
+        Label* l = new Label(a->printing);
+        a->b(a64_ne, l);                 // non-smi receiver -> type error (NE)
+        next1()->l = l->unify(next1()->l);
+      }
+      if (!arg2IsInt) {
+        Location o = arith_operand_reg(oper, x16);  // x16 is never s
+        a->tst(o, Tag_Mask);
+        Label* l = new Label(a->printing);
+        a->b(a64_ne, l);                 // non-smi argument -> type error (NE)
+        next1()->l = l->unify(next1()->l);
+      }
+    }
+
     Location out = _dest->isNoPReg() ? NoReg
                  : isRegister(_dest->loc) ? _dest->loc : Temp1;
     Location dest = a64_arith_core(s, oper, op, out, next1());
     bool canOverflow = op == TAddCCArithOp || op == TSubCCArithOp;
-    if (canOverflow)
-      check_overflow_a64(next1());
+    if (canOverflow) {
+      if (typeErrorPossible) {
+        // overflow must reach the shared failure merge with Z SET so the
+        // BranchNode reports overflow (EQ), not a type error
+        Label cont(a->printing);
+        a->b(a64_vc, &cont);             // no overflow: continue
+        a->cmp(Temp1, Temp1);            // force Z=1 (EQ), V=0
+        Label* l = new Label(a->printing);
+        a->b(l);                         // unconditional -> failure merge
+        next1()->l = l->unify(next1()->l);
+        cont.define();
+      } else {
+        check_overflow_a64(next1());
+      }
+    }
     if (dest != NoReg && dest != _dest->loc && !_dest->isNoPReg()) {
       // store result on stack (success case)
-      theAssembler->str(dest, SP, genHelper->spOffset(_dest->loc));
+      a->str(dest, SP, genHelper->spOffset(_dest->loc));
     }
   }
 

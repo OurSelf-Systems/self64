@@ -285,9 +285,10 @@ SExpr* SPrimScope::tryConstantFold() {
         n->loadOop(VMString[OVERFLOWERROR], error);
       } else {
         arith->hasSideEffects_now = true;    // may fail, so can't eliminate
-        if (intRcvr || TARGET_ARCH == I386_ARCH) {
-          // arg & TagMask already done by TArithRRNode
-          // I386 does 'em all
+        if (intRcvr || TARGET_ARCH == I386_ARCH
+                    || TARGET_ARCH == AARCH64_ARCH) {
+          // operand tag tests already done by TArithRRNode
+          // (i386 and aarch64 do 'em all in the node)
         } else {
           PReg* t = new TempPReg(this, Temp1, false, true);
           n->append(new ArithRCNode(AndCCArithOp, t, Tag_Mask, t));
