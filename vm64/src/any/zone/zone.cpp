@@ -745,6 +745,7 @@ bool zone::verify() {
 }
 
 void zone::scavenge_contents() {
+  JITWriteScope jit_write_scope;  // GC updates words in the zone
   nmln *p = rememberLink.next;
   rememberLink.init(); // cause OopNCode::scavenge_contents will remember methods
   bool needToInvalICache = false;
@@ -756,6 +757,7 @@ void zone::scavenge_contents() {
 }
 
 void zone::switch_pointers(oop from, oop to) {
+  JITWriteScope jit_write_scope;  // GC updates words in the zone
   bool needToInvalICache = false;
   // this code used to invalidate as it went, but since invalidation
   // may free PICS and snap both rememberLinks and next pointers,
@@ -791,11 +793,13 @@ void zone::switch_pointers(oop from, oop to) {
 }
 
 void zone::gc_mark_contents() {
+  JITWriteScope jit_write_scope;  // GC updates words in the zone
   FOR_ALL_NMETHODS(p) p->gc_mark_contents();
   stubs->gc_mark_contents(); 
 }
 
 void zone::gc_unmark_contents() {
+  JITWriteScope jit_write_scope;  // GC updates words in the zone
   bool needToInvalICache = false;
   FOR_ALL_NMETHODS(p) needToInvalICache |= p->gc_unmark_contents();
   needToInvalICache |= stubs->gc_unmark_contents(); 
@@ -1313,6 +1317,7 @@ void zone::relocate_nmln(nmln* p) {
 
 #ifdef UNUSED
 void zone::relocate() {
+  JITWriteScope jit_write_scope;  // GC updates words in the zone
   FOR_ALL_NMETHODS(p) {
     p->relocate();
   }
