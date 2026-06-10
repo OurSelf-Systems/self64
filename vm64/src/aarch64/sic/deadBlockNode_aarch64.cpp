@@ -16,7 +16,16 @@
   }
 
   void DeadBlockNode::gen() {
-    fatal("aarch64 SIC code generation not yet implemented");
+    BasicNode::gen();
+    genPcDesc();
+    theAssembler->Comment("dead block code");
+    // non_lifo_abort wants a PC inside this method as its argument; pass
+    // the current one as the prim's receiver (cf. i386's call/pop trick)
+    Label here(theAssembler->printing);
+    here.define();
+    theAssembler->adr(Temp1, &here);
+    theAssembler->str(Temp1, SP, leaf_rcvr_offset * oopSize);
+    PrimNode::gen();
   }
 
 # endif // SIC_COMPILER
