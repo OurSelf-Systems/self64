@@ -194,24 +194,33 @@ void frame::fix_frame(char* pc, char* sp) {
    -- dmu 4/25/06
 */   
 
+# if TARGET_IS_64BIT
+// A record participates in the compiled-frame model iff its stored return
+// PC is Self code: in the zone, or the EnterSelf return point (the scope
+// stored by blocks of a method called straight from EnterSelf).
+// Interpreter and C records are their own home frame and block scope.
+static bool is_compiled_record(frame* f) {
+  char* r = ((char**)f)[saved_pc_offset];
+  return Memory->code->contains(r)
+      || r == first_inst_addr((void*)firstSelfFrame_returnPC);
+}
+# endif
+
 frame* frame::block_scope_of_home_frame() {
 # if TARGET_IS_64BIT
-  // On interpreter-only builds, the interpret() frame IS both
-  // the home frame and the block scope — there are no separate JIT Self frames.
-  return this;
-# else
-   return sender();
+  if (!is_compiled_record(this)) return this;
 # endif
+   return sender();
 }
 
 frame* frame::home_frame_of_block_scope(frame* currentFrameHint) {
 # if TARGET_IS_64BIT
-  // On interpreter-only builds, the block scope IS the home frame.
-  Unused(currentFrameHint);
-  return this;
-# else
-  return sendee(currentFrameHint);
+  if (!is_compiled_record(this)) {  // see above
+    Unused(currentFrameHint);
+    return this;
+  }
 # endif
+  return sendee(currentFrameHint);
 }
 
 
