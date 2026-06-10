@@ -26,8 +26,11 @@ static void gen_SPLimit_test();
   // AAPCS64 frame record -- with the receiver at [fp+16].
 
   void PrologueNode::prePrologue() {
-    theAssembler->Comment("save link register");
-    theAssembler->str(lr, SP, leaf_pc_offset * oopSize);
+    // The lr store must NOT happen here: IC rebinds enter at
+    // verifiedOffset/diCheckOffset, which are captured after this point
+    // and would bypass it (on i386 the CALL pushed the return PC on
+    // every path).  It lives in actuallyCreateStackFrame, where all
+    // entry paths converge.
   }
 
   void PrologueNode::postPrologue()     { }
@@ -55,6 +58,8 @@ static void gen_SPLimit_test();
 
   void PrologueNode::actuallyCreateStackFrame() {
     Assembler* a = theAssembler;
+    a->Comment("save link register");
+    a->str(lr, SP, leaf_pc_offset * oopSize);  // all entry paths reach here
     a->str(fp, SP, -oopSize);    // save old fp at entry_sp-8 (sp unmoved)
     a->sub(fp, SP, oopSize);     // fp = entry_sp - 8
     assert((thisFrameSize & (frame_word_alignment - 1)) == 0, "frame size check");
