@@ -191,28 +191,63 @@ static void gen_SPLimit_test();
     Unused(haveImmediate); Unused(rcvrReg); Unused(argReg);
   }
 
+  // Array access nodes.  A tagged smi index is value << Tag_Size (= value*4);
+  // objVector elements are inline 8-byte oops, so the element byte offset is
+  // index*2; byteVector data lives out of line behind the _bytes pointer.
+  // dataOffset/sizeOffset already include -Mem_Tag (see the *_offset()
+  // helpers in objVectorOop.hh/byteVectorOop.hh).
+
   bool ArrayAtNode::genAccess(Location arr, Location index, Location dest) {
-    Unused(arr); Unused(index); Unused(dest);
-    unimplemented_gen("ArrayAtNode::genAccess");
-    return false;
+    Assembler* a = theAssembler;
+    a->lsl(x16, index, 1);              // tagged index * 2 = value * 8
+    a->add(x16, arr, x16);
+    a->ldr(dest, x16, dataOffset);
+    return true;
   }
 
   bool ByteArrayAtNode::genAccess(Location arr, Location index, Location dest) {
-    Unused(arr); Unused(index); Unused(dest);
-    unimplemented_gen("ByteArrayAtNode::genAccess");
-    return false;
+    Assembler* a = theAssembler;
+    a->ldr(x16, arr, dataOffset);       // out-of-line bytes pointer
+    a->asr(x17, index, Tag_Size);       // untagged index
+    a->add(x16, x16, x17);
+    a->ldrb(dest, x16, 0);              // zero-extends
+    a->lsl(dest, dest, Tag_Size);       // tag the result
+    return true;
   }
 
   bool ArrayAtPutNode::genAccess(Location arr, Location index, Location dest) {
-    Unused(arr); Unused(index); Unused(dest);
-    unimplemented_gen("ArrayAtPutNode::genAccess");
+    Unused(dest);  // result is the receiver; assign it here like i386
+    Assembler* a = theAssembler;
+    if (_dest != _src && !_dest->isNoPReg())
+      genHelper->moveRegToLoc(arr, _dest->loc);
+    a->lsl(x16, index, 1);
+    a->add(x16, arr, x16);              // element address - dataOffset
+    Location e = genHelper->moveToReg(elem, Temp3);
+    assert(e != Temp1 && e != Temp2, "would clobber index or array");
+    a->str(e, x16, dataOffset);
+    // mark the card for the written-to element
+    a->add(x16, x16, dataOffset);
+    a->lsr(x16, x16, card_shift);
+    a->loadAddressLiteral(x17, (void*)&byte_map_base, VMAddressOperand);
+    a->ldr(x17, x17, 0);
+    a->add(x16, x16, x17);
+    a->strb_zero(x16, 0);
     return false;
   }
 
   bool ByteArrayAtPutNode::genAccess(Location arr, Location index, Location dest) {
-    Unused(arr); Unused(index); Unused(dest);
-    unimplemented_gen("ByteArrayAtPutNode::genAccess");
-    return false;
+    Unused(dest);  // result is the receiver; assign it here like i386
+    Assembler* a = theAssembler;
+    if (_dest != _src && !_dest->isNoPReg())
+      genHelper->moveRegToLoc(arr, _dest->loc);
+    a->ldr(x16, arr, dataOffset);       // out-of-line bytes pointer
+    a->asr(x17, index, Tag_Size);
+    a->add(x16, x16, x17);
+    Location e = genHelper->moveToReg(elem, Temp3);
+    assert(e != Temp1 && e != Temp2, "would clobber index or array");
+    a->lsr(x17, e, Tag_Size);           // untag the byte value
+    a->strb(x17, x16, 0);
+    return false;                       // raw bytes: no card mark
   }
 
   static void check_overflow_a64(Node* failNode) {
@@ -514,13 +549,78 @@ static void gen_SPLimit_test();
   }
 
   Label* ByteArrayAtPutNode::testArg2() {
-    unimplemented_gen("ByteArrayAtPutNode::testArg2");
-    return NULL;
+    // the stored value must be a smi in 0..255
+    Assembler* a = theAssembler;
+    if (elem->isConstPReg()) {
+      oop c = ((ConstPReg*)elem)->constant;
+      if (c->is_smi() && smiOop(c)->value() >= 0 && smiOop(c)->value() <= 255)
+        return NULL;                    // no run-time check required
+      Label* L = new Label(a->printing);
+      a->b(L);                          // primitive will always fail
+      return L;
+    }
+    Location e = genHelper->moveToReg(elem, Temp3);
+    Label* fail = new Label(a->printing);
+    a->tst(e, ~(smi)(0xff << Tag_Size)); // tag bits or anything above 255
+    a->b(a64_ne, fail);
+    return fail;
   }
 
   void AbstractArrayAtNode::gen() {
     BasicNode::gen();
-    unimplemented_gen("AbstractArrayAtNode::gen");
+    Assembler* a = theAssembler;
+    Label* argFail   = NULL;                      // arg not a smi / bad elem
+    Label* indexFail = new Label(a->printing);    // index out of bounds
+    Location arr   = genHelper->moveToReg(_src, Temp2);
+    Location index = genHelper->moveToReg(arg, Temp1);
+    if (!intArg) {
+      // CP may have propagated a constant into arg
+      intArg = arg->isConstPReg() && ((ConstPReg*)arg)->constant->is_smi();
+    }
+    if (!intArg) {
+      a->tst(index, Tag_Mask);
+      Label* failLabel = new Label(a->printing);
+      a->b(a64_ne, failLabel);
+      argFail = argFail->unify(failLabel);
+    }
+    argFail = argFail->unify(testArg2());
+    // unsigned compare of tagged index against tagged length covers
+    // negative indices too
+    a->ldr(x16, arr, sizeOffset);
+    a->cmp(index, x16);
+    a->b(a64_cs, indexFail);   // unsigned >= (hs)
+    Location res = isRegister(_dest->loc) ? _dest->loc : Temp1;
+    bool needDestStore = genAccess(arr, index, res);
+    if (needDestStore && !isRegister(_dest->loc) && !_dest->isNoPReg())
+      genHelper->moveRegToLoc(res, _dest->loc);
+
+    Label* done = new Label(a->printing);
+    a->b(done);
+    MergeNode* failMerge = (MergeNode*)next1();
+
+    if (argFail) {
+      argFail->define();
+      if (error) {
+        genHelper->loadImmediateOop(VMString[BADTYPEERROR], x16);
+        genHelper->moveRegToLoc(x16, error->loc);
+      }
+      if (failMerge) {
+        Label* L = new Label(a->printing);
+        a->b(L);
+        failMerge->l = failMerge->l->unify(L);
+      }
+    }
+    indexFail->define();
+    if (error) {
+      genHelper->loadImmediateOop(VMString[BADINDEXERROR], x16);
+      genHelper->moveRegToLoc(x16, error->loc);
+    }
+    if (failMerge) {
+      Label* L = new Label(a->printing);
+      a->b(L);
+      failMerge->l = failMerge->l->unify(L);
+    }
+    done->define();
   }
 
   void PrimNode::gen() {
