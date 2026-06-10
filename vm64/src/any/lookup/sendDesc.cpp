@@ -11,6 +11,12 @@
 
 sendDesc* sendDesc::first_sendDesc() {
   // assertion is in sendDes::init
+# if TARGET_ARCH == AARCH64_ARCH
+  // the first sendDesc lives in the EnterSelf stub, which is generated
+  // into the zone on demand (see stubs_aarch64.cpp)
+  extern void generate_EnterSelf();
+  if (firstSelfFrame_returnPC == NULL) generate_EnterSelf();
+# endif
   return sendDesc::sendDesc_from_return_PC(
            first_inst_addr((void*)firstSelfFrame_returnPC));
 }
@@ -453,10 +459,10 @@ void sendDesc::init() {
     if (true) return; // just testing asm
   # endif
   # if TARGET_ARCH == AARCH64_ARCH
-    // The EnterSelf assembly stub (and the inline sendDesc it carries) is
-    // not yet written for aarch64; firstSelfFrame_returnPC is a fatal stub,
-    // so there is no first sendDesc to validate.  TODO(new-sic): remove
-    // this early return once the aarch64 EnterSelf stub exists.
+    // EnterSelf (and the first sendDesc it carries) is generated into the
+    // zone lazily by first_sendDesc(), because sendDesc::init runs before
+    // the zone exists.  generate_EnterSelf() performs these same checks
+    // when it runs.
     if (true) return;
   # endif
   sendDesc* f = sendDesc::first_sendDesc();

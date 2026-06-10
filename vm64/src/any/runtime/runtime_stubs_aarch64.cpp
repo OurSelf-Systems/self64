@@ -258,6 +258,12 @@ void SetSPAndCall(char** callerSaveAddr, char** calleeSaveAddr,
 // JIT stubs -- fatal without JIT compiler
 // =====================================================================
 
+# ifdef SIC_COMPILER
+// implemented in stubs_aarch64.cpp
+extern oop (*EnterSelf_generated)(oop recv, char* entryPoint, oop arg1);
+extern void generate_EnterSelf();
+# endif
+
 extern "C" oop SendMessage_stub(...) {
   fatal("SendMessage_stub called without JIT");
   return NULL;
@@ -310,13 +316,10 @@ extern "C" void volatile ContinueNLRAfterReturnTrap(char* pc, char* sp, oop resu
   fatal("ContinueNLRAfterReturnTrap called without JIT");
 }
 
-extern "C" void firstSelfFrame_returnPC(...) {
-  fatal("firstSelfFrame_returnPC called without JIT");
-}
-
-extern "C" void firstSelfFrameSendDescEnd(...) {
-  fatal("firstSelfFrameSendDescEnd called without JIT");
-}
+// set by generate_EnterSelf() (stubs_aarch64.cpp) when the stub is
+// emitted into the zone
+extern "C" { char* firstSelfFrame_returnPC     = NULL; }
+extern "C" { char* firstSelfFrameSendDescEnd   = NULL; }
 
 // CallPrimitiveFromInterpreter: marshal args from interpreter stack to
 // the C calling convention and call the primitive function.
@@ -371,9 +374,17 @@ extern "C" oop CallPrimitiveFromInterpreter(void* entry_point, oop rcv,
 }
 
 extern "C" oop EnterSelf(oop recv, char* entryPoint, oop arg1) {
+# ifdef SIC_COMPILER
+  if (EnterSelf_generated == NULL) generate_EnterSelf();
+  OS::set_jit_writable(false);     // thread executes zone code now
+  oop res = EnterSelf_generated(recv, entryPoint, arg1);
+  OS::set_jit_writable(true);      // back to compile/patch mode
+  return res;
+# else
   Unused(recv); Unused(entryPoint); Unused(arg1);
   fatal("EnterSelf called without JIT");
   return NULL;
+# endif
 }
 
 extern "C" oop volatile ContinueNLRFromC(char* addr, bool isInterpreted, bool isSelfIC) {

@@ -299,13 +299,9 @@ extern "C" void volatile ContinueNLRAfterReturnTrap(char* pc, char* sp, oop resu
   fatal("ContinueNLRAfterReturnTrap called without JIT");
 }
 
-extern "C" void firstSelfFrame_returnPC(...) {
-  fatal("firstSelfFrame_returnPC called without JIT");
-}
-
-extern "C" void firstSelfFrameSendDescEnd(...) {
-  fatal("firstSelfFrameSendDescEnd called without JIT");
-}
+// data pointers on 64-bit (see runtime.hh); never set without a JIT
+extern "C" { char* firstSelfFrame_returnPC     = NULL; }
+extern "C" { char* firstSelfFrameSendDescEnd   = NULL; }
 
 // CallPrimitiveFromInterpreter: marshal args from interpreter stack to
 // the C calling convention and call the primitive function.
