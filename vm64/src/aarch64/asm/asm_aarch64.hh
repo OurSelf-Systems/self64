@@ -38,6 +38,7 @@ class Assembler: public BaseAssembler {
   void Backpatch(pc_t destp, pc_t target);
 
   // ---- loads/stores (byte offsets; picks scaled or unscaled form) ----
+  Location offset_scratch(Location rt, Location rn);  // for out-of-range offsets
   void ldr (Location rt, Location rn, fint byte_offset);
   void str (Location rt, Location rn, fint byte_offset);
   void ldrb(Location rt, Location rn, fint byte_offset);

@@ -40,15 +40,34 @@ void Assembler::Backpatch(pc_t destp, pc_t target) {
 static inline bool fits_uoff8(fint off) { return off >= 0 && off <= 32760 && (off & 7) == 0; }
 static inline bool fits_simm9(fint off) { return off >= -256 && off <= 255; }
 
+// Offsets that fit neither form (unaligned and beyond the +-256 unscaled
+// range, e.g. a tagged slot offset in a large object) compute the address
+// into a reserved scratch register first.
+Location Assembler::offset_scratch(Location rt, Location rn) {
+  Location scratch = (rt != x16 && rn != x16) ? x16 : x17;
+  assert(rn != scratch && rt != scratch, "no free scratch register");
+  return scratch;
+}
+
 void Assembler::ldr(Location rt, Location rn, fint byte_offset) {
   if      (fits_uoff8(byte_offset)) emit32(a64_ldr_uoff(rt, rn, (unsigned)(byte_offset >> 3)));
   else if (fits_simm9(byte_offset)) emit32(a64_ldur(rt, rn, (int)byte_offset));
-  else fatal1("ldr offset out of range: %ld", (long)byte_offset);
+  else {
+    Location scratch = offset_scratch(rt, rn);
+    mov_imm(scratch, byte_offset);
+    add(scratch, rn, scratch);
+    emit32(a64_ldr_uoff(rt, scratch, 0));
+  }
 }
 void Assembler::str(Location rt, Location rn, fint byte_offset) {
   if      (fits_uoff8(byte_offset)) emit32(a64_str_uoff(rt, rn, (unsigned)(byte_offset >> 3)));
   else if (fits_simm9(byte_offset)) emit32(a64_stur(rt, rn, (int)byte_offset));
-  else fatal1("str offset out of range: %ld", (long)byte_offset);
+  else {
+    Location scratch = offset_scratch(rt, rn);
+    mov_imm(scratch, byte_offset);
+    add(scratch, rn, scratch);
+    emit32(a64_str_uoff(rt, scratch, 0));
+  }
 }
 void Assembler::ldrb(Location rt, Location rn, fint byte_offset) {
   assert(byte_offset >= 0 && byte_offset <= 4095, "ldrb offset out of range");
