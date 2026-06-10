@@ -38,7 +38,6 @@ class vframeLookup: public simpleLookup {
 
 class compilingLookup: public vframeLookup {
  public:
-  sendDesc* debug_sd() { return sd; }  // TEMP(new-sic)
 
  protected:
   bool needDebug; // do we need to return a debug method?

@@ -276,50 +276,6 @@ bool simpleLookup::parentsLookup(lookupTarget* target) {
 // make error method, and change lookup to point to it
 
 void simpleLookup::lookupErrorCode(int32 perform_arg_count) {
-  // TEMP(new-sic) diagnostic
-  lprintf("[lookupError] sel=");
-  if (selector()->is_string()) stringOop(selector())->string_print();
-  else lprintf("<nonstring %#lx>", (unsigned long)selector());
-  lprintf(" lookupType=%#lx smh=%#lx rcvr=%#lx\n",
-          (unsigned long)lookupType(),
-          (unsigned long)methodHolder_or_map(),
-          (unsigned long)receiver);
-  {  // one-shot: identify the bogus receiver
-    static int diag_count = 0;
-    if (diag_count++ == 0) {
-      lprintf("[lookupError] receiver is: ");
-      receiver->print_real_oop();
-      lprintf("\n[lookupError] its map: %#lx, contents:\n",
-              (unsigned long)receiver->map());
-      receiver->map()->print(receiver);
-      sendDesc* dsd = debug_sd();
-      if (dsd) {
-        lprintf("[lookupError] sendDesc at %#lx, words @-8..+56:\n", (unsigned long)dsd);
-        for (int i = -1; i < 8; i++)
-          lprintf("  [%3d] %#lx\n", i*8, (unsigned long)((smi*)dsd)[i]);
-        nmethod* owner = nmethod::findNMethod_maybe((char*)dsd);
-        if (owner && owner->key.selector->is_string()) {
-          lprintf("[lookupError] owning nmethod: ");
-          stringOop(owner->key.selector)->string_print();
-          lprintf(" insts=%#lx len=%ld\n",
-                  (unsigned long)owner->insts(), (long)owner->instsLen());
-          int32* w = (int32*)owner->insts();
-          for (int i = 0; i < owner->instsLen()/4 && i < 160; i += 4)
-            lprintf("  +%4d: %08x %08x %08x %08x\n", i*4,
-                    w[i], w[i+1], w[i+2], w[i+3]);
-        }
-      }
-      lprintf("[lookupError] sending method: ");
-      {
-        frame* f = currentProcess->last_self_frame(false);
-        abstract_vframe* v = new_vframe(f);
-        oop vsel = v->selector();
-        if (vsel->is_string()) stringOop(vsel)->string_print();
-        else lprintf("<nonstring>");
-        lprintf(" (bci %ld)\n", (long)v->bci());
-      }
-    }
-  }
   LOG_EVENT1("lookup error %#lx", selector());
   if (isLookupErrorSelector(selector())) {
     handleRecursiveLookupError();
