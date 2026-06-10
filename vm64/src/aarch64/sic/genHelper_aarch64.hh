@@ -13,5 +13,16 @@ public:
   void moveToExactlyThisReg(PReg* pr, Location reg);
 
 private:
+  void verifyOneImmediateParent(assignableSlotLink* l,
+                                Location parentOopReg,
+                                Location scratchReg,
+                                fint count);
+  void verifyConstrainedOopOfParent(oop targetOop,
+                                    Location parentOopReg,
+                                    Label* ok);
+  void verifyMapOfParent(Map* targetMap,
+                         Location parentOopReg,
+                         Location regForMap,
+                         Label* ok);
 
 # endif // defined(__aarch64__)

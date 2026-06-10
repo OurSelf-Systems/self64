@@ -12,10 +12,6 @@
 // x16 is reserved for far-branch sequences (regs_aarch64.hh), so the
 // miss paths below may clobber it freely.
 
-static void unimplemented_helper(const char* who) {
-  fatal1("aarch64 SICGenHelper not yet implemented: %s", who);
-}
-
 // branch to a VM routine when the condition does NOT hold:
 //   b.<cond> ok; ldr x16, =target; br x16; ok:
 // (no range limit, and the pool word is patchable like any other)
@@ -158,14 +154,99 @@ void SICGenHelper::checkOop(Label& general, oop what, Location loc_to_check) {
 }
 
 
-// ---- dynamic-inheritance parent verification: not yet implemented ----------
-// (DI sends are rare; the DI check machinery with its backpatchable nmln
-// blocks ports later, alongside diDesc emission.)
+// ---- dynamic-inheritance parent verification --------------------------------
+// The prologue must verify that each assignable parent still holds the value
+// (or map) the method was compiled for.  On a mismatch we jump through a
+// patchable DI desc (diDesc_aarch64.hh) whose target is initially
+// SendDIMessage_stub.
 
 fint SICGenHelper::verifyParents(objectLookupTarget* target, Location t, fint count) {
-  Unused(target); Unused(t); Unused(count);
-  unimplemented_helper("verifyParents (dynamic inheritance)");
-  return 0;
+  assert(target->links != 0, "expecting an assignable parent link");
+  bool isFirst = true;
+  for (assignableSlotLink* l = target->links;
+       l != 0;
+       l = l->next, isFirst = false) {
+
+    if (!isFirst) {
+      // if multiple dynamic parents, reload slot holder before looping (HACK!)
+      t = loadPath(Temp1, target, LReceiverReg);
+    }
+
+    // load assignable parent slot value
+    load(t, smiOop(l->slot->data)->value() * oopSize - Mem_Tag, Temp1);
+    verifyOneImmediateParent(l, Temp1, Temp2, count);
+    ++count;
+
+    if (l->target->links) count = verifyParents(l->target, Temp1, count);
+  }
+  return count;
+}
+
+
+void SICGenHelper::verifyOneImmediateParent(assignableSlotLink* l,
+                                            Location parentOopReg,
+                                            Location scratchReg,
+                                            fint count) {
+  Label* ok = new Label(a->printing);
+
+  if (l->target->value_constrained)
+    verifyConstrainedOopOfParent(l->target->obj, parentOopReg, ok);
+  else
+    verifyMapOfParent(l->target->obj->map(), parentOopReg, scratchReg, ok);
+
+  // Miss: jump through a backpatchable DI desc.  Pass the number of parents
+  // verified so far and the desc's reference point (the target word).
+  a->Comment("DI parent miss");
+  a->mov_imm(DICountReg, count);
+  Label desc_ref(a->printing);
+  a->adr(DIInlineCacheReg, &desc_ref);
+  a->align(8);                       // ldr+br are 8 bytes; desc_ref lands 8-aligned
+  a->emit32(a64_ldr_lit(x16, 2));    // ldr x16, [pc, #8] -- the target word below
+  a->br(x16);
+  desc_ref.define();
+  a->doAddOffset(DIVMAddressOperand, false);
+  a->DataPtr(smi(Memory->code->trapdoors->SendDIMessage_stub_td()));
+  a->DataPtr(0);                     // nmln next (init'd at nmethod install)
+  a->DataPtr(0);                     // nmln prev
+
+  ok->define();
+}
+
+
+void SICGenHelper::verifyConstrainedOopOfParent(oop targetOop,
+                                                Location parentOopReg,
+                                                Label* ok) {
+  // constraint for a particular oop (ambiguity resolution)
+  a->loadOopLiteral(x16, targetOop);
+  a->cmp(parentOopReg, x16);
+  a->b(a64_eq, ok);
+}
+
+
+// Given: map to look for, obj already in parentOopReg, scratch reg regForMap.
+// Test for map, fall through on miss, goto label ok on hit.
+void SICGenHelper::verifyMapOfParent(Map* targetMap,
+                                     Location parentOopReg,
+                                     Location regForMap,
+                                     Label* ok) {
+  if (targetMap == Memory->smi_map) {
+    a->tst(parentOopReg, Tag_Mask);            // Int_Tag == 0
+    a->b(a64_eq, ok);
+  } else if (targetMap == Memory->float_map) {
+    a->andd(regForMap, parentOopReg, Tag_Mask);
+    a->cmp(regForMap, Float_Tag);
+    a->b(a64_eq, ok);
+  } else {
+    Label miss(a->printing);
+    a->andd(regForMap, parentOopReg, Tag_Mask);
+    a->cmp(regForMap, Mem_Tag);
+    a->b(a64_ne, &miss);                       // not a mem oop
+    a->ldr(regForMap, parentOopReg, map_offset());
+    a->loadOopLiteral(x16, targetMap->enclosing_mapOop());
+    a->cmp(regForMap, x16);
+    a->b(a64_eq, ok);
+    miss.define();
+  }
 }
 
 
