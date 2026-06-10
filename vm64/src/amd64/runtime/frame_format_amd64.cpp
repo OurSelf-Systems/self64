@@ -22,12 +22,15 @@ void reg_disp_type_of_loc(Location* basep, int32* offsetp, OperandType* tp, Loca
   else if (                       is_StackLocation(loc))  b = ebp,  d = -index_for_StackLocation(loc) + first_local_offset;
   else fatal1("don't know how to do %s\n", locationName(loc));
 # else
-  // aarch64: same layout, fp/sp-relative (frame record {fp,lr} matches AAPCS64)
+  // aarch64: same layout, fp/sp-relative (frame record {fp,lr} matches AAPCS64).
+  // Unlike i386, BL does not move sp, so the caller-side outgoing mapping
+  // must equal the callee's leaf view: [sp+0] is permanently reserved as
+  // the hole the callee's prologue stores lr into, receiver at [sp+1].
        if (isRegister(loc))  b = loc, d = 0, t = RegisterOperand;
 
   else if (loc == IReceiverReg  || is_IArgLocation(loc))  b = fp,  d =  index_for_IArgLocation(loc) + 1 +     ircvr_offset;
   else if (loc == LReceiverReg  || is_LArgLocation(loc))  b = SP,  d =  index_for_LArgLocation(loc) + 1 + leaf_rcvr_offset;
-  else if (loc ==  ReceiverReg  ||  is_ArgLocation(loc))  b = SP,  d =  index_for_ArgLocation(loc)  + 1 +   rcvr_offset;
+  else if (loc ==  ReceiverReg  ||  is_ArgLocation(loc))  b = SP,  d =  index_for_ArgLocation(loc)  + 1 + leaf_rcvr_offset;
   else if (                       is_StackLocation(loc))  b = fp,  d = -index_for_StackLocation(loc) + first_local_offset;
   else fatal1("don't know how to do %s\n", locationName(loc));
 # endif

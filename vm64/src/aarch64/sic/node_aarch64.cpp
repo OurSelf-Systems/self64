@@ -370,8 +370,8 @@ static void gen_SPLimit_test();
     Location dest = block()->loc;
 
     genHelper->loadImmediateOop(block()->block, Temp1); // load block Oop
-    theAssembler->str(Temp1, SP, rcvr_offset     * oopSize);
-    theAssembler->str(fp,    SP, first_arg_offset * oopSize);
+    theAssembler->str(Temp1, SP, leaf_rcvr_offset       * oopSize);
+    theAssembler->str(fp,    SP, (leaf_rcvr_offset + 1) * oopSize);
     theAssembler->mov(x0, Temp1);                       // C args: (block, fp)
     theAssembler->mov(x1, fp);
 
@@ -515,7 +515,7 @@ static void gen_SPLimit_test();
     fint nc = argc + 1;  // receiver is C argument 0
     assert(nc <= 8, "more primitive arguments than argument registers");
     for (fint i = 0; i < nc; i++)
-      theAssembler->ldr(Location(x0 + i), SP, (rcvr_offset + i) * oopSize);
+      theAssembler->ldr(Location(x0 + i), SP, (leaf_rcvr_offset + i) * oopSize);
 
     emit_desc_call_head();
     Label past_nlr(theAssembler->printing);

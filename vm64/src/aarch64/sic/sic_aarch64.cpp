@@ -23,7 +23,9 @@ int32 SICompiler::stackTempCount() {
 
 
 fint SICompiler::max_no_of_outgoing_args_and_rcvr() {
-  return argCount + 1 /* for rcvr */;
+  // +1 receiver, +1 for the lr hole at [sp+0] (BL doesn't push like CALL,
+  // so the caller's frame reserves the word the callee saves lr into)
+  return argCount + 2;
 }
 
 
