@@ -1,1 +1,26 @@
-../../amd64/sic/deadBlockNode_amd64.hh
+# if defined(__aarch64__)
+
+/* Copyright 1992-2026 AUTHORS.
+   See the LICENSE file for license information. */
+
+# ifdef INTERFACE_PRAGMAS
+  # pragma interface
+# endif
+
+
+// included in node.hh
+
+  class DeadBlockNode : public PrimNode {
+   public:
+    static PrimDesc* non_lifo_abort;
+
+   public:
+    DeadBlockNode(PRegBList* e, SplitSig* signal)
+      : PrimNode(non_lifo_abort, NULL, 1, e, signal, NULL) {}
+
+    Node* clone(PReg* from, PReg* to);
+    void gen();
+  };
+
+  void initDeadBlockNode();
+# endif // defined(__aarch64__)

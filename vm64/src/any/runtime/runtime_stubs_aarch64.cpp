@@ -283,6 +283,11 @@ extern "C" oop MakeOld_stub(...) {
   return NULL;
 }
 
+extern "C" void volatile ContinueAfterReturnTrap(oop result, char* pc, char* sp) {
+  Unused(result); Unused(pc); Unused(sp);
+  fatal("ContinueAfterReturnTrap: aarch64 JIT runtime glue not yet implemented");
+}
+
 extern "C" void ReturnTrap() {
   fatal("ReturnTrap called without JIT");
 }
@@ -389,7 +394,10 @@ char* Recompile_stub_returnPC   = NULL;
 char* MakeOld_stub_returnPC     = NULL;
 char* SendMessage_stub_returnPC = NULL;
 
-// zone::frame_chain_nesting static member
+# if !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+// zone::frame_chain_nesting static member (defined in zone.cpp when the
+// real zone is compiled in)
 int32 zone::frame_chain_nesting = 0;
+# endif
 
 # endif // TARGET_ARCH == AARCH64_ARCH

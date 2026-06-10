@@ -504,11 +504,34 @@ set(SRC_amd64
 )
 
 set(SRC_aarch64
+  aarch64/asm/asm_aarch64.cpp
+  aarch64/asm/asm_aarch64.hh
+  aarch64/asm/fields_aarch64.cpp
+  aarch64/asm/fields_aarch64.hh
   aarch64/asm/regs_aarch64.cpp
   aarch64/asm/regs_aarch64.hh
   aarch64/memory/search_aarch64.cpp
+  aarch64/sic/deadBlockNode_aarch64.cpp
+  aarch64/sic/deadBlockNode_aarch64.hh
+  aarch64/sic/genHelper_aarch64.cpp
+  aarch64/sic/longRegString_aarch64.cpp
+  aarch64/sic/longRegString_aarch64.hh
+  aarch64/sic/node_aarch64.cpp
+  aarch64/sic/sic_aarch64.cpp
+  aarch64/sic/sic_aarch64.hh
+  aarch64/zone/addrDesc_aarch64.cpp
+  aarch64/zone/countPattern_aarch64.cpp
+  aarch64/zone/countPattern_aarch64.hh
+  aarch64/zone/countStub_aarch64.cpp
+  aarch64/zone/countStub_aarch64.hh
+  aarch64/zone/nmethod_aarch64.cpp
+  aarch64/zone/trapdoors_aarch64.cpp
+  aarch64/zone/nmethod_aarch64.hh
   aarch64/memory/search_aarch64.hh
   aarch64/prims/prim_table_arch_aarch64.hh
+  aarch64/lookup/cacheStub_aarch64.cpp
+  aarch64/lookup/diDesc_aarch64.cpp
+  aarch64/lookup/sendDesc_aarch64.cpp
   aarch64/runtime/aCompiler_aarch64.hh
   aarch64/runtime/asmDefs_gcc_aarch64.hh
   aarch64/runtime/conversion_aarch64.cpp
