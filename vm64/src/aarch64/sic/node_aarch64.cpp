@@ -16,13 +16,73 @@ static void unimplemented_gen(const char* who) {
   fatal1("aarch64 SIC code generation not yet implemented: %s", who);
 }
 
-  void PrologueNode::prePrologue()      { unimplemented_gen("PrologueNode::prePrologue"); }
-  void PrologueNode::postPrologue()     { unimplemented_gen("PrologueNode::postPrologue"); }
-  void PrologueNode::createStackFrame() { unimplemented_gen("PrologueNode::createStackFrame"); }
+  // Frame protocol (see frame_format_aarch64.hh): the caller leaves a hole
+  // at [sp+0] for the saved PC; the callee's first instruction stores lr
+  // there ("store link reg here before frame creation").  Frame creation
+  // then pushes the old fp, making [fp+0]=saved bp, [fp+8]=saved pc -- the
+  // AAPCS64 frame record -- with the receiver at [fp+16].
+
+  void PrologueNode::prePrologue() {
+    theAssembler->Comment("save link register");
+    theAssembler->str(lr, SP, leaf_pc_offset * oopSize);
+  }
+
+  void PrologueNode::postPrologue()     { }
+
+  void BasicNode::restoreFrameAndReturn(bool haveStackFrame, fint offset) {
+    Assembler* a = theAssembler;
+    a->Comment("restoreFrameAndReturn");
+    if (haveStackFrame) {
+      a->mov(SP, fp);            // discard locals
+      a->ldr(fp, SP, 0);         // restore old fp
+      a->add(SP, SP, oopSize);   // pop the fp slot; sp -> saved-pc slot
+    }
+    a->ldr(lr, SP, leaf_pc_offset * oopSize);
+    if (offset != 0)
+      a->add(lr, lr, offset);    // e.g. divert to the send site's NLR entry
+    a->ret();
+  }
+
+  void PrologueNode::actuallyCreateStackFrame() {
+    Assembler* a = theAssembler;
+    a->sub(SP, SP, oopSize);     // push old fp
+    a->str(fp, SP, 0);
+    a->mov(fp, SP);
+    assert((thisFrameSize & (frame_word_alignment - 1)) == 0, "frame size check");
+    a->sub(SP, SP, (thisFrameSize - linkage_area_size) * oopSize);
+
+    theSIC->_frameCreationOffset = a->offset();
+  }
+
+  void PrologueNode::clearStackLocations() {
+    theAssembler->Comment("clear stack locations");
+    // do not have to clear outgoing args; locations covered by the 32-bit
+    // register mask need no clearing either (cf. i386)
+    for ( fint i = sizeof(RegisterString) * BitsPerByte;  i < theSIC->number_of_memory_locals();  ++i) {
+      Location r;  int32 d;  OperandType t;
+      reg_disp_type_of_loc(&r, &d, &t, StackLocation_for_index(i));
+      theAssembler->str_zero(r, d);
+    }
+  }
+
+  void PrologueNode::createStackFrame() {
+    assert(haveStackFrame(), "shouldn't be creating a stack frame");
+    thisFrameSize = theSIC->frameSize();
+    actuallyCreateStackFrame();
+    clearStackLocations();
+  }
 
   void LoadIntNode::gen() {
     BasicNode::gen();
-    unimplemented_gen("LoadIntNode::gen");
+    if (isRegister(_dest->loc)) {
+      theAssembler->mov_imm(_dest->loc, smi(value));
+    }
+    else {
+      theAssembler->mov_imm(Temp2, smi(value));
+      Location b;  int32 d;  OperandType t;
+      reg_disp_type_of_loc(&b, &d, &t, _dest->loc);
+      theAssembler->str(Temp2, b, d);
+    }
   }
 
   void AssignNode::genOop() { unimplemented_gen("AssignNode::genOop"); }
@@ -114,12 +174,20 @@ static void unimplemented_gen(const char* who) {
 
   void MethodReturnNode::gen() {
     BasicNode::gen();
-    unimplemented_gen("MethodReturnNode::gen");
+    if (_src->isNoPReg()) {
+      // control should never reach here; only happens after a non-lifo abort
+      // i.e. a zapped block method. -- dmu 5/06
+      theAssembler->brk(0);
+      return;
+    }
+    // move result to ResultReg
+    genHelper->moveToExactlyThisReg(_src, ResultReg);
+    restoreFrameAndReturn(haveStackFrame, 0);
   }
 
   void NonLocalReturnNode::gen() {
     BasicNode::gen();
-    unimplemented_gen("NonLocalReturnNode::gen");
+    restoreFrameAndReturn(true, sendDesc::non_local_return_offset);
   }
 
   void StoreOffsetNode::gen() {

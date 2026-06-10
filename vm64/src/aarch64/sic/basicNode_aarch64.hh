@@ -1,1 +1,15 @@
-../../amd64/sic/basicNode_amd64.hh
+# if defined(__aarch64__)
+
+/* Copyright 1992-2026 AUTHORS.
+   See the LICENSE file for license information. */
+
+# ifdef INTERFACE_PRAGMAS
+  # pragma interface
+# endif
+
+
+// included in node.hh
+
+public:
+    void restoreFrameAndReturn(bool haveStackFrame, fint offset);
+# endif // defined(__aarch64__)
