@@ -173,6 +173,7 @@ fint nmethod::level() {
 }
 
 void nmethod::setVersion(fint v) {
+  JITWriteScope jit_write_scope;  // mutates nmethod state in the code zone
   assert(v > 0 && v <= MaxVersions, "bad version");
   flags.version = v;
 }
@@ -314,6 +315,7 @@ void nmethod::moveScopes(nmethodScopes* s) {
 
 
 void nmethod::remove_me_from_inline_cache() {
+  JITWriteScope jit_write_scope;  // mutates nmethod state in the code zone
   static int n = 0;
   while (linkedSends.notEmpty()) {
     nmln *x= linkedSends.next;
@@ -324,6 +326,7 @@ void nmethod::remove_me_from_inline_cache() {
 
 
 void nmethod::makeYoung() {
+  JITWriteScope jit_write_scope;  // mutates nmethod state in the code zone
   // Relink nm into its callers; aging stubs will be inserted.
   // The agingLimit will be set to 1 because of nm's trapCount.
   assert(!isYoung(), "why call this?");
@@ -344,6 +347,7 @@ void nmethod::makeYoung() {
 
 
 void nmethod::makeVeryYoung() {
+  JITWriteScope jit_write_scope;  // mutates nmethod state in the code zone
   assert(isYoung(), "not young enough");
   // reset limits of aging stubs to 1 to provoke recompilation
   for (nmln* l= linkedSends.next;  l != &linkedSends;  l= l->next) {
@@ -356,6 +360,7 @@ void nmethod::makeVeryYoung() {
 
 
 void nmethod::makeOld() {
+  JITWriteScope jit_write_scope;  // mutates nmethod state in the code zone
   flags.isYoung= 0;
   // remove all AgingStubs
   nmln* nextl;
@@ -402,6 +407,7 @@ fint nmethod::agingLimit() {
 
 
 void nmethod::forwardLinkedSends(nmethod* to) {
+  JITWriteScope jit_write_scope;  // mutates nmethod state in the code zone
   // the to nmethod is about to replace the receiver; replace receiver in
   // all inline caches
   if (key.receiverMapOop() != to->key.receiverMapOop()) {
@@ -430,6 +436,7 @@ void nmethod::removeFromCodeTable() {
 int nmethodFlushCount = 0;
 
 void nmethod::unlink() {
+  JITWriteScope jit_write_scope;  // mutates nmethod state in the code zone
   removeFromCodeTable();
   zoneLink.remove();
   remove_me_from_inline_cache();
@@ -456,6 +463,7 @@ void nmethod::unlink() {
 // -- dmu 1/12/03
 
 void nmethod::makeZombie(bool unlnk) {
+  JITWriteScope jit_write_scope;  // mutates nmethod state in the code zone
   // mark this nmethod as zombie (it is almost dead and can be flushed as
   // soon as it is no longer on the stack)
   if (!isZombie()) {
@@ -469,6 +477,7 @@ void nmethod::makeZombie(bool unlnk) {
 }
 
 void nmethod::flush() {
+  JITWriteScope jit_write_scope;  // mutates nmethod state in the code zone
   BlockProfilerTicks bpt(exclude_nmethod_flush);
   CSect cs(profilerSemaphore);          // for profiler
 # if GENERATE_DEBUGGING_AIDS
@@ -550,6 +559,7 @@ void nmethod::flush() {
 
 
 void nmethod::flushPartially() {
+  JITWriteScope jit_write_scope;  // mutates nmethod state in the code zone
 # ifdef SIC_COMPILER
   oldCount = min(recompileLimit(level()), invocationCount());
 # else
@@ -570,6 +580,7 @@ void nmethod::flushPartially() {
 
 
 void nmethod::invalidate() {
+  JITWriteScope jit_write_scope;  // mutates nmethod state in the code zone
   if (isInvalid()) return;
   processes->needsInvalidate = true;
 # if GENERATE_DEBUGGING_AIDS
@@ -631,6 +642,7 @@ int32 nmethod::unlinkDI(nmln*& savedDIChildren) {
 
 # ifdef brokenDI        // DI recompilation is currently broken
 void nmethod::relinkDI(int32 n, nmln*& savedDIChildren) {
+  JITWriteScope jit_write_scope;  // mutates nmethod state in the code zone
   Unused(n);
   int32 nlinks = 0;
   for (addrDesc* p = locs(), *pend = locsEnd(); p < pend; p++) {

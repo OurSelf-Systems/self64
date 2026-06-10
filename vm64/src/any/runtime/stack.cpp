@@ -260,6 +260,7 @@ void Stack::remove_patches() {
 void Stack::chainFrames() {
   // this is called a lot, so watch out for performance bugs
   // that's also why it doesn't use frames_do
+  JITWriteScope jit_write_scope;  // nm->frame_chain lives in the code zone
   frame* f = last_self_frame(true);
   while (f) {
     if (f->is_compiled_self_frame()) {
@@ -273,6 +274,7 @@ void Stack::chainFrames() {
 
 
 void Stack::unchainFrames() {
+  JITWriteScope jit_write_scope;  // nm->frame_chain lives in the code zone
   frame* f = last_self_frame(true);
   while (f) {
     if (f->is_compiled_self_frame())
