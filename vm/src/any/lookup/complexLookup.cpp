@@ -103,6 +103,12 @@ nmethod* compilingLookup::lookupNMethod() {
 
 
 void compilingLookup::chooseCompiler() {
+# if defined(SIC_COMPILER) && !defined(FAST_COMPILER)
+  // SIC-only configuration (64-bit): there is no NIC to fall back to
+  compiler = SIC;
+  ++SICCompilationCount;
+  return;
+# endif
   if (mustUseNIC()) {  compiler = NIC;  return;  }
   if (mustUseSIC()) {  compiler = SIC;  return;  }
 

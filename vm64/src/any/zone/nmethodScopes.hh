@@ -56,11 +56,13 @@ private:
     return oops()[index]; 
   }
  private:
-  int32* values()     { return (int32*) (start() + value_offset()); } 
-  fint   value_size() { return (pcs_offset() - value_offset())/sizeof(int32); }
-  int32  value_at(fint index) {
+  // entries are smi-wide (matching the recorder's Vector); values are
+  // small ints stored widened
+  smi*  values()     { return (smi*) (start() + value_offset()); }
+  fint  value_size() { return (pcs_offset() - value_offset())/sizeof(smi); }
+  int32 value_at(fint index) {
     assert( index < value_size(), "oops index out of range");
-    return values()[index]; 
+    return (int32)values()[index];
   }
 
   inline u_char getIndexAt(int32& offset);

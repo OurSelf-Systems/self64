@@ -13,6 +13,7 @@
 public:
   fint   max_no_of_outgoing_args_and_rcvr();
   fint   number_of_memory_locals();
+  nmethod* compileAccessMethod();  // SIC-only: leaf data/constant/assignment code
 
 public:
   Label* nlrLabel;     // used for caching NLR return

@@ -38,14 +38,14 @@ class Vector: public ResourceObj {
 
   fint offset;
 
-  int32* values;
+  smi* values;   // 64-bit entries: holds oops (and small values, widened)
 
   Vector(fint size);
 
   fint length() { return index; }
   void extend(fint newSize);
-  fint insertIfAbsent(int32 value);  // returns index for value
-  void copy_to(int32*& addr);
+  fint insertIfAbsent(smi value);  // returns index for value
+  void copy_to(int32*& addr);      // addr must be 8-aligned; advances by smis
 };
 
 class ByteArray : public ResourceObj {
@@ -120,11 +120,11 @@ bool NameNode::genHeaderByte(ScopeDescRecorder* rec, u_char code,
 inline fint ScopeDescRecorder::getValueIndex(int32 v) {
   // if v fits into 7 bits inline the value instead of creating index
   if ( 0 <= v && v <= MAX_INLINE_VALUE) return v;
-  return MAX_INLINE_VALUE + 1 + values->insertIfAbsent(v);
+  return MAX_INLINE_VALUE + 1 + values->insertIfAbsent((smi)v);
 }
 
 inline fint ScopeDescRecorder::getOopIndex(oop o) {
-  return o == 0 ? 0 : oops->insertIfAbsent((int32)(smi)o) + 1;
+  return o == 0 ? 0 : oops->insertIfAbsent((smi)o) + 1;
 }
 
 void LocationName::generate(ScopeDescRecorder* rec) {
@@ -165,10 +165,10 @@ static ScopeDesc*     _getNextScopeDesc() {
 Vector::Vector(fint sz) {
   size   = sz;
   index  = 0;
-  values = NEW_RESOURCE_ARRAY(int32, sz);
+  values = NEW_RESOURCE_ARRAY(smi, sz);
 }
 
-fint Vector::insertIfAbsent(int32 value){
+fint Vector::insertIfAbsent(smi value){
   for (fint i = 0; i < index; i ++)
     if (values[i] == value)
       return i;
@@ -181,7 +181,7 @@ fint Vector::insertIfAbsent(int32 value){
 }
 
 void Vector::extend(fint newSize) {
-  int32* newValues = NEW_RESOURCE_ARRAY(int32, newSize);
+  smi* newValues = NEW_RESOURCE_ARRAY(smi, newSize);
   for(fint i=0;i < index; i++)
     newValues[i] = values[i];
   values = newValues;
@@ -189,8 +189,10 @@ void Vector::extend(fint newSize) {
 }
 
 void Vector::copy_to(int32*& addr) {
+  assert((smi(addr) & (sizeof(smi)-1)) == 0, "vector section must be 8-aligned");
   for(fint i=0;i < length(); i++) {
-    *addr++ = values[i];
+    *(smi*)addr = values[i];
+    addr += sizeof(smi)/sizeof(int32);
   }
 }
 
@@ -227,7 +229,8 @@ void ByteArray::appendWord(int32 p) {
 #endif
 
 void ByteArray::alignToWord() {
-  fint fill_size = (sizeof(int32) - (size()%sizeof(int32))) % sizeof(int32);
+  // BytesPerWord: the oop vector that follows needs 8-alignment on 64-bit
+  fint fill_size = (BytesPerWord - (size()%BytesPerWord)) % BytesPerWord;
   for(fint i = 0; i < fill_size; i++)
     appendByte(0); 
 }
@@ -951,8 +954,8 @@ void PcDescInfoClass::copy_to(int32*& addr) {
 fint ScopeDescRecorder::size() {
   return   sizeof(nmethodScopes)
          + codes->size()
-         + oops->length()   * sizeof(oop)
-         + values->length() * sizeof(int32)
+         + oops->length()   * sizeof(smi)
+         + values->length() * sizeof(smi)
          + pcs->length()    * sizeof(PcDesc);
 }
 

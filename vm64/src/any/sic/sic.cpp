@@ -178,6 +178,14 @@
     ncodes = 0;
     rec = new ScopeDescRecorder(SICScopesSize, SICPCsSize);
 
+# if TARGET_ARCH == AARCH64_ARCH
+    if (L->resultType() != methodResult) {
+      // access kinds skip the method pipeline (see compileAccessMethod);
+      // initTopScope would call kind() on a non-method slot
+      initializeForPlatform();
+      return;
+    }
+# endif
     initTopScope();
     initLimits();
 
@@ -269,6 +277,12 @@
   }
   
   nmethod* SICompiler::compile() {
+# if TARGET_ARCH == AARCH64_ARCH
+    // SIC-only configuration: access "methods" (slot reads, constants,
+    // assignments) have no NIC to fall back to
+    if (L->resultType() != methodResult) return compileAccessMethod();
+# endif
+
     EventMarker em("SIC-compiling %#lx %#lx", L->selector(), NULL);
     ShowCompileInMonitor sc(L->selector(), "SIC", recompilee != NULL);
 
@@ -607,6 +621,7 @@
 
   
   fint SICompiler::incoming_arg_count() {
+    if (topScope == NULL) return argCount;  // access methods have no top scope
     return topScope->nargs;
   }
 
