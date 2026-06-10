@@ -162,6 +162,7 @@ void interpreter::attach_pics() {
   InterpreterPICData* pd = interpreter_pic_table->lookup_or_create(
       method_object, mi.length_codes, mi.codes);
   if (pd) {
+    pd->invocation_count++;
     _pics       = pd->pics;
     _num_pics   = pd->num_pics;
     _pc_to_pic  = pd->pc_to_pic;
@@ -643,8 +644,10 @@ oop interpreter::try_pic(LookupType type, oop delOrNameToSend, int32 resSP) {
       mapOop rMap = rcvToSend->map()->enclosing_mapOop();
       for (int i = 0; i < pic.count; i++) {
         oop picRes = try_pic_entry(pic, i, rMap, delOrNameToSend, arg_count, resSP);
-        if (picRes != badOop)
+        if (picRes != badOop) {
+          pic.hitCount[i]++;
           return picRes;
+        }
       }
     }
   }
@@ -877,6 +880,7 @@ oop interpreter::lookup_and_send( LookupType type,
       if (pic_idx >= 0 && rt >= 0) {
         InterpreterPIC& pic = _pics[pic_idx];
         int slot = (pic.count < PIC_SIZE) ? pic.count++ : pic.next;
+        pic.hitCount[slot] = 0; // fresh entry (slot may be round-robin reused)
         pic.entries[slot].cachedMap = L.receiverMapOop();
         pic.resultType[slot] = (int8_t)rt;
         switch (rt) {

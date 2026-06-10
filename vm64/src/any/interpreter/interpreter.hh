@@ -37,6 +37,9 @@ struct InterpreterPIC {
   PICEntry entries[PIC_SIZE];
   int8_t   count;
   int8_t   next;
+  // Per-entry hit counts: the type-feedback frequency input for the SIC
+  // (an RInterpreterScope reads these to weight receiver types).
+  int32    hitCount[PIC_SIZE];
   // Data send caching: per-entry result type and slot offset.
   // Enables short-circuiting data/constant sends at PIC hit time
   // without full lookup or interpret() call.

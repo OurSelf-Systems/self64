@@ -61,6 +61,7 @@ InterpreterPICData* InterpreterPICTable::lookup_or_create(
   d = (InterpreterPICData*)malloc(sizeof(InterpreterPICData));
   d->method   = method;
   d->num_pics = num_sends;
+  d->invocation_count = 0;
   d->map_len  = num_codes;
 
   d->pc_to_pic = (int16_t*)malloc(num_codes * sizeof(int16_t));
@@ -97,8 +98,10 @@ InterpreterPICData* InterpreterPICTable::lookup_or_create(
 void InterpreterPICTable::invalidate_all() {
   for (int32 i = 0; i < TABLE_SIZE; i++) {
     for (InterpreterPICData* d = buckets[i]; d; d = d->next) {
-      for (int32 j = 0; j < d->num_pics; j++)
+      for (int32 j = 0; j < d->num_pics; j++) {
         d->pics[j].count = 0;
+        memset(d->pics[j].hitCount, 0, sizeof(d->pics[j].hitCount));
+      }
     }
   }
 }

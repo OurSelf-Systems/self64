@@ -16,6 +16,7 @@
 struct InterpreterPICData {
   oop               method;     // key (method oop) — for GC traversal
   int32             num_pics;   // number of send sites in method
+  int32             invocation_count; // activations; the SIC trigger input
   int32             map_len;    // length of pc_to_pic array
   InterpreterPIC*   pics;       // malloc'd array of PICs
   int16_t*          pc_to_pic;  // malloc'd PC→PIC index map
