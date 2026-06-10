@@ -28,10 +28,11 @@ Trapdoors::Trapdoors(pc_t start_of_code, int32 code_size) {
 
 int32 Trapdoors::trapdoor_bytes() { return generated_stub_bytes; }
 
-extern char* aarch64_SendMessage_stub();  // stubs_aarch64.cpp
+extern char* aarch64_SendMessage_stub();    // stubs_aarch64.cpp
+extern char* aarch64_SendDIMessage_stub();  // stubs_aarch64.cpp
 
 pc_t Trapdoors::  SendMessage_stub_td(Location) { return aarch64_SendMessage_stub(); }
-pc_t Trapdoors::SendDIMessage_stub_td(Location) { return first_inst_addr( ::SendDIMessage_stub); }
+pc_t Trapdoors::SendDIMessage_stub_td(Location) { return aarch64_SendDIMessage_stub(); }
 pc_t Trapdoors::    Recompile_stub_td(Location) { return first_inst_addr(     ::Recompile_stub); }
 pc_t Trapdoors::  DIRecompile_stub_td(Location) { return first_inst_addr(   ::DIRecompile_stub); }
 
