@@ -46,9 +46,9 @@
               global ? "global" : "local",
               ok ? "" : " couldn't",
               src->name(),
-              (void*)(fromNode ? fromNode->id() : 0),
+              (long)(fromNode ? fromNode->id() : 0),
               fromNode,
-              (void*)toNode->id(), toNode);
+              (long)toNode->id(), toNode);
     }
   }
 
@@ -73,8 +73,8 @@
                global ? "global" : "local", 
                ok ? "" : " couldn't propagate",
                fromPR->name(),
-               (void*)fromNode->id(), fromNode,
-               (void*)toNode->id(), toNode);
+               (long)fromNode->id(), fromNode,
+               (long)toNode->id(), toNode);
       }
     } else if (  isAssignment 
            &&   !isConst 
@@ -95,9 +95,9 @@
       if (PrintSICCopyPropagation) {
         lprintf("*%s cp: changing dest of N%ld (%#lx) to %s to match use at N%ld (%#lx)\n",
                 global ? "global" : "local", 
-                (void*)fromNode->id(),
+                (long)fromNode->id(),
                 fromNode, r->name(),
-                (void*)toNode->id(), toNode);
+                (long)toNode->id(), toNode);
       }
       assert(!r->incorrectDU(), "shouldn't try CP on this");
       assert(!global || r->ndefs() == 1, "not safe with >1 defs");
@@ -108,18 +108,18 @@
       if (PrintSICCopyPropagation) {
         lprintf("*%s cp: can't propagate N%ld (%#lx) to N%ld (%#lx)\n",
                global ? "global" : "local",
-               (void*)fromNode->id(), fromNode,
-               (void*)toNode->id(), toNode);
+               (long)fromNode->id(), fromNode,
+               (long)toNode->id(), toNode);
       }
     }
   }
   
   void PUse::print()      { lprintf("PUse %#lx (N%ld)", this,
-                                    (void*)node->id()); }
+                                    (long)node->id()); }
   void PSoftUse::print()  { lprintf("PSoftUse %#lx (N%ld)", this,
-                                    (void*)node->id());}
+                                    (long)node->id());}
   void PDef::print()      { lprintf("PDef %#lx (N%ld)", this,
-                                    (void*)node->id()); }
+                                    (long)node->id()); }
 
   void BBDUTable::print() {
     if (!info) return;      // not built yet
@@ -163,7 +163,7 @@
   }
 
   void PRegBBIndex::print_short() {
-    lprintf("PRegBBIndex [%ld] for", (void*)index); bb->print_short(); 
+    lprintf("PRegBBIndex [%ld] for", (long)index); bb->print_short(); 
   }
 
   void PRegBBIndex::print() {
@@ -202,7 +202,7 @@
   }
   
   static void printNodeFn(PDefUse* du) { lprintf("N%ld ",
-                                                 (void*)du->node->id()); }
+                                                 (long)du->node->id()); }
   
   void printDefsAndUses(PRegBBIndexBList* l) {
     lprintf("defs: ");

@@ -222,7 +222,7 @@ void SignalInterface::handle_OS_signal(int ossig, char* addr, int32 code) {
 
   if (eventLog != NULL) // might not exist yet
     LOG_EVENT3("signal %ld pc %#lx npc %#lx",
-               ossig, InterruptedContext::the_interrupted_context->pc(), InterruptedContext::the_interrupted_context->next_pc());
+               (long)ossig, InterruptedContext::the_interrupted_context->pc(), InterruptedContext::the_interrupted_context->next_pc());
             
   # if TARGET_OS_VERSION != MACOSX_VERSION
   assert(!is_off_signal_stack(), "should be on interrupt stack");
@@ -233,17 +233,17 @@ void SignalInterface::handle_OS_signal(int ossig, char* addr, int32 code) {
     return;
 # if TARGET_OS_VERSION == LINUX_VERSION
   lprintf("\nInternal error: signal %d code %d addr 0x%lx pc 0x%lx.\n",
-         (void*)ossig, (void*)code, (void*)(long unsigned)addr,
+         ossig, code, (void*)(long unsigned)addr,
          (void*)(long unsigned)(InterruptedContext::the_interrupted_context->pc()));
 # elif TARGET_OS_VERSION == SOLARIS_VERSION
   lprintf("\nInternal error: signal %d (sig%s) code %d addr 0x%lx pc 0x%lx.\n",
-          (void*)ossig, (void*)strsignal(ossig),
-          (void*)code, (void*)(long unsigned)addr,
+          ossig, (void*)strsignal(ossig),
+          code, (void*)(long unsigned)addr,
           (void*)(long unsigned)(InterruptedContext::the_interrupted_context->pc()));
 # else
   lprintf("\nInternal error: signal %d (sig%s) code %d addr 0x%lx pc 0x%lx.\n",
-         (void*)ossig, (void*)sys_signame[ossig],
-         (void*)code, (void*)(long unsigned)addr,
+         ossig, (void*)sys_signame[ossig],
+         code, (void*)(long unsigned)addr,
          (void*)(long unsigned)(InterruptedContext::the_interrupted_context->pc()));
 # endif
   print_crash_diagnostics(ossig, addr, code);

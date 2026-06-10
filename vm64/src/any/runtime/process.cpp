@@ -1234,7 +1234,7 @@ void Process::convertVFrameOops( frame* fr,
   vframeOop l = procObj->vframeList()->next();
   clear_check_vfo_locals();
 
-  LOG_EVENT3("convertVFrameOops %#lx %#lx %d", fr, vfoLocals, vdepth);
+  LOG_EVENT3("convertVFrameOops %#lx %#lx %d", fr, vfoLocals, (long)vdepth);
   if (traceV) lprintf("*** converting vframeOop %#lx w/ locals 0x%x, descOffset %d\n",
                       l, l->locals(), l->descOffset()->value());
   
@@ -1768,7 +1768,7 @@ oop Process::runDoItMethod( oop rcv,
 
   if (!Interpret) {
 #   if defined(FAST_COMPILER) || defined(SIC_COMPILER)
-    EventMarker("entering self %d", (void*)nesting);
+    EventMarker("entering self %d", (void*)(long)nesting);
     res = EnterSelf( rcv, nm->insts(),  arg_count < 1  ?  badOop  : args[0]);
 #   else
     ShouldNotReachHere();
@@ -1904,7 +1904,7 @@ SWITCH_TO_VM_STACK(
   SwitchStack2( first_inst_addr(continuation),
                 vmStackEnd,
                 L,
-                (void*)arg_count ) )
+                (void*)(long)arg_count ) )
      
                    
 PROCESSES_DO_ALL(  discardAll, doDiscardAll)

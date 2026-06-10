@@ -705,7 +705,7 @@ bool zone::verify() {
   r &= debugTable->verify();
   {
     fint n = 0;
-    EventMarker("zone::verify %d nms", (void*)numberOfNMethods());
+    EventMarker("zone::verify %d nms", (void*)(long)numberOfNMethods());
     FOR_ALL_NMETHODS(p) {
       n++;
       eventLog->log("verifying nm %d: 0x%x", (void*)n, p);

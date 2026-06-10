@@ -306,7 +306,7 @@
               recompilee ? "re" : "",
               sprintName( (methodMap*) method()->map(), L->selector()),
               sprintValueMethod( L->receiver ),
-              (void*)SICCompilationCount);
+              (int)SICCompilationCount);
     }
 
     topScope->genCode();
@@ -400,8 +400,8 @@
     if (SICDebug && estimatedSize() > inlineLimit[NmInstrLimit]) {
       float rat = (float)estimatedSize() / (float)nm->instsLen();
       lprintf("*est. size = %ld, true size = %ld, ratio = %4.2f\n",
-              (void*)estimatedSize(), (void*)nm->instsLen(),
-              *(void**)&rat);
+              (void*)estimatedSize(), (long)nm->instsLen(),
+              (double)rat);
     }
     if (PrintCompilationStatistics) {
       static fint counter = 0;
@@ -409,12 +409,12 @@
              (void*)ms, 
              (void*) (nm->instsLen() + nm->scopes->length() +
                       nm->locsLen() + nm->depsLen),
-             (void*)nm->instsLen(), 
+             (long)nm->instsLen(), 
              (void*)nm->scopes->length(),
-             (void*)nm->locsLen(), 
-             (void*)nm->depsLen,
-             (void*)BasicNode::currentID,
-             (void*)bbIterator->bbCount,
+             (long)nm->locsLen(), 
+             (long)nm->depsLen,
+             (long)BasicNode::currentID,
+             (long)bbIterator->bbCount,
              (void*)ncodes,
              (void*)counter++);
     }

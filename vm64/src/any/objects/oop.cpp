@@ -497,7 +497,7 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
 
     LOG_EVENT2("*3* continuing: NLR=%#lx, ID=%d",
                (unsigned long)NLRSupport::NLR_home_from_C(),
-               NLRSupport::NLR_home_ID_from_C());
+               (long)NLRSupport::NLR_home_ID_from_C());
 
   } // end scope for the resource mark
   // return non-locally

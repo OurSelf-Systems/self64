@@ -407,8 +407,8 @@
     if (WizardMode && PrintInlining &&
       (diff = oldRcvr->exprs->length() - splitRcvrMaps->length()) > 1) {
       lprintf("*unnecessary %d-way type test for %d cases\n",
-                (void*)splitRcvrMaps->length(),
-                (void*)diff);
+                (int)splitRcvrMaps->length(),
+                (int)diff);
     }
     
     Node* oldMerge = oldRcvr->node();

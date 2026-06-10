@@ -571,7 +571,7 @@
           //  this should not be a problem says Urs, -- dmu 8/96
           if (PrintSICEliminateUnneededNodes) {
             char buf[1024];
-            lprintf("*not eliminating node N%ld: %s\n", (void*)n->id(),
+            lprintf("*not eliminating node N%ld: %s\n", (long)n->id(),
                     n->print_string(buf)); 
           }
           assert(nuses() == 0, "cannot eliminate this?");
@@ -632,7 +632,7 @@
       if (PrintSICEliminateUnneededNodes) {
         char buf[1024];
         lprintf("*eliminating node N%ld: %s\n", 
-               (void*)n->id(),
+               (long)n->id(),
                n->print_string(buf)); 
       }
       assert(!n->hasSideEffects(), "must be able to eliminate this");

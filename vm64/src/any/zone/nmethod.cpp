@@ -485,7 +485,7 @@ void nmethod::flush() {
     lprintf("*flushing %s%s%s-nmethod 0x%lx %d\t(",
            isZombie() ? "zombie " : "", 
            isAccess() ? "access " : "",
-           compilerName, (void*)(long unsigned)this, (void*)useCount[id]);
+           compilerName, (void*)(long unsigned)this, (int)useCount[id]);
     printName(0, key.selector);
     lprintf(")");
   }
