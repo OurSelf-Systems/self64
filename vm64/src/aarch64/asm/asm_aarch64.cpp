@@ -155,6 +155,13 @@ void Assembler::flushLiteralPool() {
 }
 
 
+void Assembler::DataPtr(smi v) {
+  if (printing) lprintf("  .quad %#lx\n", (unsigned long)v);
+  Alloc(smi);
+  *data = v;
+}
+
+
 // ---- arithmetic/logical ---------------------------------------------------
 
 void Assembler::mov(Location rd, Location rm) {

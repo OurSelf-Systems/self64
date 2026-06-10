@@ -16,6 +16,9 @@ static void unimplemented_gen(const char* who) {
   fatal1("aarch64 SIC code generation not yet implemented: %s", who);
 }
 
+static void emit_desc_call_head();
+static void gen_SPLimit_test();
+
   // Frame protocol (see frame_format_aarch64.hh): the caller leaves a hole
   // at [sp+0] for the saved PC; the callee's first instruction stores lr
   // there ("store link reg here before frame creation").  Frame creation
@@ -146,8 +149,13 @@ static void unimplemented_gen(const char* who) {
   }
 
   void RestartNode::gen() {
-    BasicNode::gen();
-    unimplemented_gen("RestartNode::gen");
+    genPcDesc();
+    gen_SPLimit_test();
+    Label* dest = new Label(theAssembler->printing);
+    theAssembler->b(a64_hi, dest);
+    loopStart->l = loopStart->l->unify(dest);
+    PrimNode::gen();
+    theAssembler->b(loopStart->l);
   }
 
   void DeadEndNode::gen() {
@@ -160,16 +168,51 @@ static void unimplemented_gen(const char* who) {
     unimplemented_gen("BlockCreateNode::gen");
   }
 
-  void BlockCloneNode::genCall() { unimplemented_gen("BlockCloneNode::genCall"); }
+  void BlockCloneNode::genCall() {
+    theAssembler->Comment("block clone");
+    Location dest = block()->loc;
+
+    genHelper->loadImmediateOop(block()->block, Temp1); // load block Oop
+    theAssembler->str(Temp1, SP, rcvr_offset     * oopSize);
+    theAssembler->str(fp,    SP, first_arg_offset * oopSize);
+    theAssembler->mov(x0, Temp1);                       // C args: (block, fp)
+    theAssembler->mov(x1, fp);
+
+    emit_desc_call_head();
+    Label past(theAssembler->printing);
+    theAssembler->b(&past);                        // @0
+    theAssembler->Data(mask());                    // @4
+    theAssembler->nop();                           // @8
+    theAssembler->Data((int32)0, false);           // @12
+    theAssembler->doAddOffset(PVMAddressOperand, false);
+    theAssembler->DataPtr(smi(first_inst_addr(blockClone->fn())));  // @16
+    past.define();
+    assert(!blockClone->needsNLRCode(), "need to rewrite this");
+    genHelper->moveRegToLoc(ResultReg, dest);
+  }
 
   void IndexedBranchNode::gen() {
     BasicNode::gen();
     unimplemented_gen("IndexedBranchNode::gen");
   }
 
+  static void gen_SPLimit_test() {
+    Assembler* a = theAssembler;
+    a->Comment("stack overflow/interrupt check");
+    a->loadAddressLiteral(x16, (void*)&SPLimit, VMAddressOperand);
+    a->ldr(x16, x16, 0);
+    a->mov(x17, SP);          // SP can't be a shifted-register cmp operand
+    a->cmp(x17, x16);
+  }
+
   void InterruptCheckNode::gen() {
     BasicNode::gen();
-    unimplemented_gen("InterruptCheckNode::gen");
+    genPcDesc();
+    gen_SPLimit_test();
+    Label l_(theAssembler->printing);
+    theAssembler->b(a64_hi, &l_);  // ok: sp above limit
+    PrimNode::gen();
+    l_.define();
   }
 
   void MethodReturnNode::gen() {
@@ -228,12 +271,105 @@ static void unimplemented_gen(const char* who) {
 
   void PrimNode::gen() {
     BasicNode::gen();
-    unimplemented_gen("PrimNode::gen");
+    assert(bci() != IllegalBCI, "should have legal bci");
+    if (pd->canWalkStack()) genPcDesc();
+
+    // Marshal the C arguments: unlike i386 (where the Self outgoing area
+    // doubled as the cdecl argument list), AAPCS64 wants them in x0..x7.
+    // The values stay in the outgoing area too, where the GC mask sees them.
+    fint nc = argc + 1;  // receiver is C argument 0
+    assert(nc <= 8, "more primitive arguments than argument registers");
+    for (fint i = 0; i < nc; i++)
+      theAssembler->ldr(Location(x0 + i), SP, (rcvr_offset + i) * oopSize);
+
+    emit_desc_call_head();
+    Label past_nlr(theAssembler->printing);
+    theAssembler->b(&past_nlr);                    // @0
+    theAssembler->Data(mask());                    // @4 used registers for GC
+    if (pd->needsNLRCode()) {
+      nlrCode();                                   // @8
+      if (theSIC->nlrLabel && !theSIC->nlrLabel->isDefined()) {
+        theSIC->nlrLabel->define();
+        restoreFrameAndReturn(true, sendDesc::non_local_return_offset);
+      }
+    } else {
+      theAssembler->nop();                         // @8 keep the shape
+    }
+    theAssembler->Data((int32)0, false);           // @12 pad
+    assert((theAssembler->offset() & 7) == 0, "target word must be 8-aligned");
+    theAssembler->doAddOffset(PVMAddressOperand, false);
+    theAssembler->DataPtr(smi(first_inst_addr(pd->fn())));  // @16
+    past_nlr.define();
+  }
+
+  // Call sites share one shape (see sendDesc_aarch64.hh): an 8-aligned
+  // return PC followed by branch-around, mask, NLR branch, pad, and the
+  // 8-byte target word at retPC+16 that the ldr/blr pair below calls
+  // through.  Both real sends and primitive calls use it, so
+  // sendDesc_from_addrDesc_addr works uniformly.
+
+  static void emit_desc_call_head() {
+    Assembler* a = theAssembler;
+    a->align(8);                       // retPC (after blr) lands 8-aligned
+    a->emit32(a64_ldr_lit(x16, 6));    // load target word at retPC+16
+    a->blr(x16);
+  }
+
+  void CallNode::nlrCode() {
+    theAssembler->Comment("nlrCode");
+    if (nlrPoint()) {
+      // branch to NLR code
+      Label* l_ = new Label(theAssembler->printing);
+      theAssembler->b(l_);
+      nlrPoint()->l = l_->unify(nlrPoint()->l);
+    }
+    else {
+      if (!theSIC->nlrLabel)
+        theSIC->nlrLabel = new Label(theAssembler->printing);
+      theAssembler->b(theSIC->nlrLabel);
+    }
   }
 
   void SendNode::gen() {
     BasicNode::gen();
-    unimplemented_gen("SendNode::gen");
+    assert(bci() != IllegalBCI, "should have legal bci");
+    genPcDesc();
+    genBreakpointBeforeCall();
+
+    emit_desc_call_head();
+    offset = theAssembler->offset();
+    Label past_send_desc(theAssembler->printing);
+    theAssembler->b(&past_send_desc);
+    theAssembler->Data(mask());                    // @4
+    nlrCode();                                     // @8
+    theAssembler->Data((int32)0, false);           // @12 pad
+    assert((theAssembler->offset() & 7) == 0, "target word must be 8-aligned");
+    theAssembler->doAddOffset(BPVMAddressOperand, false);
+    theAssembler->DataPtr(smi(SendMessage_stub));  // @16 jump_address word
+    theAssembler->DataPtr(0);                      // @24 nmln
+    theAssembler->DataPtr(0);                      // @32 nmln
+    if (sel != badOop) {
+      if (isPerformLookupType(l)) {
+        assert_smi(sel, "should be an integer argcount");
+        theAssembler->DataPtr(smiOop(sel)->value()); // @40 arg count
+      } else {
+        assert_string(sel, "should be a string constant");
+        theAssembler->Data(sel);                     // @40 constant selector
+      }
+    }
+    if ((l & UninlinableSendMask) == 0) theSIC->noInlinableSends = false;
+    theAssembler->DataPtr(smi(l));                 // @48 lookupType
+    verifySendInfo();
+    if (del) {
+      assert(needsDelegatee(l), "shouldn't have a delegatee");
+      theAssembler->Data(del);                     // @56 delegatee
+    }
+    if (theSIC->nlrLabel && !theSIC->nlrLabel->isDefined()) {
+      warning("untested: shared nlrLabel epilogue");
+      theSIC->nlrLabel->define();
+      restoreFrameAndReturn(true, sendDesc::non_local_return_offset);
+    }
+    past_send_desc.define();
   }
 
   void BasicNode::genBranch() {

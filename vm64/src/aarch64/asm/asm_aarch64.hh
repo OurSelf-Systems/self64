@@ -58,6 +58,7 @@ class Assembler: public BaseAssembler {
   void loadAddressLiteral(Location rd, void* a, OperandType t); // pooled VM address
   void flushLiteralPool();                       // call once, at end of method
   bool literalPoolIsEmpty() { return _nlits == 0; }
+  void DataPtr(smi v);                           // raw 8-byte data word
 
   // ---- arithmetic/logical ---------------------------------------------
   void mov  (Location rd, Location rm);          // register move (handles SP)
