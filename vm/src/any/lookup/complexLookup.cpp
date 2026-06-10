@@ -95,6 +95,18 @@ nmethod* compilingLookup::lookupNMethod() {
       assert_methodHolder_is_object();
 # endif
 
+  // mixed-mode: a block whose home frame is interpreted cannot be compiled
+  // (SBlockScope needs a compiled home vframe -- see SICompiler::initTopScope);
+  // returning NULL makes the caller interpret the send instead.
+  if (receiverMap()->is_block()) {
+    blockOop block = (blockOop)receiver;
+    frame* sender = sendingVFrame
+      ? sendingVFrame->fr
+      : currentProcess->last_self_frame(false);
+    abstract_vframe* home = block->parentVFrame(sender, true);
+    if (home != NULL && home->is_interpreted()) return NULL;
+  }
+
   chooseCompiler();
   nmethod* nm= compileOrReuse();
   if (Trace) trace(nm);

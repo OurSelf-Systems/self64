@@ -573,10 +573,11 @@ char* sendDesc::sendMessage( frame* lookupFrame,
   nmethod* nm = switchToVMStack( SendMessage_cont, &L );
   if (SilentTrace) LOG_EVENT1("sendDesc::sendMessage: found %#lx", nm);
 
-  return
-    Interpret
-    ? L.interpretResultForCompiledSender(arg1)
-    : nm->verifiedEntryPoint();
+  if (Interpret) return L.interpretResultForCompiledSender(arg1);
+  if (nm == NULL)  // compile refused: block with an interpreted home frame
+    fatal("mixed-mode: compiled sender calling an interpreted-home block "
+          "is not yet bridged (see compilingLookup::lookupNMethod)");
+  return nm->verifiedEntryPoint();
 }
 
 
