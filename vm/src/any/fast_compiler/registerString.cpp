@@ -7,7 +7,7 @@
 
 # include "_registerString.cpp.incl"
 
-# ifdef FAST_COMPILER
+# if defined(FAST_COMPILER) || defined(SIC_COMPILER)
 
 
 void printAllocated(RegisterString rs) {
@@ -58,4 +58,4 @@ Location pickReverse(RegisterString& alloc, RegisterString mask) {
 }
 
 
-# endif // FAST_COMPILER
+# endif // defined(FAST_COMPILER) || defined(SIC_COMPILER)

@@ -112,8 +112,10 @@ nmethod::nmethod(AbstractCompiler* c, bool generateDebugCode) {
     flags.level = 0;
   }
   flags.version = c->version();
+# ifdef FAST_COMPILER
   if (c->nmName() == nm_nic && ((FCompiler*)c)->isImpure)
     makeImpureNIC();
+# endif
   key.set_from(c->L->key);
   check_store();
   

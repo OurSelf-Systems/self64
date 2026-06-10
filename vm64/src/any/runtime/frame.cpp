@@ -173,7 +173,7 @@ bool frame::is_interpreted_self_frame(SelfFrameQuery q) {
   return false;
 # else
   if (get_interpreter() == NULL) return false;
-# if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+# if TARGET_IS_64BIT  // sentinel distinction exists whenever the interpreter does
   // The bottom-of-process sentinel has a non-NULL interpreter pointer (it IS
   // the first interpret() in the process — live receiver/args/locals/stack).
   // For unwind callers (return-trap patching, NLR, vframe killing), we must

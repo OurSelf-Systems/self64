@@ -3,7 +3,7 @@
 /* Copyright 1992-2012 AUTHORS.
    See the LICENSE file for license information. */
 
-# ifdef FAST_COMPILER
+# if defined(FAST_COMPILER) || defined(SIC_COMPILER)
 
 # ifdef INTERFACE_PRAGMAS
   # pragma interface
@@ -48,4 +48,4 @@ void printAllocated(RegisterString r);
 # include "_registerString_pd.hh.incl"
 
 
-# endif // FAST_COMPILER
+# endif // defined(FAST_COMPILER) || defined(SIC_COMPILER)

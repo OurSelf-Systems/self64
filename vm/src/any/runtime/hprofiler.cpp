@@ -317,9 +317,12 @@ void HProfiler::tick() {
     gcTicks++;                          // don't charge individuals for GC
     return;
   }
-  if (theCompiler                     // same for compiles
+  if (false                           // same for compiles
+#     ifdef FAST_COMPILER
+        || theCompiler != NULL
+#     endif
 #     ifdef SIC_COMPILER
-        || theSIC
+        || theSIC != NULL
 #     endif
       ) {
     compilerTicks++;

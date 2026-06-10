@@ -19,10 +19,10 @@ if(NOT TARGET_ARCH STREQUAL "X86_64_ARCH" AND NOT TARGET_ARCH STREQUAL "AARCH64_
   )
 endif()
 
-# SIC experiment variant 2: enable BOTH compilers on 64-bit arches
+# 64-bit JIT: the SIC is the only compiler; the interpreter is tier 0.
+# (No FAST_COMPILER/NIC tier on 64-bit — see docs and the new-sic branch plan.)
 if(TARGET_ARCH STREQUAL "AARCH64_ARCH" OR TARGET_ARCH STREQUAL "X86_64_ARCH")
   list(APPEND _defines
-    FAST_COMPILER
     SIC_COMPILER
   )
 endif()

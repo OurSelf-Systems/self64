@@ -172,10 +172,13 @@ nmethod* compilingLookup::compileNMethod() {
 nmethod* compilingLookup::doCompile(nmln* diLink) {
   BlockProfilerTicks ex(exclude_compile);
   
-  if (compiler == NIC) {
+  if (false) {
+#   ifdef FAST_COMPILER
+  } else if (compiler == NIC) {
     FCompiler* fc= new FCompiler(this, sd, diLink);
     fc->generateDebugCode= needDebug || currentProcess->isSingleStepping();
     activeCompiler= fc;
+#   endif
 
 #   ifdef SIC_COMPILER
   } else if (compiler == SIC) {
