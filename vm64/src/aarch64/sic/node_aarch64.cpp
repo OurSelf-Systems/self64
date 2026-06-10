@@ -659,12 +659,21 @@ static void gen_SPLimit_test();
     if (pd->canWalkStack()) genPcDesc();
 
     // Marshal the C arguments: unlike i386 (where the Self outgoing area
-    // doubled as the cdecl argument list), AAPCS64 wants them in x0..x7.
-    // The values stay in the outgoing area too, where the GC mask sees them.
+    // doubled as the cdecl argument list), AAPCS64 wants the first eight in
+    // x0..x7 and the rest on the stack just below sp.  The values stay in
+    // the outgoing area too, where the GC mask sees them (frames are
+    // fp-anchored, so the temporary sp move below is invisible to GC).
     fint nc = argc + 1;  // receiver is C argument 0
-    assert(nc <= 8, "more primitive arguments than argument registers");
-    for (fint i = 0; i < nc; i++)
-      theAssembler->ldr(Location(x0 + i), SP, (leaf_rcvr_offset + i) * oopSize);
+    fint nstack = nc > 8 ? nc - 8 : 0;
+    fint area = (nstack * oopSize + 15) & ~15;
+    if (nstack) theAssembler->sub(SP, SP, area);
+    for (fint i = 0; i < (nstack ? 8 : nc); i++)
+      theAssembler->ldr(Location(x0 + i), SP,
+                        area + (leaf_rcvr_offset + i) * oopSize);
+    for (fint i = 8; i < nc; i++) {
+      theAssembler->ldr(x16, SP, area + (leaf_rcvr_offset + i) * oopSize);
+      theAssembler->str(x16, SP, (i - 8) * oopSize);
+    }
 
     emit_desc_call_head();
     Label past_nlr(theAssembler->printing);
@@ -687,6 +696,7 @@ static void gen_SPLimit_test();
       restoreFrameAndReturn(true, sendDesc::non_local_return_offset);
     }
     past_nlr.define();
+    if (nstack) theAssembler->add(SP, SP, area);  // drop the C stack args
   }
 
   // Call sites share one shape (see sendDesc_aarch64.hh): an 8-aligned
