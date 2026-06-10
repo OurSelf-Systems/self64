@@ -101,8 +101,11 @@ void SICGenHelper::moveRegToReg(Location srcReg, Location destReg) {
 
 // must be a VMAddressOperand operand
 void SICGenHelper::setToZeroA(void* addr, Location tempReg) {
+  // 32-bit store: the only client is the LRU unused-bit reset, and
+  // LRUflag is an int32 array doubling as the IDManager free list -- an
+  // 8-byte store would wipe the next ID's free-list link too
   a->loadAddressLiteral(tempReg, addr, VMAddressOperand);
-  a->str_zero(tempReg, 0);
+  a->str_zero32(tempReg, 0);
 }
 
 void SICGenHelper::setToZero(Location dest) {
