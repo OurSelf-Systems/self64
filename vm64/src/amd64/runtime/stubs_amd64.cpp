@@ -96,9 +96,9 @@ static void generate_SendMessage_stub(Assembler* a) {
   a->mov(x1, SP);                 // lookupFrame = this record (frame* = record
                                   //   whose [+8] points into the sending method)
   a->ldr(x2, SP, 16 + 1*oopSize); // receiver from sender's outgoing area
-  a->mov_imm(x3, 0);              // perform_selector  (normal sends)
-  a->mov_imm(x4, 0);              // perform_delegatee
-  a->mov_imm(x5, 0);              // arg1
+  a->mov(x3, PerformSelectorLoc);  // dynamic selector (perform sends; x19)
+  a->mov(x4, PerformDelegateeLoc); // dynamic delegatee (x20)
+  a->ldr(x5, SP, 16 + 2*oopSize);  // arg1 from the outgoing area
   a->loadAddressLiteral(x16, (void*)&SendMessage, VMAddressOperand);
   a->blr(x16);
   a->mov(x17, x0);                // target entry point
