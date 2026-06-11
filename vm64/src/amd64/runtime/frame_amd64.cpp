@@ -95,7 +95,12 @@ void**  frame::location_addr(Location r, RegisterLocator* rl) {
 # if defined(__i386__) || defined(__x86_64__)
   return (base == esp ? (void**)my_sp() : (void**)my_bp())  +  d / oopSize;
 # else
-  // On non-x86, base is always bp-relative (no esp register)
+  // SP-based locations (outgoing args of a pending send) are relative to the
+  // frame's running sp.  Under this port's frame-object model the object
+  // pointer is the callee record at running_sp - 8, so running sp = this + 8.
+  // bp-based locations resolve through my_bp() = the activation's own fp.
+  if (base == SP)
+    return (void**)((char*)this + oopSize)  +  d / oopSize;
   return (void**)my_bp()  +  d / oopSize;
 # endif
 }
