@@ -153,9 +153,15 @@ extern "C" oop smi_arithmetic_shift_left_prim(smiOop rcvr, smiOop arg) {
   if (shift < 0 || shift >= (BitsPerWord - Tag_Size))
     return overflow_error();
 
-  // Check for overflow: value must survive the shift
+  // Check for overflow: value must survive the shift, and the shifted
+  // result must still fit the smi value range (the 64-bit survival check
+  // above is not enough -- a result can fit 64 bits yet exceed the 62-bit
+  // smi range and silently wrap on re-tagging; cf. smi_mul_prim).
   smi result = value << shift;
   if ((result >> shift) != value)
+    return overflow_error();
+  smi tagged = result << Tag_Size;
+  if ((tagged >> Tag_Size) != result)
     return overflow_error();
 
   return oop(as_smiOop(result));
@@ -176,9 +182,13 @@ extern "C" oop smi_logical_shift_left_prim(smiOop rcvr, smiOop arg) {
   if (shift < 0 || shift >= (BitsPerWord - Tag_Size))
     return overflow_error();
 
-  // Logical shift left is the same as arithmetic shift left for positive shifts
+  // Logical shift left is the same as arithmetic shift left for positive
+  // shifts; same smi-range overflow check as smi_arithmetic_shift_left_prim.
   smi result = value << shift;
   if ((result >> shift) != value)
+    return overflow_error();
+  smi tagged = result << Tag_Size;
+  if ((tagged >> Tag_Size) != result)
     return overflow_error();
 
   return oop(as_smiOop(result));
