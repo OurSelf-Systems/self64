@@ -308,7 +308,12 @@ extern bool8 processSemaphore;   // process.hh
 extern "C" __attribute__((naked)) void ReturnTrap() {
   __asm__ __volatile__(
     "sub   x10, sp, #8\n\t"        // x10 = F (patched frame fp)
-    "sub   sp, sp, #16\n\t"        // reserve our frame record (stays 16-aligned)
+    // Reserve 32 (not 16) bytes: F's preserved words live at [F.fp+0] (saved
+    // fp, read by the stack walk) and [F.fp+8] (the patched lr) -- i.e. at
+    // sp-8 and sp on entry.  A 16-byte frame here would put [fp+8] right on
+    // [F.fp+0] and clobber F's saved fp.  32 bytes keeps our record below
+    // those words; the space is F's just-freed locals, safe to reuse.
+    "sub   sp, sp, #32\n\t"        // our frame record (stays 16-aligned)
     "str   x10, [sp, #0]\n\t"      // [fp+0] = F  -> our sender() is F
     "adr   x11, 1f\n\t"            // a non-code-zone marker pc
     "str   x11, [sp, #8]\n\t"      // [fp+8] = marker (so we are not a Self frame)
