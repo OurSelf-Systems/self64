@@ -441,8 +441,13 @@ oop compiled_vframe::copyValueFrom( compiled_vframe* toVF,
 
 void compiled_vframe::copyValueTo( NameDesc* n,  oop p ) {
   set_contents(n, p);
+  // Only location-bearing NameDescs answer location(); a Value/BlockValue/
+  // Illegal desc (which set_contents handles without a location) would fatal
+  // in location()'s SubclassResponsibility.  The arg is evaluated even though
+  // LOG_EVENT2 may discard it, so guard the location() call.  SIC debug
+  // methods routinely carry non-location descs here, unlike the NIC.
   LOG_EVENT2("compiled_vframe::copyValue %s %#lx",
-             locationName(n->location()), p);
+             n->hasLocation() ? locationName(n->location()) : "(non-location)", p);
   assert(get_contents(n) == p, "contents not set correctly");
 }
 
