@@ -100,7 +100,14 @@ void Assembler::add32(Location rd, Location rn, fint imm) {
 void Assembler::str_zero(Location rn, fint byte_offset) {
   if      (fits_uoff8(byte_offset)) emit32(a64_str_uoff(a64_xzr, rn, (unsigned)(byte_offset >> 3)));
   else if (fits_simm9(byte_offset)) emit32(a64_stur(a64_xzr, rn, (int)byte_offset));
-  else fatal1("str_zero offset out of range: %ld", (long)byte_offset);
+  else {
+    // out of range (e.g. clearing a deep stack local in a large frame):
+    // compute the address into a scratch register first
+    Location scratch = (rn != x16) ? x16 : x17;
+    mov_imm(scratch, byte_offset);
+    add(scratch, rn, scratch);
+    emit32(a64_str_uoff(a64_xzr, scratch, 0));
+  }
 }
 void Assembler::strb_zero(Location rn, fint byte_offset) {
   assert(byte_offset >= 0 && byte_offset <= 4095, "strb_zero offset");
