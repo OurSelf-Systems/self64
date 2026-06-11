@@ -27,13 +27,17 @@ SExpr* SPrimScope::tryConstantFold() {
     // ok, all args are consts: call the primitive
     oop res;
     fntype f = pd->fn();
+    // fntype is variadic (oop(*)(...)).  Calling a normal primitive through a
+    // variadic pointer is undefined and, on Apple arm64, actively wrong:
+    // variadic args are passed on the stack while the primitive reads x0..xN.
+    // Cast to the exact fixed arity so the register calling convention is used.
     switch(nargs) {
-     case 0:    res = f(r); break;
-     case 1:    res = f(r, a[0]); break;
-     case 2:    res = f(r, a[0], a[1]); break;
-     case 3:    res = f(r, a[0], a[1], a[2]); break;
-     case 4:    res = f(r, a[0], a[1], a[2], a[3]); break;
-     case 5:    res = f(r, a[0], a[1], a[2], a[3], a[4]); break;
+     case 0:    res = ((oop(*)(oop))f)(r); break;
+     case 1:    res = ((oop(*)(oop,oop))f)(r, a[0]); break;
+     case 2:    res = ((oop(*)(oop,oop,oop))f)(r, a[0], a[1]); break;
+     case 3:    res = ((oop(*)(oop,oop,oop,oop))f)(r, a[0], a[1], a[2]); break;
+     case 4:    res = ((oop(*)(oop,oop,oop,oop,oop))f)(r, a[0], a[1], a[2], a[3]); break;
+     case 5:    res = ((oop(*)(oop,oop,oop,oop,oop,oop))f)(r, a[0], a[1], a[2], a[3], a[4]); break;
      default:   ShouldNotReachHere();
     }
 
