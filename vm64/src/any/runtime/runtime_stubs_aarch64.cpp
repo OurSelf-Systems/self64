@@ -352,12 +352,18 @@ extern "C" void ReturnTrap2() {
 }
 
 extern "C" void PrimCallReturnTrap() {
-  // Return trap for a frame at a primitive/send call site (used by the
-  // single-step debugger on compiled frames -- e.g. desktop "halt").  The
-  // entry convention is now known (F.fp = sp-16, one word more than a method
-  // return's sp-8), but the single-step conversion continuation has further
-  // issues downstream (block re-creation, continuation PC).  Left as a clean
-  // stub until that path is finished.
+  // Return trap for a frame at a prim/send call site -- the single-step
+  // debugger on compiled frames (desktop "halt").  Investigation findings:
+  //  * entry: F.fp = sp-16 (the callee returned into F's send site, leaving
+  //    one word more than a method return's sp-8); with that the patched
+  //    frame resolves and HandleReturnTrap's walk + Conversion::convert run.
+  //  * convertFrame/currentPC/nmethod are all sane (vdepth=1, isDebug=1 --
+  //    the frame already runs an *invalid* debug method).
+  //  * remaining gap: the conversion then reconstructs the paused frame's
+  //    state -- create_previously_optimized_blocks -> createBlkFn/clone_block
+  //    (recreating the inlined-away do: block) and get_expr_stack -- which
+  //    faults.  That paused-optimized-frame reconstruction is the unfinished
+  //    work.  Console debugging (attach:) works as a fallback.
   fatal("PrimCallReturnTrap (single-step deopt) not yet implemented");
 }
 
