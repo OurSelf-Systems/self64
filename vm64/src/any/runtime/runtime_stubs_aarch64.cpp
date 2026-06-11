@@ -352,11 +352,13 @@ extern "C" void ReturnTrap2() {
 }
 
 extern "C" void PrimCallReturnTrap() {
-  // Return trap for a frame at a primitive call site.  The entry protocol
-  // matches ReturnTrap, but its trivial-exit continuation (returnToSelf with
-  // no Conversion) is not yet wired on this port -- see the programming
-  // tests.  Left as a clean stub until that path is ported.
-  fatal("PrimCallReturnTrap not yet implemented");
+  // Return trap for a frame at a primitive/send call site (used by the
+  // single-step debugger on compiled frames -- e.g. desktop "halt").  The
+  // entry convention is now known (F.fp = sp-16, one word more than a method
+  // return's sp-8), but the single-step conversion continuation has further
+  // issues downstream (block re-creation, continuation PC).  Left as a clean
+  // stub until that path is finished.
+  fatal("PrimCallReturnTrap (single-step deopt) not yet implemented");
 }
 
 extern "C" void ProfilerTrap() {

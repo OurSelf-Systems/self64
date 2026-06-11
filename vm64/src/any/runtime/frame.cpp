@@ -606,6 +606,7 @@ void HandleReturnTrap(oop result, char* sp_of_patched_frame,
   // had not the patching happened. -- dmu 1/03
   frame* patched_self_frame = currentFrame()->get_patched_self_frame(sp_of_patched_frame);
 
+
   char* selfPC;
   frame* convertFrame;
   unpatch_the_convertFrame_and_get_returnTrap_info(sp_of_patched_frame, patched_self_frame,
