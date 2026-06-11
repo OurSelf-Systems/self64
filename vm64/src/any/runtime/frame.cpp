@@ -303,6 +303,19 @@ void frame::patch_compiled_self_frame(returnTrapHandlerFn new_fn) {
   if ( ret == first_inst_addr((void*)firstSelfFrame_returnPC))
     return;
 
+  // Don't patch a compiled frame that returns into the interpreter (its caller
+  // is the interpreter's C++ send dispatch, not compiled code -- ret is native
+  // but outside the JIT zone).  The return-trap stash, set_currentPC below,
+  // writes to currentPC_addr() = caller_fp - 8, which on a compiled caller is a
+  // reserved currentPC hole but on an interpreter (C++) caller is a live
+  // saved-register slot (e.g. do_send_code's saved x19 = the interpreter
+  // pointer).  Patching would clobber it and corrupt the interpreter when the
+  // frame returns.  Single-stepping still stops via the rigged preemption at
+  // the next bytecode.  (A normal compiled-caller frame has ret in the zone and
+  // is patched as before.)  -- rca 6/26
+  if (!Memory->code->contains(ret))
+    return;
+
   assert(is_compiled_self_frame(), "must be compiled");
   assert( new_fn == (returnTrapHandlerFn)ReturnTrap  ||  
           new_fn == (returnTrapHandlerFn)PrimCallReturnTrap  ||
@@ -648,7 +661,7 @@ void  unpatch_the_convertFrame_and_get_returnTrap_info(
         frame*& convertFrame, 
         char* & selfPC) {
   selfPC = patched_self_frame->currentPC();
-  
+
   if ( Memory->code->contains(selfPC) ) {
     // aha! compiled code
     assert(!Interpret, "interpreted code should not get here");
