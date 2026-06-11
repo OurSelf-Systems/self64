@@ -74,6 +74,19 @@ bool compiled_vframe::is_uncommonTrap() {
 // first because of trouble with inlined functions
 void compiled_vframe::set_contents(NameDesc* n, oop p) {
   if (n->isLocation()) {
+#   if TARGET_ARCH == AARCH64_ARCH
+    // A register-located NameDesc (e.g. the expression-stack top at a
+    // send-return: the in-flight result lives in ResultReg/x0) cannot be
+    // stored through location_addr -- there is no stack slot, and the
+    // bp-relative fallback computes own_fp + 0, silently overwriting the
+    // frame's saved-fp link (caught corrupting the frame chain during
+    // progTest10's conversion).  The store is also unnecessary: the resume
+    // (ContinueAfterReturnTrap / ContinueNLRAfterReturnTrap / restart-send)
+    // re-delivers that value in the register.  -- rca 6/26
+    { Location b; int32 d; OperandType t;
+      reg_disp_type_of_loc(&b, &d, &t, n->location());
+      if (t == RegisterOperand) return; }
+#   endif
     oop* addr = register_contents_addr(n->location());
     *addr = p;
     oop* addr2 = register_contents_secondary_addr(n->location());
