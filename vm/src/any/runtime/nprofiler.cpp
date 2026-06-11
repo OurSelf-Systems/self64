@@ -1354,7 +1354,9 @@ void Profiler::tick() {
 
   assert(!GCInProgress, "should be in exclude part");
 
+# ifdef FAST_COMPILER
   assert(!theCompiler,  "should be in exclude part");
+# endif
 # ifdef SIC_COMPILER
   assert(!theSIC,       "should be in exclude part");
 # endif

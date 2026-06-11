@@ -296,8 +296,10 @@ nmethod* zone::alloc(int32 iLen, int32 sLen, int32 lLen,
   // (compiler may have used peekID to get ID of new nmethod for LRU stuff)
   int32 myID = idManager->newID();
   if (needsSweep()) doSweep();
+  // locs are 4-byte addrDescs (BitsPerDesc), so an odd count leaves lLen
+  // a non-multiple of oopSize on 64-bit; that is fine for the layout below.
   assert(iLen % oopSize == 0 && sLen % oopSize == 0 &&
-         lLen % oopSize == 0 && dLen % oopSize == 0,
+         lLen % sizeof(int32) == 0 && dLen % oopSize == 0,
          "must be multiple of oopSize");
   int32 iSize = sizeof(class nmethod) + iLen + lLen;
   int32 dSize = dLen;

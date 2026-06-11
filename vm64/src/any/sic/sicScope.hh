@@ -272,7 +272,9 @@
     RegisterString mask(fint bci) {
       if (bci == PrologueBCI) return allocs[0];
       assert(0 <= bci && bci < ncodes, "bci invalid");
-      assert(nsends == 0  ||  allocs[bci]  ||  TARGET_ARCH == I386_ARCH, "should be nonempty");
+      // empty masks are normal on register-poor / stack-passing ports
+      assert(nsends == 0  ||  allocs[bci]  ||  TARGET_ARCH == I386_ARCH
+                                           ||  TARGET_ARCH == AARCH64_ARCH, "should be nonempty");
       assert(allocs, "cannot be NULL");
       return allocs[bci];
     }
