@@ -352,7 +352,11 @@ extern "C" void ReturnTrap2() {
 }
 
 extern "C" void PrimCallReturnTrap() {
-  fatal("PrimCallReturnTrap called without JIT");
+  // Return trap for a frame at a primitive call site.  The entry protocol
+  // matches ReturnTrap, but its trivial-exit continuation (returnToSelf with
+  // no Conversion) is not yet wired on this port -- see the programming
+  // tests.  Left as a clean stub until that path is ported.
+  fatal("PrimCallReturnTrap not yet implemented");
 }
 
 extern "C" void ProfilerTrap() {
