@@ -10,7 +10,20 @@
 void Conversion::doit() {
   if (VerifyBeforeConversion) Memory->verify();
   FlushRegisterWindows();
-  lastFrame = currentFrame()->sender();
+  // lastFrame must be the LAST VM-STACK frame (the conversion frame that
+  // fix_frame zaps to lead stack traversal to the rebuilt Self frames).
+  // currentFrame()->sender() overshoots onto the PROCESS stack (inlining and
+  // currentFrame() semantics vary), and fix_frame's two stores then land
+  // just below the rebuilt frames -- once the debug method's frame grew, the
+  // second store smashed [newFr+0] and corrupted the frame chain.  Walk
+  // explicitly instead.  -- rca 6/26
+  // Anchor on our own frame record: currentFrame() returns the CALLER's fp,
+  // which (doit being inlined into the SwitchStack continuation) is already
+  // the process-stack frame.
+  { frame* f = (frame*)__builtin_frame_address(0);
+    while (isOnVMStack(f->sender())) f = f->sender();
+    lastFrame = f;
+  }
   convert();
   if (VerifyAfterConversion) Memory->verify();
   returnToSelf(result, sp, nlr, nlrHome, nlrHomeID, sd, isInterpreting);
