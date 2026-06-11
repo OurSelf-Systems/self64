@@ -910,9 +910,15 @@ frame* frame::copy_frames_through(frame* last_frame_to_copy) {
   int32 size = copy_through_oop_count(last_frame_to_copy);
   int32 size_for_aligning = size + frame_word_alignment - 1 + frame_alignment_offset*BytesPerWord; // align copied frames for assertions
   oop* frame_area = NEW_RESOURCE_ARRAY( oop, size_for_aligning);
-  int frame_byte_alignment = frame_word_alignment << 2;
+  int frame_byte_alignment = frame_word_alignment * BytesPerWord;
+# if TARGET_ARCH == AARCH64_ARCH
+  // copies must satisfy is_aligned(): frame pointers are 8 mod 16 here
+  frame* first_copied_frame = (frame*)
+    (roundTo(smi(frame_area), frame_byte_alignment)  +  BytesPerWord);
+# else
   frame* first_copied_frame = (frame*) 
     roundTo(smi(frame_area), frame_byte_alignment)  +  frame_alignment_offset * BytesPerWord;
+# endif
   assert((oop*)first_copied_frame + size  <=  frame_area + size_for_aligning, 
          "make sure aligning does not cause overflow");
   copy_oops((oop*)this, (oop*)first_copied_frame, size);
@@ -949,8 +955,15 @@ RegisterString frame::mask_if_present() {
 }
 
 bool frame::is_aligned() { 
+# if TARGET_ARCH == AARCH64_ARCH
+  // Self frame objects (callee records at running_sp - 8) are 8 mod 16, but
+  // this is also called on C frames from stack walks, which are 0 mod 16 per
+  // AAPCS64.  Accept word alignment; still rejects garbage pointers.
+  return (smi(this) & (BytesPerWord - 1)) == 0;
+# else
   return ((smi(this)  +  frame_alignment_offset * BytesPerWord)    &    (frame_word_alignment * BytesPerWord  -  1))
           == 0;
+# endif
 }
 
  
