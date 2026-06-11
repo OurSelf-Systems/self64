@@ -202,7 +202,18 @@ void frame::fix_frame(char* pc, char* sp) {
 static bool is_compiled_record(frame* f) {
   char* r = ((char**)f)[saved_pc_offset];
   return Memory->code->contains(r)
-      || r == first_inst_addr((void*)firstSelfFrame_returnPC);
+      || r == first_inst_addr((void*)firstSelfFrame_returnPC)
+      // A patched compiled frame (return-trap / profiler / single-step) holds a
+      // trap-stub address here, not its real PC; it is still a compiled frame
+      // (its stashed real PC is in the zone).  Without this, a frame whose
+      // return was patched gets misclassified as an interpreter/C record, so
+      // home_frame_of_block_scope returns the frame itself instead of its
+      // sendee -- the home of a block whose scope marker is that frame then
+      // resolves to the wrong method (CodeScopeDesc::slot fatal during debug
+      // block compilation).  Cannot call is_patched() here (it routes through
+      // get_interpreter -> block_scope_of_home_frame -> is_compiled_record,
+      // recursively), so test the trap addresses directly.  -- rca, 6/26
+      || isPatchedReturnAddress(r);
 }
 # endif
 
