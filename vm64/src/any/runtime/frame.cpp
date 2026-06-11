@@ -132,19 +132,7 @@ int32 frame::frame_size() {
   if (ConversionInProgress && is_compiled_self_frame()) {
     // could be a copied frame (in the resource area), i.e. sl < l; take
     // size from nmethod
-#   if TARGET_ARCH == AARCH64_ARCH
-    // frame_size() must answer the fp-to-caller-fp stride (what sender()
-    // walks), but the nmethod frameSize is only the prologue's sp-decrement
-    // (entry_sp down to the frame bottom).  On aarch64 the actual stride is
-    // one word more: the lr-hole at [sp+0] that BL does not push (unlike
-    // i386's CALL).  Without the +1 the conversion pops a converted frame one
-    // word short and the rebuilt frame's saved-fp link lands 8 bytes below
-    // the real caller, corrupting the frame chain (crash in unchainFrames /
-    // selfSender).  -- rca, 6/26
-    return code()->frameSize() + 1;
-#   else
     return code()->frameSize();
-#   endif
   }
 # endif // defined(FAST_COMPILER) || defined(SIC_COMPILER)
   return frame_size_of_uncopied_frame();

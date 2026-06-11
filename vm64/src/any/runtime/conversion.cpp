@@ -168,7 +168,20 @@ void Conversion::init() {
 
   // pop off the frame to be converted; use copiedFrame for the conversion
   // because the original frame will be overwritten
+# if TARGET_ARCH == AARCH64_ARCH
+  // The pop must leave sp at the convertFrame's caller fp -- that is what the
+  // rebuilt frames chain their saved-fp ([fp+0]) link to, and what
+  // unchainFrames/selfSender later walks.  On aarch64 frame* == fp and a
+  // frame's fp-to-caller-fp distance is the CALLER's frame size plus the
+  // lr-hole at [sp+0] that BL does not push -- NOT this frame's nmethod
+  // frameSize, which the i386 code assumes (frame* == sp there).  Reading the
+  // saved caller fp directly from the still-intact original frame is exact for
+  // any caller; the nmethod-frameSize arithmetic lands one-or-more words off
+  // and corrupts the chain (crash in unchainFrames/selfSender).  -- rca, 6/26
+  sp = (char*)convertFrame->sender();
+# else
   sp += copiedFrame->frame_size() * oopSize;    // assume stack grows downwards
+# endif
   
   retarget_vfs_to_convert(copiedFrame, copiedFrame_rl);
   
