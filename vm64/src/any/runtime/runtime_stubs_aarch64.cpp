@@ -289,13 +289,57 @@ extern "C" oop MakeOld_stub(...) {
   return NULL;
 }
 
-extern "C" void volatile ContinueAfterReturnTrap(oop result, char* pc, char* sp) {
-  Unused(result); Unused(pc); Unused(sp);
-  fatal("ContinueAfterReturnTrap: aarch64 JIT runtime glue not yet implemented");
+// ---------------------------------------------------------------------------
+// Return-trap glue (return-into-a-patched-compiled-frame).
+//
+// frame::patch_compiled_self_frame overwrites a compiled Self frame F's
+// saved return address with ReturnTrap and stashes F's real return PC in the
+// caller's reserved currentPC slot.  When F's epilogue runs
+// (restoreFrameAndReturn: `add sp,fp,8; ldr fp,[sp,-8]; ldr lr,[sp,0]; ret`)
+// it returns here with:
+//     x0 = result,  sp = F.fp + 8,  x29 = F's caller's fp.
+// So the patched frame F is sp-8.  We build a small VM frame whose sender()
+// is F (so Stack::last_self_frame finds F), then call the shared C++
+// HandleReturnTrap, which never returns -- it resumes via
+// ContinueAfterReturnTrap / ContinueNLRAfterReturnTrap.
+
+extern bool8 processSemaphore;   // process.hh
+
+extern "C" __attribute__((naked)) void ReturnTrap() {
+  __asm__ __volatile__(
+    "sub   x10, sp, #8\n\t"        // x10 = F (patched frame fp)
+    "sub   sp, sp, #16\n\t"        // reserve our frame record (stays 16-aligned)
+    "str   x10, [sp, #0]\n\t"      // [fp+0] = F  -> our sender() is F
+    "adr   x11, 1f\n\t"            // a non-code-zone marker pc
+    "str   x11, [sp, #8]\n\t"      // [fp+8] = marker (so we are not a Self frame)
+    "mov   x29, sp\n\t"            // x29 = our frame
+    "mov   x1, x10\n\t"           // arg1: sp_of_patched_frame = F
+    "mov   x2, #0\n\t"            // arg2: nlr = false
+    "mov   x3, #0\n\t"            // arg3: nlrHome = NULL
+    "mov   x4, #0\n\t"            // arg4: nlrHomeID = 0
+    "bl    _HandleReturnTrap\n\t" // arg0 (x0) already = result
+    "1:\n\t"
+    "brk   #0x4e\n\t"             // HandleReturnTrap must not return
+  );
 }
 
-extern "C" void ReturnTrap() {
-  fatal("ReturnTrap called without JIT");
+// Resume normal execution after a return trap: restore the caller's frame
+// pointer and stack, and branch to the continuation PC with the result in
+// x0.  Mirrors i386 ContinueAfterReturnTrap.  sp_arg is the patched frame F.
+extern "C" __attribute__((naked, noreturn))
+void ReturnTrap_resume(oop result, char* pc, char* sp_arg) {
+  // naked: args are referenced directly by register (x0=result, x1=pc, x2=sp)
+  __asm__ __volatile__(
+    "ldr   x29, [x2]\n\t"        // caller fp = [F]
+    "add   x2, x2, #8\n\t"
+    "mov   sp, x2\n\t"           // sp = F + 8 (as after a normal return)
+    "br    x1\n\t"               // continuation PC; x0 still holds the result
+  );
+}
+
+extern "C" void volatile ContinueAfterReturnTrap(oop result, char* pc, char* sp) {
+  processSemaphore = false;
+  ReturnTrap_resume(result, pc, sp);
 }
 
 extern "C" void ReturnTrap2() {
