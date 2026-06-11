@@ -334,10 +334,20 @@ extern "C" __attribute__((naked)) void ReturnTrap() {
 extern "C" __attribute__((naked, noreturn))
 void ReturnTrap_resume(oop result, char* pc, char* sp_arg) {
   // naked: args are referenced directly by register (x0=result, x1=pc, x2=sp)
+  // sp_arg (self_sp) is sp_of_patched_frame as formed by the trap stub:
+  //   ReturnTrap        (returned frame):  self_sp = F.fp        = entry_sp - 8
+  //   PrimCallReturnTrap(active   frame):  self_sp = entry_sp - 16
+  // where entry_sp is the frame's 16-aligned running sp.  In both cases the
+  // correct resume sp is entry_sp, i.e. the next 16-aligned boundary above
+  // self_sp: (self_sp & ~15) + 16.  This is identical to the old "self_sp + 8"
+  // when self_sp is 8 mod 16 (ReturnTrap), and fixes the active-frame
+  // single-step case (self_sp 0 mod 16), which "+8" left 8-misaligned and so
+  // tripped Apple arm64's hardware SP-alignment check on the next sp store.
   __asm__ __volatile__(
-    "ldr   x29, [x2]\n\t"        // caller fp = [F]
-    "add   x2, x2, #8\n\t"
-    "mov   sp, x2\n\t"           // sp = F + 8 (as after a normal return)
+    "ldr   x29, [x2]\n\t"        // fp = [self_sp]  (uses original, unrounded x2)
+    "and   x2, x2, #0xfffffffffffffff0\n\t" // round down to 16
+    "add   x2, x2, #16\n\t"      // + 16 = trap entry sp (the frame's running sp)
+    "mov   sp, x2\n\t"           // 16-aligned for both returned and active frames
     "br    x1\n\t"               // continuation PC; x0 still holds the result
   );
 }
@@ -351,20 +361,25 @@ extern "C" void ReturnTrap2() {
   fatal("ReturnTrap2 called without JIT");
 }
 
-extern "C" void PrimCallReturnTrap() {
-  // Return trap for a frame at a prim/send call site -- the single-step
-  // debugger on compiled frames (desktop "halt").  Investigation findings:
-  //  * entry: F.fp = sp-16 (the callee returned into F's send site, leaving
-  //    one word more than a method return's sp-8); with that the patched
-  //    frame resolves and HandleReturnTrap's walk + Conversion::convert run.
-  //  * convertFrame/currentPC/nmethod are all sane (vdepth=1, isDebug=1 --
-  //    the frame already runs an *invalid* debug method).
-  //  * remaining gap: the conversion then reconstructs the paused frame's
-  //    state -- create_previously_optimized_blocks -> createBlkFn/clone_block
-  //    (recreating the inlined-away do: block) and get_expr_stack -- which
-  //    faults.  That paused-optimized-frame reconstruction is the unfinished
-  //    work.  Console debugging (attach:) works as a fallback.
-  fatal("PrimCallReturnTrap (single-step deopt) not yet implemented");
+extern "C" __attribute__((naked)) void PrimCallReturnTrap() {
+  // Single-step debugger trap: the patched frame F is still active (a callee
+  // returned into its send site), so F.fp = sp-16 (one word more than a
+  // method return's sp-8).  See investigation notes in git history.
+  __asm__ __volatile__(
+    "sub   x10, sp, #16\n\t"
+    "sub   sp, sp, #32\n\t"
+    "str   x10, [sp, #0]\n\t"
+    "adr   x11, 1f\n\t"
+    "str   x11, [sp, #8]\n\t"
+    "mov   x29, sp\n\t"
+    "mov   x1, x10\n\t"
+    "mov   x2, #0\n\t"
+    "mov   x3, #0\n\t"
+    "mov   x4, #0\n\t"
+    "bl    _HandleReturnTrap\n\t"
+    "1:\n\t"
+    "brk   #0x4f\n\t"
+  );
 }
 
 extern "C" void ProfilerTrap() {
