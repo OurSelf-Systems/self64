@@ -108,7 +108,11 @@ private:
     if (!s) return at(fint(0));
     fint offset = s->next_offset();
 
-    if (offset + (sizeof(int32) - (offset%sizeof(int32))) % sizeof(int32)
+    // The codes section is padded to a smi boundary (8 bytes on 64-bit; the
+    // recorder packs sections word-aligned), so round the end test by the
+    // same amount -- rounding by int32 lands inside the final padding and
+    // reads it as a scope header (garbage descs).  -- rca 6/26
+    if (offset + (sizeof(smi) - (offset%sizeof(smi))) % sizeof(smi)
         >= (_oops_offset)*sizeof(oop)) return NULL;
     return at(offset);
   }
