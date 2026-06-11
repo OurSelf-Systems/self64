@@ -64,6 +64,11 @@ void Conversion::convert() {
            (long unsigned)convertFrame, (long unsigned)convertNM);
   }
   
+  // Frame conversion writes nmethod state in the code zone (frame chains,
+  // save/clear_frame_chain on the new debug methods).  On aarch64 the JIT
+  // area is execute-only by default, so take the W^X write scope across the
+  // whole conversion (counted, so it composes with chainFrames's own).
+  JITWriteScope jit_write_scope;
   Memory->code->chainFrames();
   assert(convertNM->frame_chain != NoFrameChain, "should be on stack");
   init();
