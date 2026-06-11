@@ -40,6 +40,7 @@
     VScopeBList* vscopes;               // recompilee VScopes (or NULL)
     int32 countID;                      // recompile counter ID
     bool needRegWindowFlushes;          // compile reg-window flushing blocks
+    bool generateDebugCode;             // build a debug (non-inlined) method
     
     fint ncodes;                        // total # of byte codes compiled
                                         // (for statistics)

@@ -126,7 +126,7 @@ nmethod* SICompiler::compileAccessMethod() {
   }
 
   a->flushLiteralPool();
-  return new_nmethod(this, false);
+  return new_nmethod(this, generateDebugCode);
 }
 
 void SICompiler::check_flushability(PReg* p) {

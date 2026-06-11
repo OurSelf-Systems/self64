@@ -201,7 +201,9 @@ nmethod* compilingLookup::doCompile(nmln* diLink) {
 
 #   ifdef SIC_COMPILER
   } else if (compiler == SIC) {
-      activeCompiler= new SICompiler(this, sd, diLink);
+      SICompiler* sc= new SICompiler(this, sd, diLink);
+      sc->generateDebugCode= needDebug || currentProcess->isSingleStepping();
+      activeCompiler= sc;
 #   endif
 
   } else {

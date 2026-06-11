@@ -1450,9 +1450,13 @@ sendDesc* nmethod::sendDescFor(compiled_vframe* vf, bool wantIntrCheck) {
   // If wantIntrCheck, return the intr check primitive call rather than the
   // actual send; if !intrCheck, don't return intrCheck if possible
   // (e.g. if current position is a literal, returns intrCheck call anyway).
-  if (compiler() != NIC)
-    ShouldNotReachHere(); // cannot find sendDesc in optimized method
-    
+  // sendDescFinder walks the bytecodes against the pcDesc/addrDesc tables, so
+  // it works for any non-inlining method.  On this port there is no NIC; the
+  // conversion builds non-inlining SIC debug methods (Inline=false), which
+  // have the same one-scope-per-frame structure.
+  if (compiler() != NIC && !isDebug())
+    ShouldNotReachHere(); // cannot find sendDesc in an inlined/optimized method
+
   sendDescFinder sdf(vf, wantIntrCheck, this);
   sdf.find_it();
   return sdf.sd;
@@ -1464,7 +1468,10 @@ Map* nmethod::blockMapFor(blockOop bl) {
   // code which refers to the "same" block (different map, but same value
   // method)
   assert_block(bl, "not a block");
-  if (compiler() != NIC) fatal("cannot find blocks in optimized method");
+  // block oops live in the oop locs of any non-inlining method (NIC or a SIC
+  // debug method); only a genuinely inlined method lacks them
+  if (compiler() != NIC && !isDebug())
+    fatal("cannot find blocks in an inlined method");
   oop valueMethod = bl->value();
   oop foundBlk = NULL;
   for (addrDesc* p = locs(), *pend = locsEnd(); p < pend; p++) {

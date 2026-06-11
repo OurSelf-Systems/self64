@@ -124,6 +124,7 @@
     
   SICompiler::SICompiler(compilingLookup* k, sendDesc* sd, nmln* d)
     : AbstractCompiler(k, sd, d) {
+    generateDebugCode = false;   // complexLookup overrides for debug methods
     if (VMSICProfiling) OS::profile(true);
     initialize();
   }
@@ -396,7 +397,7 @@
     topScope->fixupBlocks();        // must be after rec->gen to know offsets
     if (vscopes) computeMarkers();  // ditto
 
-    nmethod* nm = new_nmethod(this, false);
+    nmethod* nm = new_nmethod(this, generateDebugCode);
 
     if (theAssembler->lastBackpatch >= theAssembler->instsEnd)
       fatal("dangling branch");
