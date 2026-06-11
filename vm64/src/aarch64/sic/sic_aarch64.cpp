@@ -41,6 +41,7 @@ nmethod* SICompiler::compileAccessMethod() {
   extern char* aarch64_SendMessage_stub();
   char* miss = aarch64_SendMessage_stub();
 
+  theAssembler = NULL;  // may dangle from the previous compile (see initialize)
   Assembler* a = theAssembler = new Assembler(1024, 128, PrintSICCode, true);
   genHelper = new SICGenHelper;
 

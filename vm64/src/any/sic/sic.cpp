@@ -153,6 +153,11 @@
   void SICompiler::initialize() {
     assert(theSIC == NULL, "shouldn't have but one compiler at a time");
     theSIC = lastSIC = this;
+    // The previous compile's Assembler lives in the resource area and is
+    // freed without its destructor running, so theAssembler can dangle
+    // between compiles (cf. FCompiler's ctor, which also resets it).
+    //  -- rca 6/26
+    theAssembler = NULL;
     theAssembler = new Assembler(SICInstructionsSize, SICInstructionsSize / 2,
                                  PrintSICCompiledCode, true);
     stackLocCount = argCount = 0;
