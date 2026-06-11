@@ -182,13 +182,13 @@ extern "C" oop smi_logical_shift_left_prim(smiOop rcvr, smiOop arg) {
   if (shift < 0 || shift >= (BitsPerWord - Tag_Size))
     return overflow_error();
 
-  // Logical shift left is the same as arithmetic shift left for positive
-  // shifts; same smi-range overflow check as smi_arithmetic_shift_left_prim.
+  // Logical shift left wraps within the smi word (it is a bit operation, not
+  // an arithmetic multiply), so -- unlike the arithmetic shift -- it does NOT
+  // fail when the result no longer fits the smi value range.  smallInt's <<
+  // is defined as this primitive with no overflow handler and relies on the
+  // wrap.  Only flag the degenerate 64-bit-survival case.
   smi result = value << shift;
   if ((result >> shift) != value)
-    return overflow_error();
-  smi tagged = result << Tag_Size;
-  if ((tagged >> Tag_Size) != result)
     return overflow_error();
 
   return oop(as_smiOop(result));
