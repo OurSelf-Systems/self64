@@ -408,7 +408,7 @@ void Conversion::returnToSelf(oop res, char* self_sparc_fp_or_ppc_sp,
 // this may be NULL
 void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSend,
                                                    char* self_sparc_fp_or_ppc_sp, oop res, frame* nlrHome_arg, int32 nlrHomeID_arg) {
-# if !(TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER))
+# if !TARGET_IS_64BIT
    // a bit slow, for sparc f is just callee of self_sparc_fp_or_ppc_sp, same frame on ppc
     frame* f= currentProcess->stack()
                 ->interpreter_frame_for_continuing_from_return_trap();
@@ -436,13 +436,15 @@ void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSen
     if (this) delete rm; // free all resources
     OutgoingArgsOfReturnTrapOrRecompileFrame = NULL; // done
 
-# if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
-    // Interpreter-only builds: ContinueNLRAfterReturnTrap is a JIT assembly
-    // routine that doesn't exist.  Only fake an NLR-through-C when the
-    // return really was an NLR.  For a normal trapped return (e.g. during
-    // single-stepping) faking an NLR would cascade up the stack and
-    // terminate the process; instead let the caller's interpreter send loop
-    // resume with its natural result.
+# if TARGET_IS_64BIT
+    // On this 64-bit port the interpreter is recursive C++, so an
+    // interpreted Self frame has no native continuation PC to jump to:
+    // ContinueNLRAfterReturnTrap (JIT assembly resume) cannot return into
+    // it, even in a SIC build running interpreted.  Only fake an
+    // NLR-through-C when the return really was an NLR.  For a normal
+    // trapped return (e.g. during single-stepping) faking an NLR would
+    // cascade up the stack and terminate the process; instead let the
+    // caller's interpreter send loop resume with its natural result.
     // -- dmu & claude, 5/26
     if (wasNLR)
       NLRSupport::save_NLR_results(res, (smi)nlrHome_arg, nlrHomeID_arg);

@@ -302,8 +302,11 @@ Location frame::location_of_interpreter_of_block_scope(void* entry_point) {
 
 
 frame* frame::get_patched_self_frame(char* sp_of_patched_frame) {
-  if (Interpret)
-    warning("next line may be wrong for interpreter, was currentFrame()->sender()");
+  // Validated against the interpreted return-trap path (tests runAllTests):
+  // sp_of_patched_frame is the patched frame itself.  Keep a WizardMode-only
+  // note rather than warning on every trap.
+  if (Interpret && WizardMode)
+    warning("get_patched_self_frame: using sp_of_patched_frame as the frame");
   return (frame*)sp_of_patched_frame;
 }
 
