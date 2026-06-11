@@ -307,6 +307,29 @@ extern bool8 processSemaphore;   // process.hh
 
 extern "C" __attribute__((naked)) void ReturnTrap() {
   __asm__ __volatile__(
+    // A non-local return through a patched frame diverts to savedPC +
+    // sendDesc::non_local_return_offset (+8): the frame's NLR epilogue does
+    // `ldr lr,[sp]; add lr,lr,#8; ret`.  So the stub mirrors a send site's
+    // shape: normal entry at +0, NLR entry at +8.
+    "b     3f\n\t"                 // +0: normal-return entry
+    "nop\n\t"                      // +4: (mask-word slot in real sendDescs)
+    // +8: NLR entry.  The NLR epilogue's geometry equals a normal return's:
+    // sp = F.fp + 8, so F = sp - 8.  NLR regs live: x0 = result,
+    // x1 = NLRHomeReg, x2 = NLRHomeIDReg.
+    "sub   x10, sp, #8\n\t"        // x10 = F (patched frame fp)
+    "sub   sp, sp, #32\n\t"        // frame record (see normal entry comment)
+    "str   x10, [sp, #0]\n\t"      // [fp+0] = F  -> our sender() is F
+    "adr   x11, 1f\n\t"
+    "str   x11, [sp, #8]\n\t"      // [fp+8] = marker (not a Self frame)
+    "mov   x29, sp\n\t"
+    "mov   x3, x1\n\t"             // arg3: nlrHome   (before x1 is clobbered)
+    "mov   x4, x2\n\t"             // arg4: nlrHomeID (before x2 is clobbered)
+    "mov   x1, x10\n\t"            // arg1: sp_of_patched_frame = F
+    "mov   x2, #1\n\t"             // arg2: nlr = true
+    "bl    _HandleReturnTrap\n\t"  // arg0 (x0) already = result
+    "1:\n\t"
+    "brk   #0x4e\n\t"              // HandleReturnTrap must not return
+    "3:\n\t"                       // ---- normal-return entry ----
     "sub   x10, sp, #8\n\t"        // x10 = F (patched frame fp)
     // Reserve 32 (not 16) bytes: F's preserved words live at [F.fp+0] (saved
     // fp, read by the stack walk) and [F.fp+8] (the patched lr) -- i.e. at
@@ -315,7 +338,7 @@ extern "C" __attribute__((naked)) void ReturnTrap() {
     // those words; the space is F's just-freed locals, safe to reuse.
     "sub   sp, sp, #32\n\t"        // our frame record (stays 16-aligned)
     "str   x10, [sp, #0]\n\t"      // [fp+0] = F  -> our sender() is F
-    "adr   x11, 1f\n\t"            // a non-code-zone marker pc
+    "adr   x11, 2f\n\t"            // a non-code-zone marker pc
     "str   x11, [sp, #8]\n\t"      // [fp+8] = marker (so we are not a Self frame)
     "mov   x29, sp\n\t"            // x29 = our frame
     "mov   x1, x10\n\t"           // arg1: sp_of_patched_frame = F
@@ -323,7 +346,7 @@ extern "C" __attribute__((naked)) void ReturnTrap() {
     "mov   x3, #0\n\t"            // arg3: nlrHome = NULL
     "mov   x4, #0\n\t"            // arg4: nlrHomeID = 0
     "bl    _HandleReturnTrap\n\t" // arg0 (x0) already = result
-    "1:\n\t"
+    "2:\n\t"
     "brk   #0x4e\n\t"             // HandleReturnTrap must not return
   );
 }
@@ -365,11 +388,32 @@ extern "C" __attribute__((naked)) void PrimCallReturnTrap() {
   // Single-step debugger trap: the patched frame F is still active (a callee
   // returned into its send site), so F.fp = sp-16 (one word more than a
   // method return's sp-8).  See investigation notes in git history.
+  // Shaped like ReturnTrap: normal entry +0, NLR entry +8.  An NLR through
+  // the patched frame uses the frame's standard NLR epilogue regardless of
+  // why it was patched, so the NLR entry's geometry is sp-8 (like
+  // ReturnTrap's), NOT the prim-call-return sp-16 of the normal entry.
   __asm__ __volatile__(
-    "sub   x10, sp, #16\n\t"
+    "b     3f\n\t"                 // +0: normal (prim-call-return) entry
+    "nop\n\t"                      // +4
+    // +8: NLR entry -- x0 = result, x1 = NLRHomeReg, x2 = NLRHomeIDReg
+    "sub   x10, sp, #8\n\t"        // epilogue geometry: F = sp - 8
     "sub   sp, sp, #32\n\t"
     "str   x10, [sp, #0]\n\t"
     "adr   x11, 1f\n\t"
+    "str   x11, [sp, #8]\n\t"
+    "mov   x29, sp\n\t"
+    "mov   x3, x1\n\t"             // arg3: nlrHome
+    "mov   x4, x2\n\t"             // arg4: nlrHomeID
+    "mov   x1, x10\n\t"            // arg1: sp_of_patched_frame = F
+    "mov   x2, #1\n\t"             // arg2: nlr = true
+    "bl    _HandleReturnTrap\n\t"
+    "1:\n\t"
+    "brk   #0x4f\n\t"
+    "3:\n\t"                       // ---- normal entry ----
+    "sub   x10, sp, #16\n\t"
+    "sub   sp, sp, #32\n\t"
+    "str   x10, [sp, #0]\n\t"
+    "adr   x11, 2f\n\t"
     "str   x11, [sp, #8]\n\t"
     "mov   x29, sp\n\t"
     "mov   x1, x10\n\t"
@@ -377,7 +421,7 @@ extern "C" __attribute__((naked)) void PrimCallReturnTrap() {
     "mov   x3, #0\n\t"
     "mov   x4, #0\n\t"
     "bl    _HandleReturnTrap\n\t"
-    "1:\n\t"
+    "2:\n\t"
     "brk   #0x4f\n\t"
   );
 }
@@ -386,10 +430,34 @@ extern "C" void ProfilerTrap() {
   fatal("ProfilerTrap called without JIT");
 }
 
+// Continue a non-local return after a return trap: restore the caller's frame
+// pointer and stack from the patched frame F (sp_arg), load the NLR register
+// triple, and branch to pc -- the send site's NLR entry (sendDesc +
+// non_local_return_offset), exactly where F's unpatched NLR epilogue would
+// have gone.  Same sp rounding as ReturnTrap_resume: the next 16-aligned
+// boundary above F is the frame's running sp for either trap convention.
+//  -- rca 6/26
+extern "C" __attribute__((naked, noreturn))
+void ReturnTrapNLR_resume(char* pc, char* sp_arg, oop result,
+                          frame* home, smi homeID) {
+  // naked: x0=pc, x1=sp_arg(F), x2=result, x3=home, x4=homeID
+  __asm__ __volatile__(
+    "ldr   x29, [x1]\n\t"          // caller fp = [F] (original, unrounded x1)
+    "and   x16, x1, #0xfffffffffffffff0\n\t"
+    "add   x16, x16, #16\n\t"      // trap entry sp (16-aligned)
+    "mov   x9, x0\n\t"             // continuation pc to scratch
+    "mov   x0, x2\n\t"             // NLRResultReg
+    "mov   x1, x3\n\t"             // NLRHomeReg
+    "mov   x2, x4\n\t"             // NLRHomeIDReg
+    "mov   sp, x16\n\t"
+    "br    x9\n\t"
+  );
+}
+
 extern "C" void volatile ContinueNLRAfterReturnTrap(char* pc, char* sp, oop result,
                                                      frame* home, int32 homeID) {
-  Unused(pc); Unused(sp); Unused(result); Unused(home); Unused(homeID);
-  fatal("ContinueNLRAfterReturnTrap called without JIT");
+  processSemaphore = false;
+  ReturnTrapNLR_resume(pc, sp, result, home, homeID);
 }
 
 // set by generate_EnterSelf() (stubs_aarch64.cpp) when the stub is
