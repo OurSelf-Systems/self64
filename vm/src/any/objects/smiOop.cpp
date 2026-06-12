@@ -32,7 +32,8 @@ oop smi_div_prim(smiOop rcvr,  smiOop arg) {
   if ((r == smiOop_min->value()) &&  a == -1) return ErrorCodes::vmString_prim_error(OVERFLOWERROR);
   if (a == 0)                                 return ErrorCodes::vmString_prim_error(DIVISIONBYZEROERROR);
   smi quo = (r / a);
-  assert( abs(quo) == abs(r) / abs(a), "smi_div_prim is wrong on this platform");
+  // labs, not abs: int-width abs truncates 64-bit smis
+  assert( labs(quo) == labs(r) / labs(a), "smi_div_prim is wrong on this platform");
   return as_smiOop(quo);
 }
 
@@ -41,9 +42,8 @@ oop smi_mod_prim(smiOop rcvr,  smiOop arg) {
   if (! arg->is_smi())   return ErrorCodes::vmString_prim_error(BADTYPEERROR);
   smi r = rcvr->value();
   smi a = arg->value();
-  smi aa = a >= 0  ?  a  :  -a;
   if (a == 0) return ErrorCodes::vmString_prim_error(DIVISIONBYZEROERROR);
-  int32 res = r % a;
+  smi res = r % a;   // was int32: truncated 64-bit results
   assert( smiOop(smi_div_prim(rcvr, arg))->value() * a   +  res  ==  r,
           "smi_mod_prim incorrect on this platform");
   return as_smiOop(res);
