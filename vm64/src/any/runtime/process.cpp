@@ -1133,6 +1133,15 @@ frame* Process::frame_for_check_vfo_locals(abstract_vframe* currentVF) {
     return NULL;
   }
   if (second == NULL) {
+    if (first->is_interpreted_self_frame()) {
+      // The bottom interpreter activation (the first interpret() in the
+      // process, inside Process::start) legitimately has no Self sender:
+      // a single-stepped process that runs to completion lands here.  Same
+      // benign off-the-top case as the sentinel check above.  -- rca 6/26
+      if (traceV)
+        lprintf("frame_for_check_vfo_locals: bottom interpreter frame, returning NULL\n");
+      return NULL;
+    }
     Dl_info dl;
     const char* sym = "?";
     long off = 0;
