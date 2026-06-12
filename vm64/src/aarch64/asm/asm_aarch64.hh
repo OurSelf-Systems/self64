@@ -106,7 +106,7 @@ class Assembler: public BaseAssembler {
 
  private:
   // pending literal-pool entries
-  enum { MaxLits = 256 };
+  enum { MaxLits = 2048 };  // big typecase-heavy methods exceeded 256
   struct LitEntry {
     smi         value;
     OperandType type;
