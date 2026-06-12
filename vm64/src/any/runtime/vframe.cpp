@@ -177,6 +177,13 @@ oop compiled_vframe::get_contents(NameDesc* n,
   assert(verify_NameDesc_for_get_contents(n), "just checking");                                
   if (n->isLocation()) {
     Location loc = n->location();
+# if TARGET_ARCH == AARCH64_ARCH
+    // register-located debug values are delivered by the resume, not
+    // resident in the frame; there is no address to read from outside
+    // (cf. set_contents).  Show nil rather than faulting in stack prints
+    // and activation queries.
+    if (isRegister(loc)) return Memory->nilObj;
+# endif
     oop* addr = register_contents_addr(loc);
 #   if GENERATE_DEBUGGING_AIDS
     if (CheckAssertions) {
@@ -231,6 +238,12 @@ bool compiled_vframe::verify_NameDesc_for_get_contents(NameDesc* n) {
                       // for last copiedFrame (sender sp may be < own sp)
   ||   isDummy() 
   ||   !n->hasLocation() 
+# if TARGET_ARCH == AARCH64_ARCH
+  // register-located debug values are delivered by the resume, not resident
+  // in the frame (cf. compiled_vframe::set_contents); there is no frame
+  // address to liveness-check
+  ||   isRegister(n->location())
+# endif
   ||   !fr->is_compiled_self_frame()
   ||   fr->send_desc() == NULL 
   ||   fr->send_desc()->isPrimCall())
