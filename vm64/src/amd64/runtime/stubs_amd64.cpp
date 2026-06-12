@@ -92,6 +92,13 @@ static void generate_SendMessage_stub(Assembler* a) {
   a->Comment("SendMessage_stub");
   a->sub(SP, SP, 16);
   a->stp(fp, lr, SP, 0);          // a real frame record: link + pc-in-sender
+  a->mov(fp, SP);                 // x29 -> our record: C callees then link to
+                                  //   it, so frame walks during the lookup
+                                  //   find a proper callee record of the
+                                  //   sender ([+0]=its fp, [+8]=send-site pc)
+                                  //   instead of dead-ending on a C record
+                                  //   whose return pc (this stub) is outside
+                                  //   code->contains
   a->mov(x0, lr);                 // ic = the sendDesc
   a->mov(x1, SP);                 // lookupFrame = this record (frame* = record
                                   //   whose [+8] points into the sending method)
@@ -116,6 +123,7 @@ static void generate_SendDIMessage_stub(Assembler* a) {
   a->Comment("SendDIMessage_stub");
   a->sub(SP, SP, 16);
   a->stp(fp, lr, SP, 0);          // frame record: link + pc-in-sender
+  a->mov(fp, SP);                 // x29 -> our record (see SendMessage_stub)
   a->mov(x0, lr);                 // ic = the sendDesc
   a->mov(x1, SP);                 // lookupFrame = this record
   a->mov(x2, Temp2);              // DIDesc* (x10)
