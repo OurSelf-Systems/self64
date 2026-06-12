@@ -1297,6 +1297,25 @@ void Process::convertVFrameOops( frame* fr,
 // appropriate point(s)
 // current is current Self frame (passed in as a speed optimization) or NULL
 
+// See the comment at the call site in Stack::last_self_frame: a frame walk
+// crossing a C->Self boundary can land on a C function's frame record one
+// word below its compiled caller's handle.  No two real frames can be one
+// word apart, so if the most recent live vframeOop names exactly f+8, f is
+// such a record; return the real frame.
+frame* Process::adjust_for_bypassed_boundary_record(frame* f) {
+# if TARGET_ARCH == AARCH64_ARCH
+  if (f && procObj) {
+    vframeOop first_vfo = procObj->vframeList()->next();
+    if (    first_vfo
+        &&  first_vfo->is_live()
+        &&  (char*)first_vfo->locals() == (char*)f + oopSize)
+      return (frame*)((char*)f + oopSize);
+  }
+# endif
+  return f;
+}
+
+
 void Process::killVFrameOopsAndSetWatermark(frame* current) {
 
   // first check for the common case - no vframeOops at all
@@ -1312,6 +1331,10 @@ void Process::killVFrameOopsAndSetWatermark(frame* current) {
           ||  stack()->contains((char*)current )
           ||  (ConversionInProgress && isOnVMStack(current)),
          "not in my stack");
+
+  // see adjust_for_bypassed_boundary_record: scoped to the watermark path
+  // only -- applying it inside last_self_frame broke other callers
+  current = adjust_for_bypassed_boundary_record(current);
 
   abstract_vframe* currentVF = current ? new_vframe(current) : NULL;
 
