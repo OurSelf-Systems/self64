@@ -1307,7 +1307,7 @@ void Process::killVFrameOopsAndSetWatermark(frame* current) {
   }
   ResourceMark rm;
 
-  if (current == NULL && inSelf()) current = stk.last_self_frame(true); 
+  if (current == NULL && inSelf()) current = stk.last_self_frame(true);
   assert(     !current
           ||  stack()->contains((char*)current )
           ||  (ConversionInProgress && isOnVMStack(current)),
@@ -1356,8 +1356,18 @@ void Process::setWatermark( abstract_vframe* currentVF ) {
     frame* target = first->locals();
     frame* sender = current->sender();
     for ( ;
-         sender->vfo_locals_of_home_frame() != target;
+         sender && sender->vfo_locals_of_home_frame() != target;
          current = sender, sender = current->sender()) ;
+    if (!sender) {
+      // The current frame handle and the vframeOop's disagree about the
+      // same activation (seen when a stepping preemption fires inside a
+      // bridge stub whose linkage record masquerades as a Self frame, one
+      // word below the real activation).  Fail in an orderly way rather
+      // than dereferencing off the top of the stack. -- rca
+      fatal3("setWatermark: patch walk ran off the stack "
+             "(target=%#lx first=%#lx current=%#lx)",
+             (void*)first->locals(), (void*)first, (void*)currentVF->fr);
+    }
     sender->patch(current);
     clearWatermark();
   }

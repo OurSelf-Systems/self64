@@ -619,6 +619,11 @@ void HandleReturnTrap(oop result, char* sp_of_patched_frame,
   // had not the patching happened. -- dmu 1/03
   frame* patched_self_frame = currentFrame()->get_patched_self_frame(sp_of_patched_frame);
 
+  // get_patched_self_frame may have disambiguated the trap stub's sp-16
+  // guess upward by one word (see PrimCallReturnTrap); everything downstream
+  // (the conversion's sp, the resume's fp load) must use the real frame.
+  // -- rca
+  sp_of_patched_frame = (char*)patched_self_frame;
 
   char* selfPC;
   frame* convertFrame;

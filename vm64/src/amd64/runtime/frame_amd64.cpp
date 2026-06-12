@@ -254,10 +254,22 @@ char* frame::c_return_pc() {
 frame* frame::make_full_frame(char* pc)            {  
   return this; 
 }
-frame* frame::make_full_frame_after_trap(char* pc) {  
+frame* frame::make_full_frame_after_trap(char* pc) {
+# if TARGET_ARCH == AARCH64_ARCH
+  // Self frame objects are 8 mod 16 on aarch64 (callee record at
+  // running_sp - 8), not 0 mod 16 as on amd64.  Rounding to the amd64
+  // parity fabricated a dummy frame handle 8 below the real one after a
+  // preemption trap; vframeOops created from that handle then disagreed
+  // with sender-chain walks by 8 and the watermark patch walk ran off the
+  // top of the stack (stepping through compiled blocks). -- rca
+  return (frame*)
+       (smi(this)
+    -   ((smi(this) - BytesPerWord) & (frame_word_alignment*oopSize - 1)));
+# else
   return (frame*)
        (smi(this)
     -   ((smi(this) - frame_alignment_offset*oopSize) & (frame_word_alignment*oopSize - 1)));
+# endif
 }
 frame* frame::make_full_frame_on_user_stack()      {  return this; }
 
@@ -323,7 +335,23 @@ frame* frame::get_patched_self_frame(char* sp_of_patched_frame) {
   // note rather than warning on every trap.
   if (Interpret && WizardMode)
     warning("get_patched_self_frame: using sp_of_patched_frame as the frame");
+# if TARGET_ARCH == AARCH64_ARCH
+  // PrimCallReturnTrap's entry sp is running_sp+8 for a true prim return
+  // but running_sp for a method-shaped epilogue, so the stub's sp-16 guess
+  // can be one word low.  No parity rule resolves it (JIT records are
+  // 8 mod 16, EnterSelf boundary records 0 mod 16); disambiguate by
+  // content: only the true record's saved-pc slot still holds the patched
+  // trap address. -- rca
+  { frame* c = (frame*)sp_of_patched_frame;
+    if (!c->is_patched()) {
+      frame* c2 = (frame*)(sp_of_patched_frame + oopSize);
+      if (c2->is_patched()) return c2;
+    }
+    return c;
+  }
+# else
   return (frame*)sp_of_patched_frame;
+# endif
 }
 
 

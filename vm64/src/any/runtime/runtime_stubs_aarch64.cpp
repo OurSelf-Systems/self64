@@ -396,12 +396,19 @@ extern "C" void ReturnTrap2() {
 
 extern "C" __attribute__((naked)) void PrimCallReturnTrap() {
   // Single-step debugger trap: the patched frame F is still active (a callee
-  // returned into its send site), so F.fp = sp-16 (one word more than a
-  // method return's sp-8).  See investigation notes in git history.
-  // Shaped like ReturnTrap: normal entry +0, NLR entry +8.  An NLR through
-  // the patched frame uses the frame's standard NLR epilogue regardless of
-  // why it was patched, so the NLR entry's geometry is sp-8 (like
-  // ReturnTrap's), NOT the prim-call-return sp-16 of the normal entry.
+  // returned into its send site).  The entry sp is running_sp + 8 when a C
+  // prim returns (the true prim-call geometry) but running_sp when the
+  // returner uses the method-epilogue shape -- the patch-time sendee
+  // classification does not always match the actual returner, and no parity
+  // rule works either (JIT records are 8 mod 16 but EnterSelf boundary
+  // records are 0 mod 16).  So pass sp-16 and let get_patched_self_frame
+  // disambiguate {sp-16, sp-8} by content: the true record's saved-pc slot
+  // still holds the patched trap address (is_patched()).  A fixed sp-16
+  // delivered F = frame-8 for the epilogue shape, which poisoned
+  // is_patched()/currentPC reads, the conversion's sp, the watermark walk,
+  // and the resume's fp load (the resumed frame ran on a stale x29 and all
+  // later walks disagreed with the canonical vframeOops by 8). -- rca
+  // Shaped like ReturnTrap: normal entry +0, NLR entry +8.
   __asm__ __volatile__(
     "b     3f\n\t"                 // +0: normal (prim-call-return) entry
     "nop\n\t"                      // +4
@@ -420,7 +427,8 @@ extern "C" __attribute__((naked)) void PrimCallReturnTrap() {
     "1:\n\t"
     "brk   #0x4f\n\t"
     "3:\n\t"                       // ---- normal entry ----
-    "sub   x10, sp, #16\n\t"
+    "sub   x10, sp, #16\n\t"       // F candidate; C side disambiguates
+                                   //   {sp-16, sp-8} via is_patched()
     "sub   sp, sp, #32\n\t"
     "str   x10, [sp, #0]\n\t"
     "adr   x11, 2f\n\t"
