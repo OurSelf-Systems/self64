@@ -186,10 +186,9 @@ extern "C" oop smi_logical_shift_left_prim(smiOop rcvr, smiOop arg) {
   // an arithmetic multiply), so -- unlike the arithmetic shift -- it does NOT
   // fail when the result no longer fits the smi value range.  smallInt's <<
   // is defined as this primitive with no overflow handler and relies on the
-  // wrap.  Only flag the degenerate 64-bit-survival case.
+  // wrap (e.g. random integer:'s accumulator); as_smiOop drops the bits that
+  // leave the 62-bit value space.
   smi result = value << shift;
-  if ((result >> shift) != value)
-    return overflow_error();
 
   return oop(as_smiOop(result));
 }
