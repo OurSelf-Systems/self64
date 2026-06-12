@@ -327,7 +327,7 @@ void Process::kill() {
     { // It's possible that lsf is NULL (eg first frame calls interruptCheck
       // and the process is then killed).
       frame *lsf;
-      
+
       while (    lsf= last_self_frame(false),
                  lsf
              && !lsf->is_interpreted_self_frame()
@@ -1026,7 +1026,7 @@ void Process::killVFrameOops(abstract_vframe* currentVF) {
   if (lastToKill != sentinel) {
     vframeOop l;
     for (l = sentinel->next(); l != lastToKill; l = l->next()) {
-      l->kill(); 
+      l->kill();
     }
     if (l) l->kill();
     sentinel->set_next(l ? l->next() : NULL);
@@ -1305,7 +1305,6 @@ void Process::killVFrameOopsAndSetWatermark(frame* current) {
     clearWatermark();
     return;
   }
-
   ResourceMark rm;
 
   if (current == NULL && inSelf()) current = stk.last_self_frame(true); 

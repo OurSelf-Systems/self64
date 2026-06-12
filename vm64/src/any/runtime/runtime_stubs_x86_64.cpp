@@ -213,6 +213,11 @@ void SetSPAndCall(char** callerSaveAddr, char** calleeSaveAddr,
     "jnz   3f\n\t"
 
     // --- Resume existing process ---
+    "testb %%r8b, %%r8b\n\t"          // pcWasSet?
+    "jnz   2f\n\t"
+
+    // Normal resume: suspendedSP is a genuine save record made by the
+    // prologue above; pop it and jump to the saved PC.
     "movq  %%r9, %%rsp\n\t"           // switch to callee's saved stack
     "addq  $24, %%rsp\n\t"            // skip footer (rbp copy + mock ret + pad)
     "popq  %%r15\n\t"                 // restore all callee-saved registers
@@ -223,14 +228,21 @@ void SetSPAndCall(char** callerSaveAddr, char** calleeSaveAddr,
     "popq  %%rbp\n\t"
     // rsp now points to original return address
     "movq  %%rax, (%%rsp)\n\t"        // overwrite with saved PC
-    "testb %%r8b, %%r8b\n\t"          // pcWasSet?
-    "jnz   2f\n\t"
-    "ret\n\t"                          // normal: pop return addr and jump
+    "ret\n\t"                          // pop return addr and jump
 
-    // pcWasSet: jumping to function START, don't pop return addr
-    // (rsp stays 8 mod 16, as if call just executed)
+    // pcWasSet: entering a function (terminateMe) from its START.
+    // suspendedSP may no longer be our save record: Process::kill pops
+    // sendDesc-less frames with suspendedSP = lsf->sender(), leaving an
+    // arbitrary frame*.  Both shapes have the frame link at [+0], so
+    // restore only that, enter on a call-shaped rsp at/below the record,
+    // and leave the callee-saved registers alone (the function never
+    // returns and the process is being torn down).
     "2:\n\t"
-    "jmpq  *(%%rsp)\n\t"
+    "movq  (%%r9), %%rbp\n\t"         // frame link from record/frame*
+    "andq  $-16, %%r9\n\t"            // align down; record stays intact
+    "movq  %%r9, %%rsp\n\t"
+    "pushq $0\n\t"                    // fake return addr; rsp now 8 mod 16
+    "jmpq  *%%rax\n\t"                // jump to entry point
 
     // --- Initialize new process ---
     // suspendedSP is 0 mod 16 on x86_64.  Push ReturnOffTopOfProcess (8 bytes)

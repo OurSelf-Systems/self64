@@ -1067,7 +1067,21 @@ void interpreter::transfer_back_to_twains_process_if_stepping_or_stopping_pre() 
       preemptCause = currentProcess->isSingleStepping()
       ? cSingleStepped : cFinishedActivation;
     // caller will increment pc, scheduler expects an incremented pc
+    //
+    // Arm the NLR jmp_buf around the transfer: if the process is killed
+    // while suspended here (e.g. abort of a single-stepped process),
+    // unwind_stack_to_kill_process longjmps to the active interpreter's
+    // jmp_buf, which would otherwise be stale -- the other suspension
+    // points (interruptCheck, prim calls, lookups) all arm it. -- rca
+#   if TARGET_IS_64BIT
+    if (setjmp(_nlr_jmpbuf) == 0)
+#   endif
     twainsProcess->transfer();
+    if (NLRSupport::have_NLR_through_C()) {
+      continue_NLR();
+      stack[sp++] = NLRSupport::NLR_result_from_C();
+      pc = return_pc();
+    }
   }
 }
 

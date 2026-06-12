@@ -215,6 +215,11 @@ void SetSPAndCall(char** callerSaveAddr, char** calleeSaveAddr,
     "b.ne  3f\n\t"
 
     // --- Resume existing process ---
+    "tst   w4, #0xff\n\t"                // pcWasSet?
+    "b.ne  2f\n\t"
+
+    // Normal resume: suspendedSP is a genuine save record made by the
+    // prologue above; pop it and jump to the saved PC.
     "mov   sp, x9\n\t"                   // switch to callee's saved stack
     "add   sp, sp, #16\n\t"              // skip footer (fp copy + mock ret)
     "ldp   x29, x30, [sp], #16\n\t"      // restore fp and lr
@@ -224,15 +229,20 @@ void SetSPAndCall(char** callerSaveAddr, char** calleeSaveAddr,
     "ldp   x21, x22, [sp], #16\n\t"
     "ldp   x19, x20, [sp], #16\n\t"
     // sp now points to where we were before prologue
+    "br    x10\n\t"                       // jump to saved PC
 
-    "tst   w4, #0xff\n\t"                // pcWasSet?
-    "b.ne  2f\n\t"
-    "br    x10\n\t"                       // normal: jump to saved PC
-
-    // pcWasSet: jumping to function START
-    // On ARM64 the return address is in lr, not on the stack, and sp
-    // is already 0 mod 16 (correct for function entry).
+    // pcWasSet: entering a function (terminateMe) from its START.
+    // suspendedSP may no longer be our save record: Process::kill pops
+    // sendDesc-less frames with suspendedSP = lsf->sender(), leaving an
+    // arbitrary frame*.  Both shapes have the frame link at [+0], so
+    // restore only that, enter on an aligned sp at/below the record, and
+    // leave the callee-saved registers alone (the function never returns
+    // and the process is being torn down).
     "2:\n\t"
+    "ldr   x29, [x9]\n\t"                // frame link from record/frame*
+    "and   x9, x9, #0xfffffffffffffff0\n\t" // align down; record stays intact
+    "mov   sp, x9\n\t"
+    "mov   x30, #0\n\t"                  // no return; stop backtraces here
     "br    x10\n\t"                       // jump to entry point
 
     // --- Initialize new process ---
