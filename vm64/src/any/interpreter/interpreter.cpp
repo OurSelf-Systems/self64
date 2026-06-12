@@ -223,7 +223,15 @@ oop interpret( oop rcv,
   // On x86_64 without JIT, frame walking can't detect interpreted
   // Self frames, so we maintain a per-process linked list to avoid
   // corruption when process switches interleave push/pop operations.
-  interp._my_frame = currentFrame();
+  // Our own frame record, not currentFrame() -- that returns the CALLER's
+  // fp, so an interpreter activation's frame was only "registered" while one
+  // of its interpreted callees happened to be live: frame recognition
+  // (find_interpreter_for_frame via is_interpreted_self_frame) flip-flopped
+  // between walks, last_self_frame resolved above the true deepest frame,
+  // and the per-prim vframeOop cleanup killed live activations one by one --
+  // every activation query on this process then reported dead (selector '',
+  // the debugger lost in the shell eval machinery).  -- rca 6/26
+  interp._my_frame = (frame*)__builtin_frame_address(0);
 # if TARGET_IS_64BIT
   interp._prev_interp = currentProcess->active_interp_list;
   currentProcess->active_interp_list = &interp;
