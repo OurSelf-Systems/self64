@@ -105,7 +105,11 @@ private:
 
   // used in iterator macro FOR_EACH_SCOPE
   ScopeDesc *getNext(ScopeDesc *s) {
-    if (!s) return at(fint(0));
+    // Synthesized nmethods (no recorder content) have an empty scopes
+    // section; iterating one visits no scopes.  Without this guard at(0)
+    // asserts on debug builds and reads a garbage byte as a scope header
+    // on release builds.
+    if (!s) return length() == 0 ? NULL : at(fint(0));
     fint offset = s->next_offset();
 
     // The codes section is padded to a smi boundary (8 bytes on 64-bit; the
