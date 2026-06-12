@@ -450,10 +450,7 @@ because those methods involve cloning failblocks. -- Adam, Apr. 2009\x7fModuleIn
          withAndWithoutInlining = ( |
              i.
             | 
-            "Interpreted there is no inlining to vary, but the tests are
-             still worth one plain run -- skipping made the default
-             (interpreted) runAllTests test almost nothing. -- rca"
-            _Interpret ifTrue: [^ value].
+            _Interpret ifTrue: [^self].
 
             (_Compilers size = 1)  &&  [_Compilers first = 'nic']
               ifTrue: [^ value].
