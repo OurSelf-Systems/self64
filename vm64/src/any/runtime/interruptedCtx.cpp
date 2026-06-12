@@ -25,6 +25,13 @@ void InterruptedContext::fatal_menu() {
   // block all interrupts (e.g. timers)
   continuePC = NULL;
   SignalBlocker* sb = new SignalBlocker(SignalBlocker::block_signals_self_uses);
+
+  // We may be inside a SEGV/BUS handler with that signal masked; a second
+  // fault of the same type during the risky work below (stack printing on a
+  // corrupt stack) would then retry-spin forever instead of re-entering the
+  // handler.  Unblock the fault signals so a nested crash comes back here
+  // and the abortLevel escalation can terminate. -- rca
+  SignalInterface::unblock_synchronous_fault_signals();
   
   OS::handle_suspend_and_resume(true);            // set stdin to normal mode
 

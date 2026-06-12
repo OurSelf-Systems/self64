@@ -34,8 +34,18 @@
 
   friend void OS::core_dump(); // calls install signal to revert SIGABRT
   static void install_signal(int sig, Signal_Handler_t handler);
-  static void init_signal_stack();    
+  static void init_signal_stack();
   static void init_sig_mask();
+
+ public:
+  // A synchronous fault (SEGV/BUS/ILL/FPE) raised while its own signal is
+  // masked -- e.g. a crash inside that signal's handler -- makes the kernel
+  // re-execute the faulting instruction forever (observed on macOS: silent
+  // 100% CPU spin).  Crash handling calls this before doing risky work such
+  // as stack printing so a nested fault re-enters the handler and the
+  // abortLevel escalation can terminate the process instead. -- rca
+  static void unblock_synchronous_fault_signals();
+ private:
 
  public:
 // Mac OS X and Solaris almost have the same signal handling flags/calls.
