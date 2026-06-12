@@ -1297,29 +1297,6 @@ void Process::convertVFrameOops( frame* fr,
 // appropriate point(s)
 // current is current Self frame (passed in as a speed optimization) or NULL
 
-// See the comment at the call site in Stack::last_self_frame: a frame walk
-// crossing a C->Self boundary can land on a C function's frame record one
-// word below its compiled caller's handle.  No two real frames can be one
-// word apart, so if the most recent live vframeOop names exactly f+8, f is
-// such a record; return the real frame.
-frame* Process::adjust_for_bypassed_boundary_record(frame* f) {
-# if TARGET_ARCH == AARCH64_ARCH
-  // Interpreted boundary frames are legitimately C-shaped records; only a
-  // compiled activation's object can be shadowed by its C callee's record
-  // one word below.  The interpreted exclusion matters: without it this
-  // correction misfires during interpreted runs.
-  if (f && procObj && !f->is_interpreted_self_frame()) {
-    vframeOop first_vfo = procObj->vframeList()->next();
-    if (    first_vfo
-        &&  first_vfo->is_live()
-        &&  (char*)first_vfo->locals() == (char*)f + oopSize)
-      return (frame*)((char*)f + oopSize);
-  }
-# endif
-  return f;
-}
-
-
 void Process::killVFrameOopsAndSetWatermark(frame* current) {
 
   // first check for the common case - no vframeOops at all
@@ -1335,10 +1312,6 @@ void Process::killVFrameOopsAndSetWatermark(frame* current) {
           ||  stack()->contains((char*)current )
           ||  (ConversionInProgress && isOnVMStack(current)),
          "not in my stack");
-
-  // see adjust_for_bypassed_boundary_record: scoped to the watermark path
-  // only -- applying it inside last_self_frame broke other callers
-  current = adjust_for_bypassed_boundary_record(current);
 
   abstract_vframe* currentVF = current ? new_vframe(current) : NULL;
 
@@ -1375,7 +1348,17 @@ void Process::setWatermark( abstract_vframe* currentVF ) {
   frame* current = currentVF->fr;
   vframeOop first = procObj->vframeList()->next();
 
-  if (first->is_above(currentVF->fr)) {
+  // aarch64: when the top compiled activation has an outstanding C call, the
+  // walk hands us the C callee's record P -- a content-perfect copy of the
+  // activation's object at P+8 (walks through P work; the object's own [+0]
+  // is clobbered by the C record's saved lr).  A vframeOop naming exactly
+  // P+8 is therefore THIS activation, not one above it: take the
+  // current-frame branch, whose walks start from P and stay safe.  No two
+  // real frames can be one word apart. -- rca
+  bool aliasedTop = (char*)first->locals() == (char*)current + oopSize
+                    &&  !current->is_interpreted_self_frame();
+
+  if (first->is_above(currentVF->fr) && !aliasedTop) {
 
     // the only live vframeOops are above the current frame - patch return
     // address
@@ -1404,8 +1387,8 @@ void Process::setWatermark( abstract_vframe* currentVF ) {
     // at next interrupt, we need to check if these are still live (even
     // if the frame isn't the current frame anymore)
 
-    assert( first->is_equal(current),  "cannot be below me");
-    assert( first->locals() == current->vfo_locals_of_home_frame(),
+    assert( aliasedTop || first->is_equal(current),  "cannot be below me");
+    assert( aliasedTop || first->locals() == current->vfo_locals_of_home_frame(),
             "must be the same");
 
     set_check_vfo_locals( currentVF );

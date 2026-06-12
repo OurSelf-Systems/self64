@@ -203,9 +203,6 @@ class Process: public CHeapObj {
   void  resetStackOverflow()    { stk.mark(); }
   frame* last_self_frame(bool includePrologue,  RegisterLocator** rl = NULL)  {
     return stk.last_self_frame(includePrologue, rl); }
-  // aarch64: correct a walk result that landed on a C frame record one word
-  // below its compiled caller's handle (see Stack::last_self_frame)
-  frame* adjust_for_bypassed_boundary_record(frame* f);
   
   void  setPC(process_p newPC)  { suspendedPC= first_inst_addr((char*)newPC); pcWasSet= true; }
   bool  isRunnable()            { return state <= ready; }
