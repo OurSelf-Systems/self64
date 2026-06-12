@@ -663,7 +663,9 @@ void zone::free_nmethod(nmethod* nm) {
   int32 sSize = nm->scopes->size();
   idManager->freeID(nm->id);
   int32* s = (int32*)nm->scopes;
-  int32* d = (int32*)nm->deps()   - 1;  // -1 for backpointer
+  // backpointer is a full pointer (see setDepsMap); int32 arithmetic here
+  // handed deallocate an address 4 bytes into the block on 64-bit
+  int32* d = (int32*)((char*)nm->deps() - sizeof(nmethod*));
   if (dZone->contains(d)) {
     sZone->deallocate(s, sSize);
     dZone->deallocate(d, dSize);
