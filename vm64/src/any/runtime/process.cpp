@@ -1304,7 +1304,11 @@ void Process::convertVFrameOops( frame* fr,
 // such a record; return the real frame.
 frame* Process::adjust_for_bypassed_boundary_record(frame* f) {
 # if TARGET_ARCH == AARCH64_ARCH
-  if (f && procObj) {
+  // Interpreted boundary frames are legitimately C-shaped records; only a
+  // compiled activation's object can be shadowed by its C callee's record
+  // one word below.  The interpreted exclusion matters: without it this
+  // correction misfires during interpreted runs.
+  if (f && procObj && !f->is_interpreted_self_frame()) {
     vframeOop first_vfo = procObj->vframeList()->next();
     if (    first_vfo
         &&  first_vfo->is_live()
