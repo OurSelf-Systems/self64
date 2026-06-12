@@ -554,9 +554,156 @@ static void gen_SPLimit_test();
     }
   }
 
+  // ---- n-way type test (structure mirrors node_i386.cpp) -------------------
+  // Fall-through code is the "unknown" case; define(i, l) wires case i's
+  // label (0 = no match / unknown, map/oop index + 1 otherwise).
+
+  void TypeTestNode::br_if_smi(Assembler* a, Location rcvr, fint smiIndex) {
+    a->tst(rcvr, Tag_Mask);                  // Int_Tag == 0
+    Label* l = new Label(a->printing);
+    a->b(a64_eq, l);
+    define(smiIndex, l);
+  }
+
+  void TypeTestNode::br_if_float(Assembler* a, Location rcvr, fint floatIndex) {
+    a->andd(x16, rcvr, Tag_Mask);
+    a->cmp(x16, Float_Tag);
+    Label* l = new Label(a->printing);
+    a->b(a64_eq, l);
+    define(floatIndex, l);
+  }
+
+  void TypeTestNode::br_to_unknown_case(Assembler* a) {
+    Label* unknownCase = new Label(a->printing);
+    a->b(unknownCase);
+    define(0, unknownCase);
+  }
+
+  // Returns index of case to jump to, or 0 if none chosen.  Also returns
+  // loadMapAfterHandlingImmediates, the label where the caller gens the map
+  // load for the memOop tests. -- structure as on i386 (dmu 10/03)
+  fint TypeTestNode::prologue(Assembler* a, Location rcvr, fint smiIndex,
+                              fint floatIndex, bool immediateOnly,
+                              Label*& loadMapAfterHandlingImmediates) {
+    assert(((Float_Tag | Int_Tag) & Mem_Tag) == 0, "tagging scheme changed");
+    assert(!immediateOnly || !needMapLoad,
+           "immediateOnly implies !needMapLoad");
+
+    if (!needMapLoad) {
+      // no mem maps to test; rcvr could still be a memOop at this point
+      if (  smiIndex)  br_if_smi  (a, rcvr,   smiIndex);
+      if (floatIndex)  br_if_float(a, rcvr, floatIndex);
+      return 0; // no more testing; fall through to unknown
+    }
+
+    a->tst(rcvr, Mem_Tag);                   // memOops have the low bit set
+    loadMapAfterHandlingImmediates = new Label(a->printing);
+    a->b(a64_ne, loadMapAfterHandlingImmediates);
+
+    if (smiIndex  &&  floatIndex) {
+      br_if_smi(a, rcvr, smiIndex);
+      return floatIndex;
+    }
+    if (  smiIndex)   br_if_smi  (a, rcvr,   smiIndex);
+    if (floatIndex)   br_if_float(a, rcvr, floatIndex);
+    br_to_unknown_case(a);
+    return 0;
+  }
+
+  void TypeTestNode::testMap(ConstPReg* pr, fint index) {
+    assert(pr->constant->is_map(), "should be map");
+    assert(needMapLoad, "need to load receiver map");
+    theAssembler->loadOopLiteral(x16, pr->constant);
+    theAssembler->cmp(RcvrMapReg, x16);
+    Label* match = new Label(theAssembler->printing);
+    theAssembler->b(a64_eq, match);
+    define(index, match);
+  }
+
+  void TypeTestNode::testOop(ConstPReg* pr, fint index) {
+    assert(!pr->constant->is_map(), "should be oop");
+    theAssembler->loadOopLiteral(x16, pr->constant);
+    theAssembler->cmp(r, x16);
+    Label* match = new Label(theAssembler->printing);
+    theAssembler->b(a64_eq, match);
+    define(index, match);
+  }
+
   void TypeTestNode::gen() {
+    // generates n-way type test; fall-through code is "unknown" case
     BasicNode::gen();
-    unimplemented_gen("TypeTestNode::gen");
+    r = genHelper->moveToReg(_src, MapReg);
+
+    // indexes of smi/float cases if present; one more than the maps index
+    // (0 = not present)
+    fint   smiIndex = 0;
+    fint floatIndex = 0;
+         if (maps->nth(0) == Memory->  smi_map->enclosing_mapOop())   smiIndex = 1;
+    else if (maps->nth(0) == Memory->float_map->enclosing_mapOop()) floatIndex = 1;
+    if (maps->length() > 1) {
+           if (maps->nth(1) == Memory->  smi_map->enclosing_mapOop())   smiIndex = 2;
+      else if (maps->nth(1) == Memory->float_map->enclosing_mapOop()) floatIndex = 2;
+    }
+
+    fint nconstants = 0;
+    fint ntests = maps->length();
+    fint firstMem = max(smiIndex, floatIndex);
+    bool immediateOnly = firstMem == maps->length();
+
+    for (fint i = firstMem; i < ntests; ++i) {
+      ConstPReg* pr = mapPRs->nth(i);
+      if (!pr->constant->is_map()) ++nconstants;
+    }
+
+    // first test against all constant oops
+    if (!hasUnknown  &&  nconstants == ntests) {
+      --ntests;       // don't need to check the last constant
+    }
+    for (fint i = firstMem;  i < ntests;  ++i) {
+      ConstPReg* pr = mapPRs->nth(i);
+      if (!pr->constant->is_map())   testOop(pr, i + 1);
+    }
+    if (!hasUnknown && nconstants >= ntests) {
+      // last case; omit the test, branch directly
+      Label* match = new Label(theAssembler->printing);
+      theAssembler->b(match);
+      define(ntests + 1, match);
+      return;           // done -- tested all constants
+    }
+
+    Label* loadMapAfterHandlingImmediates = NULL;
+    fint n = prologue(theAssembler, r, smiIndex, floatIndex, immediateOnly,
+                      loadMapAfterHandlingImmediates);
+
+    if (n) {
+      Label* match = new Label(theAssembler->printing);
+      theAssembler->b(match);
+      define(n, match);
+    }
+
+    if (!loadMapAfterHandlingImmediates)
+      ;
+    else if (immediateOnly)
+      define(0, loadMapAfterHandlingImmediates);     // no memOop tests
+    else
+      loadMapAfterHandlingImmediates->define();
+
+    if (!hasUnknown) --ntests;      // all maps known, can omit last test
+    // test against all maps
+    if (needMapLoad) {
+      // load receiver map (tagged-pointer offset; ldur form)
+      theAssembler->ldr(RcvrMapReg, r, map_offset());
+    }
+    for (fint i = firstMem; i < ntests; i++) {
+      ConstPReg* pr = mapPRs->nth(i);
+      if (pr->constant->is_map()) testMap(pr, i + 1);
+    }
+    if (!hasUnknown) {
+      // last case; omit the test, branch directly
+      Label* match = new Label(theAssembler->printing);
+      theAssembler->b(match);
+      define(ntests + 1, match);
+    }
   }
 
   void UncommonNode::gen() {
