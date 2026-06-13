@@ -191,6 +191,11 @@ SlotsToOmit: comment directory fileInTimeString myComment postFileIn revision su
             'killing again' printLine.
             p _KillActivationsUpTo: 1.
             [p stackDepth succ succ = d] assert.
+            "the kill leaves the surviving activation restarted at its
+             pending send; if p were left alive the scheduler would
+             eventually run it, re-raise the 'c' lookup error, and print
+             it asynchronously in the middle of whatever runs next"
+            p abort.
             'ok').
         } | ) 
 
