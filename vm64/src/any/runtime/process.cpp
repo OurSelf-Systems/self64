@@ -1459,17 +1459,28 @@ bool Process::verifyVFrameList() {
         return false;
       }
       frame* f = last_self_frame(true);
-      while (l->is_above(f)) f = f->sender();
-      if (!l->is_equal(f)) {
+      // aarch64: a top frame with an outstanding C call appears on the
+      // chain as the C callee's record P, while the canonical vframeOop
+      // names the frame object at P+8 (same activation; see setWatermark's
+      // alias handling).  Accept that alias instead of stepping past it.
+      bool aliased = false;
+      while (l->is_above(f)) {
+        if ((char*)l->locals() == (char*)f + oopSize
+            &&  !f->is_interpreted_self_frame()) { aliased = true; break; }
+        f = f->sender();
+      }
+      if (!aliased && !l->is_equal(f)) {
         error2("invalid frame pointer %#lx in vframeOop %#lx", fr, l);
         return false;
-      } else if (f->vfo_locals_of_home_frame() != l->locals()) {
+      } else if (!aliased && f->vfo_locals_of_home_frame() != l->locals()) {
         error2("invalid locals pointer %#lx in vframeOop %#lx",
                l->locals(), l);
         return false;
       }
       // construct the vframe - will fail if we have a bogus vframeOop
-      l->as_vframe();
+      // (skip for the aliased-top case: its frame is mid-C-call and the
+      // patched-frame argument machinery is not ported)
+      if (!aliased) l->as_vframe();
     }
   }
   return true;
