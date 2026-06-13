@@ -366,16 +366,29 @@ void compiled_vframe::copyOutgoingArgs( compiled_vframe* vf,
  for ( fint argNo = startingArgNo;  e;   e= e->next(),  ++argNo) {
     int32 bci2 = e->data();
     NameDesc* nd = desc->exprStackElem(bci2);
+# if TARGET_ARCH == AARCH64_ARCH
+    // A constant expr-stack element has no frame location in the new
+    // (debug) nmethod; its send-setup code re-materializes the value, so
+    // there is nothing to copy into.  Skip it -- but keep the _Perform
+    // argNo bookkeeping below intact.
+    bool nothing_to_copy_into = !nd->hasLocation();
+# else
     assert(nd->hasLocation(), "cannot handle constants");
+    const bool nothing_to_copy_into = false;
+# endif
     NameDesc* from_nd = vf->desc->exprStackElem(bci2);
-    
-    if  (  argNo == performSelArgNo 
+
+    if  (  argNo == performSelArgNo
     ||     argNo == performDelArgNo) {
-      copyValue(nd, vf, from_nd, oldBlkHome, blkValues);
+      if (!nothing_to_copy_into)
+        copyValue(nd, vf, from_nd, oldBlkHome, blkValues);
       // do not advance argNo at the position of the
       //   selector or delegatee to a _Perform
       //   because will be copied to a special register
       --argNo;  --performSelArgNo;  --performDelArgNo;
+    }
+    else if (nothing_to_copy_into) {
+      // skipped; the new code re-materializes the constant
     }
     else if ( !from_nd->isIllegal()
          &&   ( isUncommon  ||  argNo >= NumIArgRegisters ) ) {
