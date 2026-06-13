@@ -1133,33 +1133,39 @@ frame* Process::frame_for_check_vfo_locals(abstract_vframe* currentVF) {
     return NULL;
   }
   if (second == NULL) {
-    if (first->is_interpreted_self_frame()) {
-      // The bottom interpreter activation (the first interpret() in the
-      // process, inside Process::start) legitimately has no Self sender:
-      // a single-stepped process that runs to completion lands here.  Same
-      // benign off-the-top case as the sentinel check above.  -- rca 6/26
-      if (traceV)
-        lprintf("frame_for_check_vfo_locals: bottom interpreter frame, returning NULL\n");
-      return NULL;
+    // first->selfSender() == NULL means first IS the bottom-most Self
+    // activation in the process (is_first_self_frame): there is no frame
+    // above it to check vfo locals against, so returning NULL is correct
+    // for every bottom shape.  Three legitimately occur:
+    //   - the bottom-of-process sentinel (pc == ReturnOffTopOfProcess,
+    //     already handled above);
+    //   - the bottom interpreter activation (Process::start's first
+    //     interpret() -- a single-stepped process run to completion);
+    //   - the bottom-most COMPILED frame, entered from EnterSelf: its only
+    //     sender is the C/EnterSelf boundary, so selfSender() is NULL.  Its
+    //     currPC slot reads garbage (caller_fp-8 lands in EnterSelf's C
+    //     frame) -- e.g. the compiled NIC suite tail.  -- dmu & rca 6/26
+    // All return NULL so callers (killVFrameOopsInCurrentFrame, etc.) skip
+    // the check cleanly.  Keep the detail under traceV for debugging.
+    if (traceV) {
+      Dl_info dl;
+      const char* sym = "?";
+      long off = 0;
+      if (dladdr((void*)first_pc, &dl) && dl.dli_sname) {
+        sym = dl.dli_sname;
+        off = (long)((char*)first_pc - (char*)dl.dli_saddr);
+      }
+      lprintf("frame_for_check_vfo_locals: bottom %s frame, returning NULL\n"
+              "  first = %p  pc = %p  %s + 0x%lx\n"
+              "  is_self=%d  is_interp=%d  is_compiled=%d  is_sentinel=%d\n",
+              first->is_interpreted_self_frame() ? "interpreter" : "compiled",
+              first, first_pc, sym, off,
+              first->is_self_frame(),
+              first->is_interpreted_self_frame(),
+              first->is_compiled_self_frame(),
+              first->is_bottom_of_process_sentinel());
+      first->print();
     }
-    Dl_info dl;
-    const char* sym = "?";
-    long off = 0;
-    if (dladdr((void*)first_pc, &dl) && dl.dli_sname) {
-      sym = dl.dli_sname;
-      off = (long)((char*)first_pc - (char*)dl.dli_saddr);
-    }
-    lprintf("frame_for_check_vfo_locals: unexpected NULL selfSender\n"
-            "  first = %p  pc = %p  %s + 0x%lx (dladdr reports nearest *exported* symbol)\n"
-            "  is_self=%d  is_interp=%d  is_compiled=%d  is_sentinel=%d\n"
-            "  ReturnOffTopOfProcess = %p\n",
-            first, first_pc, sym, off,
-            first->is_self_frame(),
-            first->is_interpreted_self_frame(),
-            first->is_compiled_self_frame(),
-            first->is_bottom_of_process_sentinel(),
-            (void*)&ReturnOffTopOfProcess);
-    first->print();
     return NULL;
   }
   
