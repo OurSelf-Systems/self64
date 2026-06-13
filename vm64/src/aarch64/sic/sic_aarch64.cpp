@@ -57,6 +57,21 @@ nmethod* SICompiler::compileAccessMethod() {
   else
     genHelper->memOop_prologue((mapOop)rmap, miss);
   _verifiedOffset       = a->offset();
+
+  // perform / dynamic-delegatee checks, as in
+  // PrologueNode::doMapSelectorDelegateeChecks.  A perform site's IC gets
+  // rebound to this access method like any other target; without the
+  // selector compare, every later perform there with the same receiver
+  // map silently hits this method regardless of selector (found via
+  // browse test: the bytecode scanner's `opcodeName sendTo: bytecodes`
+  // dispatched every opcode to the first-bound constant slot).
+  { Label generalMiss(a->printing, NULL);
+    if (L->isPerform())
+      genHelper->checkOop(generalMiss, L->selector(), PerformSelectorLoc);
+    if (needsDelegatee(L->lookupType()) && !L->isDelegateeStatic())
+      genHelper->checkOop(generalMiss, L->delegatee(), PerformDelegateeLoc);
+  }
+
   _diCheckOffset        = a->offset();
 
   // dynamic inheritance: verify assignable parents, exactly as
