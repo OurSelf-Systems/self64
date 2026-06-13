@@ -18,8 +18,16 @@ void   frame::set_nmethod_frame_chain(frame* f, nmethod* nm) {
   *nmethod_frame_chain_addr(nm) = f; }
   
 objVectorOop frame::patched_frame_saved_outgoing_args(nmethod* nm) {
+# if TARGET_ARCH == AARCH64_ARCH
+  // aarch64 saves the args at patch time despite the flag (see
+  // frame::save_outgoing_arguments), but only for compiled frames --
+  // an interpreter frame is a C++ frame with no such slot
+  if (is_interpreted_self_frame())
+    return NULL;
+# else
   if (!SaveOutgoingArgumentsOfPatchedFrames)
     return NULL;
+# endif
   assert(is_patched(), "saved outoing args only in patched frame");
   return *patched_frame_saved_outgoing_args_addr(nm); 
 }
@@ -343,6 +351,22 @@ void frame::patch_compiled_self_frame(returnTrapHandlerFn new_fn) {
 // which only currently works for PPC.
 
 void frame::save_outgoing_arguments() {
+# if TARGET_ARCH == AARCH64_ARCH
+  // No asm glue saves outgoing args on this port, but the restart path
+  // (the conversion's copyOutgoingArgs) needs their values from before a
+  // conversion rebuilds this part of the stack.  They are still in this
+  // frame's outgoing area -- rcvr+args just above the frame object -- so
+  // copy them to a heap vector now, while the frame is intact.  The slot
+  // is GC-visited by FrameIterator::do_patched_frame_saved_outgoing_args.
+  { fint nargs = outgoing_arg_count(NULL);
+    if (nargs < 0) { set_patched_frame_saved_outgoing_args(0); return; }
+    objVectorOop v = Memory->objVectorObj->cloneSize(nargs + 1 /* rcvr */);
+    for (fint i = 0;  i < nargs + 1;  ++i)
+      v->obj_at_put(i, *((oop*)this + ircvr_offset + i));
+    set_patched_frame_saved_outgoing_args(v);
+    return;
+  }
+# endif
   if (!SaveOutgoingArgumentsOfPatchedFrames) {
     return;
   }
