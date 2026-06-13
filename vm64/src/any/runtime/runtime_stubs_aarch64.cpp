@@ -580,8 +580,19 @@ void ContinueNLR_unwind_and_jump(oop result, smi home, int32 homeID,
     "cbnz  x9, 1b\n\t"
     "brk   #0x9e\n\t"           // ran off the chain: no such return PC
   "2:\n\t"
+    // Pop the matched record.  How much to pop depends on who built it:
+    // a JIT prologue record (8 mod 16) straddles the boundary -- its
+    // saved-lr word at [x9+8] is the caller's reserved lr-hole, so the
+    // sp just above it is x9+8, the caller's running sp.  An EnterSelf
+    // boundary record (0 mod 16) is a self-contained C-style pair, so
+    // the sp above it is x9+16.  Both cases are "the next 16-aligned
+    // boundary at or above x9+8": (x9+16) & ~15.  (Same disambiguation
+    // as ReturnTrap_resume.)  x9+16 alone left the JIT case 8-misaligned
+    // and tripped Apple's hardware sp-alignment check at the target's
+    // first sp-relative store (e.g. ReturnTrap+0x10).
     "ldr   x29, [x9]\n\t"       // the Self frame's fp
-    "add   x10, x9, #16\n\t"    // pop the entry record: the frame's sp
+    "add   x10, x9, #16\n\t"
+    "and   x10, x10, #0xfffffffffffffff0\n\t"
     "mov   sp, x10\n\t"
     "br    x4\n\t"
   );
