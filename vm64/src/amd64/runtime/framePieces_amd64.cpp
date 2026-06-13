@@ -15,6 +15,12 @@ i386_sp* i386_sp::push_new_sp( char* pc,
   assert((size_in_oops & (frame_word_alignment - 1)) == 0, "alignment");
   assert( ((frame*)this)->is_aligned(), "alignment");
   i386_sp* sp = (i386_sp*)( ((oop*)this) - size_in_oops );
+# if TARGET_ARCH == AARCH64_ARCH
+  // Self frame records must be 8 mod 16 (fp = 16-aligned entry_sp - 8);
+  // an off-parity record faults Apple's hardware sp-alignment check the
+  // moment the frame runs (its epilogue and every trap stub store via sp).
+  assert(((uintptr_t)sp & 15) == oopSize, "rebuilt frame record parity");
+# endif
 # if GENERATE_DEBUGGING_AIDS
     if (CheckAssertions) {
       zapAlways = true;

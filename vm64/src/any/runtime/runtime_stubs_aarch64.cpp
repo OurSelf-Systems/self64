@@ -326,8 +326,15 @@ extern "C" __attribute__((naked)) void ReturnTrap() {
     // +8: NLR entry.  The NLR epilogue's geometry equals a normal return's:
     // sp = F.fp + 8, so F = sp - 8.  NLR regs live: x0 = result,
     // x1 = NLRHomeReg, x2 = NLRHomeIDReg.
+    // F is taken from the UNROUNDED entry sp; our own sp is then rounded
+    // down to 16 so the stores below satisfy Apple's hardware sp-alignment
+    // check even when the patched record sits at 0 mod 16 (a kill patch
+    // applied through the C-boundary alias record; ContinueNLRFromC lands
+    // sp = record + 8, which is then 8 mod 16).
     "sub   x10, sp, #8\n\t"        // x10 = F (patched frame fp)
-    "sub   sp, sp, #32\n\t"        // frame record (see normal entry comment)
+    "sub   x11, sp, #32\n\t"       // frame record (see normal entry comment)
+    "and   x11, x11, #0xfffffffffffffff0\n\t"
+    "mov   sp, x11\n\t"
     "str   x10, [sp, #0]\n\t"      // [fp+0] = F  -> our sender() is F
     "adr   x11, 1f\n\t"
     "str   x11, [sp, #8]\n\t"      // [fp+8] = marker (not a Self frame)
@@ -412,9 +419,14 @@ extern "C" __attribute__((naked)) void PrimCallReturnTrap() {
   __asm__ __volatile__(
     "b     3f\n\t"                 // +0: normal (prim-call-return) entry
     "nop\n\t"                      // +4
-    // +8: NLR entry -- x0 = result, x1 = NLRHomeReg, x2 = NLRHomeIDReg
+    // +8: NLR entry -- x0 = result, x1 = NLRHomeReg, x2 = NLRHomeIDReg.
+    // F from the unrounded entry sp; own sp rounded down to 16 (see the
+    // ReturnTrap NLR entry comment: the patched record can be the 0 mod 16
+    // C-boundary alias, landing us 8-misaligned).
     "sub   x10, sp, #8\n\t"        // epilogue geometry: F = sp - 8
-    "sub   sp, sp, #32\n\t"
+    "sub   x11, sp, #32\n\t"
+    "and   x11, x11, #0xfffffffffffffff0\n\t"
+    "mov   sp, x11\n\t"
     "str   x10, [sp, #0]\n\t"
     "adr   x11, 1f\n\t"
     "str   x11, [sp, #8]\n\t"
@@ -566,36 +578,50 @@ extern "C" {
 }
 extern bool8 processSemaphore;   // process.hh
 
+// Final hop: install the computed fp/sp and branch to the NLR target.
+// x0..x2 already hold the NLR register convention values.
 extern "C" __attribute__((naked, noreturn))
-void ContinueNLR_unwind_and_jump(oop result, smi home, int32 homeID,
-                                 char* match, char* target) {
-  // naked: args are referenced directly by register (x0..x4)
+void ContinueNLR_jump(oop result, smi home, int32 homeID,
+                      char* target, frame* new_fp, char* new_sp) {
+  // naked: args are referenced directly by register (x0..x5)
   __asm__ __volatile__(
-    "mov   x9, x29\n\t"
-  "1:\n\t"
-    "ldr   x10, [x9, #8]\n\t"   // saved lr of this record
-    "cmp   x10, x3\n\t"
-    "b.eq  2f\n\t"
-    "ldr   x9, [x9]\n\t"        // follow the frame chain
-    "cbnz  x9, 1b\n\t"
-    "brk   #0x9e\n\t"           // ran off the chain: no such return PC
-  "2:\n\t"
-    // Pop the matched record.  How much to pop depends on who built it:
-    // a JIT prologue record (8 mod 16) straddles the boundary -- its
-    // saved-lr word at [x9+8] is the caller's reserved lr-hole, so the
-    // sp just above it is x9+8, the caller's running sp.  An EnterSelf
-    // boundary record (0 mod 16) is a self-contained C-style pair, so
-    // the sp above it is x9+16.  Both cases are "the next 16-aligned
-    // boundary at or above x9+8": (x9+16) & ~15.  (Same disambiguation
-    // as ReturnTrap_resume.)  x9+16 alone left the JIT case 8-misaligned
-    // and tripped Apple's hardware sp-alignment check at the target's
-    // first sp-relative store (e.g. ReturnTrap+0x10).
-    "ldr   x29, [x9]\n\t"       // the Self frame's fp
-    "add   x10, x9, #16\n\t"
-    "and   x10, x10, #0xfffffffffffffff0\n\t"
-    "mov   sp, x10\n\t"
-    "br    x4\n\t"
+    "mov   x29, x4\n\t"
+    "mov   sp,  x5\n\t"
+    "br    x3\n\t"
   );
+}
+
+static void ContinueNLR_unwind_and_jump(oop result, smi home, int32 homeID,
+                                        char* match, char* target) {
+  Unused(result); Unused(home); Unused(homeID);
+  // Walk our own frame chain to the record whose saved lr == match.
+  // SwitchStack leaves x29 alone, so the chain spans the VM/process
+  // stack switch.
+  char** x9 = (char**)__builtin_frame_address(0);
+  while (x9 != NULL  &&  x9[1] != match)
+    x9 = (char**)x9[0];
+  if (x9 == NULL)
+    fatal1("ContinueNLR: return PC %#lx not on the frame chain", match);
+
+  // Pop the matched record.  How much to pop depends on who built it:
+  // a JIT prologue record straddles the boundary -- its saved-lr word at
+  // [x9+8] is the caller's reserved lr-hole, so the sp just above it is
+  // x9+8, the caller's running sp.  An EnterSelf/C boundary record is a
+  // self-contained pair, so the sp above it is x9+16.  Disambiguate by
+  // content first: a patched return address only ever lives in a Self
+  // frame record (frame::patch_compiled_self_frame), even one a
+  // conversion rebuilt at 0 mod 16.  For unpatched matches fall back to
+  // parity, "the next 16-aligned boundary at or above x9+8" (same
+  // rounding as ReturnTrap_resume): JIT records are 8 mod 16, boundary
+  // records 0 mod 16.  A flat x9+16 left the JIT case 8-misaligned and
+  // tripped Apple's hardware sp-alignment check at the target's first
+  // sp-relative store (e.g. ReturnTrap+0x10).
+  char* new_sp = isPatchedReturnAddress(match)
+      ?  (char*)x9 + oopSize
+      :  (char*)(((uintptr_t)x9 + 16) & ~(uintptr_t)15);
+  ContinueNLR_jump(NLRResultFromC, NLRHomeFromC, NLRHomeIDFromC,
+                   target, (frame*)x9[0], new_sp);
+  ShouldNotReachHere();
 }
 
 extern "C" oop volatile ContinueNLRFromC(char* addr, bool isInterpreted, bool isSelfIC) {
