@@ -2651,7 +2651,6 @@ IfAbsent: argument if none.\x7fModuleInfo: Module: worldMorph InitialContents: F
             (
               case
                 if: [host osName == 'macOSX']  Then: [quartzGlobals]
-                If: [dispName = quartzGlobals windowCanvas displayName] Then: [quartzGlobals]
                 Else: [x11Globals ]
             ) windowCanvas).
         } | ) 
