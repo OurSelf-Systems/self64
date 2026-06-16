@@ -55,7 +55,11 @@ class i386_sp {
   i386_sp*   link()    { return *link_addr(); }
   void      set_link(i386_sp* x) { *link_addr() = x; }
   i386_sp**  link_addr() { return &((i386_sp**) this)[saved_bp_offset]; }
-  void      adjust_link(int32 delta) { *(char**)link_addr() += delta; }
+  // delta is a pointer difference (copied-frame addr - original-frame addr);
+  // on a 64-bit target the copy (resource area) and the stack can be many GB
+  // apart, so it MUST be pointer-width.  int32 truncated the high bits and
+  // corrupted the saved-fp link of copied frames -- rca 6/26
+  void      adjust_link(fint delta) { *(char**)link_addr() += delta; }
   
   i386_bp*  my_bp() { return (i386_bp*)link(); }
   

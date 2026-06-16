@@ -146,7 +146,11 @@ void frame::adjust_frame_links_of_copied_frames( frame* last_frame_to_copy,
   
   i386_sp* osp =                     my_sp(); // this frame
   i386_sp* nsp = first_copied_frame->my_sp(); // copied frame's this
-  int32 diff = (char*)nsp - (char*)osp;
+  // 64-bit: nsp (resource-area copy) and osp (process stack) can be many GB
+  // apart; the difference must be pointer-width.  int32 truncated the high
+  // bits, corrupting the copied frames' saved-fp links and faulting the next
+  // frame walk (e.g. reading a vframe's receiver during conversion). -- rca 6/26
+  fint diff = (char*)nsp - (char*)osp;
   
   while ( osp  <  last_frame_to_copy->my_sp() ) {
 
