@@ -361,8 +361,22 @@ void frame::save_outgoing_arguments() {
   { fint nargs = outgoing_arg_count(NULL);
     if (nargs < 0) { set_patched_frame_saved_outgoing_args(0); return; }
     objVectorOop v = Memory->objVectorObj->cloneSize(nargs + 1 /* rcvr */);
-    for (fint i = 0;  i < nargs + 1;  ++i)
-      v->obj_at_put(i, *((oop*)this + ircvr_offset + i));
+    for (fint i = 0;  i < nargs + 1;  ++i) {
+      oop e = *((oop*)this + ircvr_offset + i);
+      // A patched frame's outgoing-args area is not always a valid oop
+      // snapshot: for some frames these slots hold a non-object value (a
+      // collected/never-live arg, or a reused slot).  The i386 path asserts
+      // arg->verify_oop(); here we must not store a bogus new-space pointer,
+      // or the scavenger crashes when this GC-visited vector is later scanned
+      // (it would forward a pointer whose target has no valid map).  Substitute
+      // nil for anything that isn't a real oop.  -- rca 6/26
+      if (e->is_mem() && Memory->should_scavenge(memOop(e))
+          && !memOop(e)->is_forwarded()
+          && (memOop(e)->addr()->_map == NULL
+              || !oop(memOop(e)->addr()->_mark)->is_mark()))
+        e = Memory->nilObj;
+      v->obj_at_put(i, e);
+    }
     set_patched_frame_saved_outgoing_args(v);
     return;
   }
