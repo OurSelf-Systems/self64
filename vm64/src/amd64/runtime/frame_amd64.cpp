@@ -95,7 +95,12 @@ void**  frame::location_addr(Location r, RegisterLocator* rl) {
 # if defined(__i386__) || defined(__x86_64__)
   return (base == esp ? (void**)my_sp() : (void**)my_bp())  +  d / oopSize;
 # else
-  // On non-x86, base is always bp-relative (no esp register)
+  // SP-based locations (outgoing args of a pending send) are relative to the
+  // frame's running sp.  Under this port's frame-object model the object
+  // pointer is the callee record at running_sp - 8, so running sp = this + 8.
+  // bp-based locations resolve through my_bp() = the activation's own fp.
+  if (base == SP)
+    return (void**)((char*)this + oopSize)  +  d / oopSize;
   return (void**)my_bp()  +  d / oopSize;
 # endif
 }
@@ -141,7 +146,11 @@ void frame::adjust_frame_links_of_copied_frames( frame* last_frame_to_copy,
   
   i386_sp* osp =                     my_sp(); // this frame
   i386_sp* nsp = first_copied_frame->my_sp(); // copied frame's this
-  int32 diff = (char*)nsp - (char*)osp;
+  // 64-bit: nsp (resource-area copy) and osp (process stack) can be many GB
+  // apart; the difference must be pointer-width.  int32 truncated the high
+  // bits, corrupting the copied frames' saved-fp links and faulting the next
+  // frame walk (e.g. reading a vframe's receiver during conversion). -- rca 6/26
+  fint diff = (char*)nsp - (char*)osp;
   
   while ( osp  <  last_frame_to_copy->my_sp() ) {
 
@@ -194,24 +203,44 @@ void frame::fix_frame(char* pc, char* sp) {
    -- dmu 4/25/06
 */   
 
+# if TARGET_IS_64BIT
+// A record participates in the compiled-frame model iff its stored return
+// PC is Self code: in the zone, or the EnterSelf return point (the scope
+// stored by blocks of a method called straight from EnterSelf).
+// Interpreter and C records are their own home frame and block scope.
+static bool is_compiled_record(frame* f) {
+  char* r = ((char**)f)[saved_pc_offset];
+  return Memory->code->contains(r)
+      || r == first_inst_addr((void*)firstSelfFrame_returnPC)
+      // A patched compiled frame (return-trap / profiler / single-step) holds a
+      // trap-stub address here, not its real PC; it is still a compiled frame
+      // (its stashed real PC is in the zone).  Without this, a frame whose
+      // return was patched gets misclassified as an interpreter/C record, so
+      // home_frame_of_block_scope returns the frame itself instead of its
+      // sendee -- the home of a block whose scope marker is that frame then
+      // resolves to the wrong method (CodeScopeDesc::slot fatal during debug
+      // block compilation).  Cannot call is_patched() here (it routes through
+      // get_interpreter -> block_scope_of_home_frame -> is_compiled_record,
+      // recursively), so test the trap addresses directly.  -- rca, 6/26
+      || isPatchedReturnAddress(r);
+}
+# endif
+
 frame* frame::block_scope_of_home_frame() {
 # if TARGET_IS_64BIT
-  // On interpreter-only builds, the interpret() frame IS both
-  // the home frame and the block scope — there are no separate JIT Self frames.
-  return this;
-# else
-   return sender();
+  if (!is_compiled_record(this)) return this;
 # endif
+   return sender();
 }
 
 frame* frame::home_frame_of_block_scope(frame* currentFrameHint) {
 # if TARGET_IS_64BIT
-  // On interpreter-only builds, the block scope IS the home frame.
-  Unused(currentFrameHint);
-  return this;
-# else
-  return sendee(currentFrameHint);
+  if (!is_compiled_record(this)) {  // see above
+    Unused(currentFrameHint);
+    return this;
+  }
 # endif
+  return sendee(currentFrameHint);
 }
 
 
@@ -229,10 +258,22 @@ char* frame::c_return_pc() {
 frame* frame::make_full_frame(char* pc)            {  
   return this; 
 }
-frame* frame::make_full_frame_after_trap(char* pc) {  
+frame* frame::make_full_frame_after_trap(char* pc) {
+# if TARGET_ARCH == AARCH64_ARCH
+  // Self frame objects are 8 mod 16 on aarch64 (callee record at
+  // running_sp - 8), not 0 mod 16 as on amd64.  Rounding to the amd64
+  // parity fabricated a dummy frame handle 8 below the real one after a
+  // preemption trap; vframeOops created from that handle then disagreed
+  // with sender-chain walks by 8 and the watermark patch walk ran off the
+  // top of the stack (stepping through compiled blocks). -- rca
+  return (frame*)
+       (smi(this)
+    -   ((smi(this) - BytesPerWord) & (frame_word_alignment*oopSize - 1)));
+# else
   return (frame*)
        (smi(this)
     -   ((smi(this) - frame_alignment_offset*oopSize) & (frame_word_alignment*oopSize - 1)));
+# endif
 }
 frame* frame::make_full_frame_on_user_stack()      {  return this; }
 
@@ -293,9 +334,28 @@ Location frame::location_of_interpreter_of_block_scope(void* entry_point) {
 
 
 frame* frame::get_patched_self_frame(char* sp_of_patched_frame) {
-  if (Interpret)
-    warning("next line may be wrong for interpreter, was currentFrame()->sender()");
+  // Validated against the interpreted return-trap path (tests runAllTests):
+  // sp_of_patched_frame is the patched frame itself.  Keep a WizardMode-only
+  // note rather than warning on every trap.
+  if (Interpret && WizardMode)
+    warning("get_patched_self_frame: using sp_of_patched_frame as the frame");
+# if TARGET_ARCH == AARCH64_ARCH
+  // PrimCallReturnTrap's entry sp is running_sp+8 for a true prim return
+  // but running_sp for a method-shaped epilogue, so the stub's sp-16 guess
+  // can be one word low.  No parity rule resolves it (JIT records are
+  // 8 mod 16, EnterSelf boundary records 0 mod 16); disambiguate by
+  // content: only the true record's saved-pc slot still holds the patched
+  // trap address. -- rca
+  { frame* c = (frame*)sp_of_patched_frame;
+    if (!c->is_patched()) {
+      frame* c2 = (frame*)(sp_of_patched_frame + oopSize);
+      if (c2->is_patched()) return c2;
+    }
+    return c;
+  }
+# else
   return (frame*)sp_of_patched_frame;
+# endif
 }
 
 

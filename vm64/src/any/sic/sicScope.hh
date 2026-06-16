@@ -270,10 +270,18 @@
     fint bci()                  { return _bci; }
     bool isLite()               { return nsends == 0; }
     RegisterString mask(fint bci) {
+      if (allocs == NULL) {
+        // nsends == 0 (computeMasks nulls allocs): every send here is
+        // non-exposing -- e.g. a non-scavenging prim inlined as a typecase
+        // arm, which still emits a descriptor mask word at gen time.
+        // Nothing is live in GCable registers, so the mask is empty.
+        return 0;
+      }
       if (bci == PrologueBCI) return allocs[0];
       assert(0 <= bci && bci < ncodes, "bci invalid");
-      assert(nsends == 0  ||  allocs[bci]  ||  TARGET_ARCH == I386_ARCH, "should be nonempty");
-      assert(allocs, "cannot be NULL");
+      // empty masks are normal on register-poor / stack-passing ports
+      assert(nsends == 0  ||  allocs[bci]  ||  TARGET_ARCH == I386_ARCH
+                                           ||  TARGET_ARCH == AARCH64_ARCH, "should be nonempty");
       return allocs[bci];
     }
     void computeMasks(RegisterString base, fint stackLocs, fint nonRegisterArgs);

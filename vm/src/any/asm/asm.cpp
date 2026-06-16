@@ -41,10 +41,13 @@ BaseAssembler::BaseAssembler(int32 instsSize, int32 locsSize,
 }
 
 
-void BaseAssembler::printX(int32 d, OperandType t, bool imm) {
+// Operands are word-sized: an int32 here truncated oops and code addresses
+// on 64-bit targets, and the OopOperand case then dereferenced the
+// truncated half (SEGV under PrintSICCompiledCode). -- rca
+void BaseAssembler::printX(smi d, OperandType t, bool imm) {
   if (imm) {
-    if (d < 0)  asm_lprintf("%d",  d); 
-    else        asm_lprintf("%#x", d);
+    if (d < 0)  asm_lprintf("%ld",  d);
+    else        asm_lprintf("%#lx", d);
     return;
   }
   if (t == RegisterOperand)
@@ -53,7 +56,7 @@ void BaseAssembler::printX(int32 d, OperandType t, bool imm) {
 }
 
 
-void BaseAssembler::print_disp(int32 d, OperandType t) {
+void BaseAssembler::print_disp(smi d, OperandType t) {
   switch (t) {
    case RegisterOperand:
     lprintf("");

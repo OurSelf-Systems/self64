@@ -5,4 +5,5 @@
 
  public:
   int* fp_addr();
+  frame* fp();   // full-width read of the interrupted frame pointer
 # endif // defined(__aarch64__)

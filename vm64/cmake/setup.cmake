@@ -19,6 +19,14 @@ if(NOT TARGET_ARCH STREQUAL "X86_64_ARCH" AND NOT TARGET_ARCH STREQUAL "AARCH64_
   )
 endif()
 
+# 64-bit JIT: the SIC is the only compiler; the interpreter is tier 0.
+# (No FAST_COMPILER/NIC tier on 64-bit — see docs and the new-sic branch plan.)
+if(TARGET_ARCH STREQUAL "AARCH64_ARCH" OR TARGET_ARCH STREQUAL "X86_64_ARCH")
+  list(APPEND _defines
+    SIC_COMPILER
+  )
+endif()
+
 list(APPEND _defines
   NATIVE_ARCH=${platform_processor}
   ${DYNAMIC}

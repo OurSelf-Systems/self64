@@ -12,6 +12,7 @@
 extern "C" void moncontrol(bool);
 # endif
 
+class JITWriteScope;
 class OS {
  private:
   static const int seconds_per_day = 86400;
@@ -49,6 +50,9 @@ class OS {
   static char*  allocate_idealized_page_aligned(smi &size, const char* name,
                                                 caddr_t desiredAddr= 0,
                                                 bool mustAllocate= true);
+  // MAP_JIT region at a kernel-chosen address (Apple Silicon W^X);
+  // see set_jit_writable below
+  static char*  allocate_jit_area(smi &size, const char* name);
   static void   allocate_failed(const char* what);
 
                                       
@@ -157,6 +161,16 @@ class OS {
   // Set OS permissions on memory:
   static int make_memory_executable(void* addr, size_t len);
 
+  // Apple Silicon W^X: with MAP_JIT pages, a per-thread toggle selects
+  // write vs execute permission.  Every site that writes into the code
+  // zone brackets itself with a JITWriteScope (below); entering compiled
+  // Self code sets the executable state.  No-ops elsewhere.
+# if defined(__APPLE__) && defined(__aarch64__)
+  static void set_jit_writable(bool writable);
+# else
+  static void set_jit_writable(bool) {}
+# endif
+
   static unsigned int real_mem_size;
   static void    profile(bool flag) {
 #                  if TARGET_IS_PROFILED
@@ -202,3 +216,11 @@ static inline char* ExpandDir_prim(const char* in, void* FH) {
 
 oop get_swap_space_prim(oop rcvrIgnored, void *FH);
 
+
+
+// Brackets a write into the JIT code zone (see OS::set_jit_writable).
+class JITWriteScope {
+ public:
+  JITWriteScope()  { OS::set_jit_writable(true);  }
+  ~JITWriteScope() { OS::set_jit_writable(false); }
+};

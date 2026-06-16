@@ -162,6 +162,7 @@ void interpreter::attach_pics() {
   InterpreterPICData* pd = interpreter_pic_table->lookup_or_create(
       method_object, mi.length_codes, mi.codes);
   if (pd) {
+    pd->invocation_count++;
     _pics       = pd->pics;
     _num_pics   = pd->num_pics;
     _pc_to_pic  = pd->pc_to_pic;
@@ -222,7 +223,15 @@ oop interpret( oop rcv,
   // On x86_64 without JIT, frame walking can't detect interpreted
   // Self frames, so we maintain a per-process linked list to avoid
   // corruption when process switches interleave push/pop operations.
-  interp._my_frame = currentFrame();
+  // Our own frame record, not currentFrame() -- that returns the CALLER's
+  // fp, so an interpreter activation's frame was only "registered" while one
+  // of its interpreted callees happened to be live: frame recognition
+  // (find_interpreter_for_frame via is_interpreted_self_frame) flip-flopped
+  // between walks, last_self_frame resolved above the true deepest frame,
+  // and the per-prim vframeOop cleanup killed live activations one by one --
+  // every activation query on this process then reported dead (selector '',
+  // the debugger lost in the shell eval machinery).  -- rca 6/26
+  interp._my_frame = (frame*)__builtin_frame_address(0);
 # if TARGET_IS_64BIT
   interp._prev_interp = currentProcess->active_interp_list;
   currentProcess->active_interp_list = &interp;
@@ -542,19 +551,25 @@ void interpreter::block_scope_and_desc_of_home( frame*& block_scope_frame,
   interpreter* interp= this;
   // try fast case first
   frame* f;
+  oop block;   // the block whose scope() is f; stays valid after the loop even
+               // when interp becomes NULL (f is then a compiled home frame)
   do {
-    assert_block(interp->receiver, "must be a block"); 
-    f = blockOop(interp->receiver)->scope();
+    block = interp->receiver;
+    assert_block(block, "must be a block");
+    f = blockOop(block)->scope();
     interp= f->get_interpreter_of_block_scope();
   } while ( interp  &&  interp->mi.map()->kind() == BlockMethodType );
-  
+
   if (interp) {
       block_scope_frame= f;
       block_desc = BLOCK_PROTO_DESC->value();
   }
   else {
     ResourceMark rm; // for vf
-    abstract_vframe* vf = blockOop(interp->receiver)->parentVFrame(currentFrame())->home();
+    // The block's home method is COMPILED, so f has no interpreter and interp
+    // is NULL here.  Use the saved block -- interp->receiver was a NULL deref
+    // (crashed an interpreted NLR out of a block whose home is compiled). -- rca 6/26
+    abstract_vframe* vf = blockOop(block)->parentVFrame(currentFrame())->home();
     block_scope_frame = vf->fr->block_scope_of_home_frame();
     block_desc = vf->scopeID();
   }
@@ -643,8 +658,10 @@ oop interpreter::try_pic(LookupType type, oop delOrNameToSend, int32 resSP) {
       mapOop rMap = rcvToSend->map()->enclosing_mapOop();
       for (int i = 0; i < pic.count; i++) {
         oop picRes = try_pic_entry(pic, i, rMap, delOrNameToSend, arg_count, resSP);
-        if (picRes != badOop)
+        if (picRes != badOop) {
+          pic.hitCount[i]++;
           return picRes;
+        }
       }
     }
   }
@@ -877,6 +894,7 @@ oop interpreter::lookup_and_send( LookupType type,
       if (pic_idx >= 0 && rt >= 0) {
         InterpreterPIC& pic = _pics[pic_idx];
         int slot = (pic.count < PIC_SIZE) ? pic.count++ : pic.next;
+        pic.hitCount[slot] = 0; // fresh entry (slot may be round-robin reused)
         pic.entries[slot].cachedMap = L.receiverMapOop();
         pic.resultType[slot] = (int8_t)rt;
         switch (rt) {
@@ -1055,7 +1073,21 @@ void interpreter::transfer_back_to_twains_process_if_stepping_or_stopping_pre() 
       preemptCause = currentProcess->isSingleStepping()
       ? cSingleStepped : cFinishedActivation;
     // caller will increment pc, scheduler expects an incremented pc
+    //
+    // Arm the NLR jmp_buf around the transfer: if the process is killed
+    // while suspended here (e.g. abort of a single-stepped process),
+    // unwind_stack_to_kill_process longjmps to the active interpreter's
+    // jmp_buf, which would otherwise be stale -- the other suspension
+    // points (interruptCheck, prim calls, lookups) all arm it. -- rca
+#   if TARGET_IS_64BIT
+    if (setjmp(_nlr_jmpbuf) == 0)
+#   endif
     twainsProcess->transfer();
+    if (NLRSupport::have_NLR_through_C()) {
+      continue_NLR();
+      stack[sp++] = NLRSupport::NLR_result_from_C();
+      pc = return_pc();
+    }
   }
 }
 

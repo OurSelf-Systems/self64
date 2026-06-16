@@ -2515,6 +2515,7 @@ send.cpp                      space_inline.hh
 send.hh                       expr.hh
 
 sendDesc.cpp                  abstract_interpreter_inline.hh
+sendDesc.cpp                  nlrSupport.hh
 sendDesc.cpp                  blist.hh
 sendDesc.cpp                  cacheStub_inline.hh
 sendDesc.cpp                  complexLookup.hh
@@ -2707,6 +2708,14 @@ sicSplit.cpp                  sicSplit.hh
 sicSplit.hh                   top.hh
 
 sic_${platform_processor}.cpp                abstract_interpreter_inline.hh
+sic_${platform_processor}.cpp                complexLookup.hh
+sic_${platform_processor}.cpp                genHelper.hh
+sic_${platform_processor}.cpp                nmethod.hh
+sic_${platform_processor}.cpp                rSet.hh
+sic_${platform_processor}.cpp                runtime.hh
+sic_${platform_processor}.cpp                scopeDescRecorder.hh
+sic_${platform_processor}.cpp                slotRef.hh
+sic_${platform_processor}.cpp                target.hh
 sic_${platform_processor}.cpp                regAlloc.hh
 sic_${platform_processor}.cpp                sic.hh
 sic_${platform_processor}.cpp                sicScope.hh

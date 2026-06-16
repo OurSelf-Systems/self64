@@ -419,8 +419,14 @@
   
   sic_code_generator::sic_code_generator(SCodeScope* ss) 
    : abstract_interpreter(ss->method()) {
+    // The expr-stack capture list must match the flavor the readers use:
+    // CodeScopeDesc::exprStackElem walks expression_stack_bcis(nm->isDebug())
+    // to map a bci to its NameDesc ordinal.  Hardcoding false shifted every
+    // desc by the number of extra debug-list entries in debug methods, so
+    // frame conversion paired each expression-stack value with its
+    // neighbor's slot.  -- rca 6/26
     IntList* exprStackBCIList= 
-      mi.map()->expression_stack_bcis( false);
+      mi.map()->expression_stack_bcis( theSIC->generateDebugCode);
                                     
     exprStackLength= exprStackBCIList->length();
     exprStackBCIs.init( exprStackBCIList, -1);
@@ -496,9 +502,13 @@
   void sic_code_generator::write_expr_stack_info() {
     if (pc == exprStackBCIs.current) {
       // remember expr stack elem for debugging info
-      sscope->exprStackElems->append(sscope->endsDead
-                                     ? NULL
-                                     : sscope->exprStack->top());
+      SExpr* top = sscope->endsDead ? NULL : sscope->exprStack->top();
+      if (top && theSIC->generateDebugCode) {
+        // EXPERIMENT (task #20): keep expr-stack entries describable in
+        // debug methods.  -- rca 6/26
+        top->preg()->debug = true;
+      }
+      sscope->exprStackElems->append(top);
       exprStackBCIs.advance();
     }
     if (sscope->endsDead) {

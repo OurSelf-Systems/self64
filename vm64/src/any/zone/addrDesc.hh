@@ -24,17 +24,21 @@
 
 class addrDesc {
  public:
+  // the flag bits live in the 32-bit desc word below, NOT a machine word:
+  // BitsPerWord is 64 on 64-bit targets, which would push every flag (and
+  // the offset mask!) outside the stored field
   enum {
-    isSendDescMask            = nthBit(BitsPerWord - 1),
-    isDIDescMask              = nthBit(BitsPerWord - 2),
-    isPrimitiveMask           = nthBit(BitsPerWord - 4),
-    isEmbeddedMask            = nthBit(BitsPerWord - 5),
-    architectureSpecificMask  = nthBit(BitsPerWord - 6),
+    BitsPerDesc               = 32,
+    isSendDescMask            = nthBit(BitsPerDesc - 1),
+    isDIDescMask              = nthBit(BitsPerDesc - 2),
+    isPrimitiveMask           = nthBit(BitsPerDesc - 4),
+    isEmbeddedMask            = nthBit(BitsPerDesc - 5),
+    architectureSpecificMask  = nthBit(BitsPerDesc - 6),
     # ifdef SIC_COMPILER
-      isUncommonTrapMask      = nthBit(BitsPerWord - 7),
+      isUncommonTrapMask      = nthBit(BitsPerDesc - 7),
     # endif
-    isRelativeMask            = nthBit(BitsPerWord - 8),
-    offsetMask                = nthMask(BitsPerWord - 9)
+    isRelativeMask            = nthBit(BitsPerDesc - 8),
+    offsetMask                = nthMask(BitsPerDesc - 9)
   };
  unknown:
   int32 desc;

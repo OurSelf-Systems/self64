@@ -40,6 +40,7 @@
     VScopeBList* vscopes;               // recompilee VScopes (or NULL)
     int32 countID;                      // recompile counter ID
     bool needRegWindowFlushes;          // compile reg-window flushing blocks
+    bool generateDebugCode;             // build a debug (non-inlined) method
     
     fint ncodes;                        // total # of byte codes compiled
                                         // (for statistics)
@@ -87,9 +88,12 @@
     void computeMarkers();
     void buildBBs();
 
-    void   constantCode() { fatal("should not use sic for access methods"); }
-    void       dataCode() { fatal("should not use sic for access methods"); }
-    void assignmentCode() { fatal("should not use sic for access methods"); }
+    // access kinds are handled by compileAccessMethod() in SIC-only
+    // configurations (compile() branches before the method pipeline);
+    // on two-compiler configurations chooseCompiler routes them to the NIC
+    void   constantCode() { ; }
+    void       dataCode() { ; }
+    void assignmentCode() { ; }
     void     methodCode() { ; } // sic does this at init time
 
     

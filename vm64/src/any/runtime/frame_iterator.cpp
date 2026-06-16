@@ -32,8 +32,12 @@ void FrameIterator::do_interpreted() {
 # endif
 
 void FrameIterator::do_patched_frame_saved_outgoing_args() {
+# if TARGET_ARCH != AARCH64_ARCH
+  // aarch64 saves the outgoing args at patch time even though the flag is
+  // false (no asm glue does it); the slot must stay GC-visible
   if ( !SaveOutgoingArgumentsOfPatchedFrames )
     return;
+# endif
   if ( f->is_patched() ) {
     oop* p = (oop*)f->patched_frame_saved_outgoing_args_addr();
     oop_closure->do_oop(p);

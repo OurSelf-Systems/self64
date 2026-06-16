@@ -627,8 +627,8 @@
         return picPredictUnlikely(info, (RUntakenScope*)l->first());
       } else if (info->rcvr->containsUnknown()) {
         if (PrintInlining) {
-          lprintf("%*s*PIC-type-predicting %s (%ld maps)\n", (void*)depth, "",
-                  info->sel->copy_null_terminated(), (void*)l->length());
+          lprintf("%*s*PIC-type-predicting %s (%ld maps)\n", (int)depth, "",
+                  info->sel->copy_null_terminated(), (long)l->length());
         }
         for (fint i = 0; i < l->length(); i++) {
           RScope* r = l->nth(i);

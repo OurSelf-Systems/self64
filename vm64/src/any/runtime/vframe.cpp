@@ -74,6 +74,19 @@ bool compiled_vframe::is_uncommonTrap() {
 // first because of trouble with inlined functions
 void compiled_vframe::set_contents(NameDesc* n, oop p) {
   if (n->isLocation()) {
+#   if TARGET_ARCH == AARCH64_ARCH
+    // A register-located NameDesc (e.g. the expression-stack top at a
+    // send-return: the in-flight result lives in ResultReg/x0) cannot be
+    // stored through location_addr -- there is no stack slot, and the
+    // bp-relative fallback computes own_fp + 0, silently overwriting the
+    // frame's saved-fp link (caught corrupting the frame chain during
+    // progTest10's conversion).  The store is also unnecessary: the resume
+    // (ContinueAfterReturnTrap / ContinueNLRAfterReturnTrap / restart-send)
+    // re-delivers that value in the register.  -- rca 6/26
+    { Location b; int32 d; OperandType t;
+      reg_disp_type_of_loc(&b, &d, &t, n->location());
+      if (t == RegisterOperand) return; }
+#   endif
     oop* addr = register_contents_addr(n->location());
     *addr = p;
     oop* addr2 = register_contents_secondary_addr(n->location());
@@ -164,6 +177,13 @@ oop compiled_vframe::get_contents(NameDesc* n,
   assert(verify_NameDesc_for_get_contents(n), "just checking");                                
   if (n->isLocation()) {
     Location loc = n->location();
+# if TARGET_ARCH == AARCH64_ARCH
+    // register-located debug values are delivered by the resume, not
+    // resident in the frame; there is no address to read from outside
+    // (cf. set_contents).  Show nil rather than faulting in stack prints
+    // and activation queries.
+    if (isRegister(loc)) return Memory->nilObj;
+# endif
     oop* addr = register_contents_addr(loc);
 #   if GENERATE_DEBUGGING_AIDS
     if (CheckAssertions) {
@@ -218,6 +238,12 @@ bool compiled_vframe::verify_NameDesc_for_get_contents(NameDesc* n) {
                       // for last copiedFrame (sender sp may be < own sp)
   ||   isDummy() 
   ||   !n->hasLocation() 
+# if TARGET_ARCH == AARCH64_ARCH
+  // register-located debug values are delivered by the resume, not resident
+  // in the frame (cf. compiled_vframe::set_contents); there is no frame
+  // address to liveness-check
+  ||   isRegister(n->location())
+# endif
   ||   !fr->is_compiled_self_frame()
   ||   fr->send_desc() == NULL 
   ||   fr->send_desc()->isPrimCall())
@@ -340,16 +366,29 @@ void compiled_vframe::copyOutgoingArgs( compiled_vframe* vf,
  for ( fint argNo = startingArgNo;  e;   e= e->next(),  ++argNo) {
     int32 bci2 = e->data();
     NameDesc* nd = desc->exprStackElem(bci2);
+# if TARGET_ARCH == AARCH64_ARCH
+    // A constant expr-stack element has no frame location in the new
+    // (debug) nmethod; its send-setup code re-materializes the value, so
+    // there is nothing to copy into.  Skip it -- but keep the _Perform
+    // argNo bookkeeping below intact.
+    bool nothing_to_copy_into = !nd->hasLocation();
+# else
     assert(nd->hasLocation(), "cannot handle constants");
+    const bool nothing_to_copy_into = false;
+# endif
     NameDesc* from_nd = vf->desc->exprStackElem(bci2);
-    
-    if  (  argNo == performSelArgNo 
+
+    if  (  argNo == performSelArgNo
     ||     argNo == performDelArgNo) {
-      copyValue(nd, vf, from_nd, oldBlkHome, blkValues);
+      if (!nothing_to_copy_into)
+        copyValue(nd, vf, from_nd, oldBlkHome, blkValues);
       // do not advance argNo at the position of the
       //   selector or delegatee to a _Perform
       //   because will be copied to a special register
       --argNo;  --performSelArgNo;  --performDelArgNo;
+    }
+    else if (nothing_to_copy_into) {
+      // skipped; the new code re-materializes the constant
     }
     else if ( !from_nd->isIllegal()
          &&   ( isUncommon  ||  argNo >= NumIArgRegisters ) ) {
@@ -441,8 +480,13 @@ oop compiled_vframe::copyValueFrom( compiled_vframe* toVF,
 
 void compiled_vframe::copyValueTo( NameDesc* n,  oop p ) {
   set_contents(n, p);
+  // Only location-bearing NameDescs answer location(); a Value/BlockValue/
+  // Illegal desc (which set_contents handles without a location) would fatal
+  // in location()'s SubclassResponsibility.  The arg is evaluated even though
+  // LOG_EVENT2 may discard it, so guard the location() call.  SIC debug
+  // methods routinely carry non-location descs here, unlike the NIC.
   LOG_EVENT2("compiled_vframe::copyValue %s %#lx",
-             locationName(n->location()), p);
+             n->hasLocation() ? locationName(n->location()) : "(non-location)", p);
   assert(get_contents(n) == p, "contents not set correctly");
 }
 

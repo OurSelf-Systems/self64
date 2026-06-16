@@ -25,6 +25,13 @@ void InterruptedContext::fatal_menu() {
   // block all interrupts (e.g. timers)
   continuePC = NULL;
   SignalBlocker* sb = new SignalBlocker(SignalBlocker::block_signals_self_uses);
+
+  // We may be inside a SEGV/BUS handler with that signal masked; a second
+  // fault of the same type during the risky work below (stack printing on a
+  // corrupt stack) would then retry-spin forever instead of re-entering the
+  // handler.  Unblock the fault signals so a nested crash comes back here
+  // and the abortLevel escalation can terminate. -- rca
+  SignalInterface::unblock_synchronous_fault_signals();
   
   OS::handle_suspend_and_resume(true);            // set stdin to normal mode
 
@@ -225,10 +232,17 @@ char* InterruptedContext::pc() { return *pc_addr(); }
 void  InterruptedContext::set_pc(void *pc) { *pc_addr() = (char*)pc; }
 
 
-frame* InterruptedContext::sp() { 
-  return !is_set() ? NULL : (frame*) *sp_addr(); } 
-  
-void InterruptedContext::set_sp(void* sp) { *sp_addr() = (smi) sp; }
+frame* InterruptedContext::sp() {
+  // sp_addr() points at a pointer-width register slot; read the whole thing
+  // (a plain *(int*) would truncate a 64-bit stack pointer)
+  return !is_set() ? NULL : (frame*) *(intptr_t*)sp_addr(); }
+
+void InterruptedContext::set_sp(void* sp) { *(intptr_t*)sp_addr() = (intptr_t) sp; }
+
+# if defined(__aarch64__)
+frame* InterruptedContext::fp() {
+  return !is_set() ? NULL : (frame*) *(intptr_t*)fp_addr(); }
+# endif
 
 
 int InterruptedContext::code_at_pc() {

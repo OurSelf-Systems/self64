@@ -3353,7 +3353,10 @@ not included.
         
          = m = ( |
             | 
-            ifDead: [^ equalsDeadActivationMirror: m].
+            "Double-dispatch on m: the self-send found deadActivation's
+             unconditional true once ifDead: flipped our parent, making a
+             freshly dead mirror equal to ANY object for one send. -- rca"
+            ifDead: [^ m equalsDeadActivationMirror: self].
             resend.= m).
         } | ) 
 

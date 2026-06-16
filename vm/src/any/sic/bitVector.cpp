@@ -93,9 +93,9 @@
   void BitVector::doForAllOnes(intDoFn f) {
     for (fint i = indexFromNumber(length-1); i >= 0; i--) {
       int32 b = bits[i];
-      for (fint j = 0; j < BitsPerWord; j++) {
+      for (fint j = 0; j < 32; j++) {     // int32 words (see bitVector.hh)
         if (isSet(b, j)) {
-          f(i * BitsPerWord + j);
+          f(i * 32 + j);
           clearNth(b, j);
           if (!b) break;
         }

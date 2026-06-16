@@ -90,6 +90,15 @@ int    prog_argc;
 static void processArguments(int argc, const char *argv[]) {
 
 # if defined(FAST_COMPILER) || defined(SIC_COMPILER)
+#   if TARGET_IS_64BIT
+      // 64-bit mixed-mode design: the interpreter is tier 0 and the SIC is
+      // invoked for hot methods by counter triggers, never by default
+      // routing.
+      Interpret = true;
+      // count/aging stub code patterns are not implemented on aarch64 yet
+      // (see countPattern_aarch64.cpp), so nmethods must bind directly
+      UseAgingStubs = false;
+#   endif
 # else
   Interpret = true; // no compiler!
 # endif

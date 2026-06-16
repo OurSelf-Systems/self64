@@ -136,7 +136,8 @@ CacheStub::CacheStub() {
 
   assert(realLocsLen(arity(), info.has_smi, info.has_float) == locsLen(),
          "wrong number of locs");
-  copy_oops((oop*)a->locsStart, (oop*)locs(), locsLen() / oopSize);
+  // addrDescs are 4-byte; an oop-unit copy truncates odd counts on 64-bit
+  copy_bytes((char*)a->locsStart, (char*)locs(), locsLen());
   for (addrDesc* p = locs(), *end = locsEnd(); p < end; p++) {
     if (p->isOop()  &&  oop(p->referent(this))->is_new()) remember();
 
@@ -1066,7 +1067,7 @@ void* Stubs::allocate(int32 size) {
   int32 nfree = stubZone->freeBytes();
   if (p == NULL ||
       nfree < MinFree || nfree * 100 / stubZone->capacity() < MinFreePerc) {
-    LOG_EVENT1("stubs low on space: %ld bytes left", nfree);
+    LOG_EVENT1("stubs low on space: %ld bytes left", (long)nfree);
     currentProcess->setupPreemption();
     needsWork = true;
   }
@@ -1117,7 +1118,7 @@ void Stubs::cleanup() {
   }
   // grow the zone
   int32 newSize = stubZone->capacity() * 2;
-  LOG_EVENT1("growing PIC zone to %ld bytes", newSize);
+  LOG_EVENT1("growing PIC zone to %ld bytes", (long)newSize);
   if (WizardMode) {
     warning1("PIC code area overflowed - growing it to %ld bytes.", newSize);
     printIndent(); lprintf("Current zone: "); stubZone->print();
@@ -1204,8 +1205,8 @@ void Stubs::space_print() {
     f1 = 100.0 * cnt/ntotal; \
     f2 = 100.0 * size / total; \
     lprintf("%s: %d (%4.1f) %d bytes (%4.1f)\n", name, \
-            (void*)cnt, *(void**)&f1, \
-            (void*)size, *(void**)&f2); \
+            (int)cnt, (double)f1, \
+            (int)size, (double)f2); \
   }
   PRINT("PICs", npic, pic);
   PRINT("counters", ncount, count);

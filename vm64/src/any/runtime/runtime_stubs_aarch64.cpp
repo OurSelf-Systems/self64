@@ -215,6 +215,11 @@ void SetSPAndCall(char** callerSaveAddr, char** calleeSaveAddr,
     "b.ne  3f\n\t"
 
     // --- Resume existing process ---
+    "tst   w4, #0xff\n\t"                // pcWasSet?
+    "b.ne  2f\n\t"
+
+    // Normal resume: suspendedSP is a genuine save record made by the
+    // prologue above; pop it and jump to the saved PC.
     "mov   sp, x9\n\t"                   // switch to callee's saved stack
     "add   sp, sp, #16\n\t"              // skip footer (fp copy + mock ret)
     "ldp   x29, x30, [sp], #16\n\t"      // restore fp and lr
@@ -224,15 +229,20 @@ void SetSPAndCall(char** callerSaveAddr, char** calleeSaveAddr,
     "ldp   x21, x22, [sp], #16\n\t"
     "ldp   x19, x20, [sp], #16\n\t"
     // sp now points to where we were before prologue
+    "br    x10\n\t"                       // jump to saved PC
 
-    "tst   w4, #0xff\n\t"                // pcWasSet?
-    "b.ne  2f\n\t"
-    "br    x10\n\t"                       // normal: jump to saved PC
-
-    // pcWasSet: jumping to function START
-    // On ARM64 the return address is in lr, not on the stack, and sp
-    // is already 0 mod 16 (correct for function entry).
+    // pcWasSet: entering a function (terminateMe) from its START.
+    // suspendedSP may no longer be our save record: Process::kill pops
+    // sendDesc-less frames with suspendedSP = lsf->sender(), leaving an
+    // arbitrary frame*.  Both shapes have the frame link at [+0], so
+    // restore only that, enter on an aligned sp at/below the record, and
+    // leave the callee-saved registers alone (the function never returns
+    // and the process is being torn down).
     "2:\n\t"
+    "ldr   x29, [x9]\n\t"                // frame link from record/frame*
+    "and   x9, x9, #0xfffffffffffffff0\n\t" // align down; record stays intact
+    "mov   sp, x9\n\t"
+    "mov   x30, #0\n\t"                  // no return; stop backtraces here
     "br    x10\n\t"                       // jump to entry point
 
     // --- Initialize new process ---
@@ -257,6 +267,12 @@ void SetSPAndCall(char** callerSaveAddr, char** calleeSaveAddr,
 // =====================================================================
 // JIT stubs -- fatal without JIT compiler
 // =====================================================================
+
+# ifdef SIC_COMPILER
+// implemented in stubs_aarch64.cpp
+extern oop (*EnterSelf_generated)(oop recv, char* entryPoint, oop arg1);
+extern void generate_EnterSelf();
+# endif
 
 extern "C" oop SendMessage_stub(...) {
   fatal("SendMessage_stub called without JIT");
@@ -283,35 +299,201 @@ extern "C" oop MakeOld_stub(...) {
   return NULL;
 }
 
-extern "C" void ReturnTrap() {
-  fatal("ReturnTrap called without JIT");
+// ---------------------------------------------------------------------------
+// Return-trap glue (return-into-a-patched-compiled-frame).
+//
+// frame::patch_compiled_self_frame overwrites a compiled Self frame F's
+// saved return address with ReturnTrap and stashes F's real return PC in the
+// caller's reserved currentPC slot.  When F's epilogue runs
+// (restoreFrameAndReturn: `add sp,fp,8; ldr fp,[sp,-8]; ldr lr,[sp,0]; ret`)
+// it returns here with:
+//     x0 = result,  sp = F.fp + 8,  x29 = F's caller's fp.
+// So the patched frame F is sp-8.  We build a small VM frame whose sender()
+// is F (so Stack::last_self_frame finds F), then call the shared C++
+// HandleReturnTrap, which never returns -- it resumes via
+// ContinueAfterReturnTrap / ContinueNLRAfterReturnTrap.
+
+extern bool8 processSemaphore;   // process.hh
+
+extern "C" __attribute__((naked)) void ReturnTrap() {
+  __asm__ __volatile__(
+    // A non-local return through a patched frame diverts to savedPC +
+    // sendDesc::non_local_return_offset (+8): the frame's NLR epilogue does
+    // `ldr lr,[sp]; add lr,lr,#8; ret`.  So the stub mirrors a send site's
+    // shape: normal entry at +0, NLR entry at +8.
+    "b     3f\n\t"                 // +0: normal-return entry
+    "nop\n\t"                      // +4: (mask-word slot in real sendDescs)
+    // +8: NLR entry.  The NLR epilogue's geometry equals a normal return's:
+    // sp = F.fp + 8, so F = sp - 8.  NLR regs live: x0 = result,
+    // x1 = NLRHomeReg, x2 = NLRHomeIDReg.
+    // F is taken from the UNROUNDED entry sp; our own sp is then rounded
+    // down to 16 so the stores below satisfy Apple's hardware sp-alignment
+    // check even when the patched record sits at 0 mod 16 (a kill patch
+    // applied through the C-boundary alias record; ContinueNLRFromC lands
+    // sp = record + 8, which is then 8 mod 16).
+    "sub   x10, sp, #8\n\t"        // x10 = F (patched frame fp)
+    "sub   x11, sp, #32\n\t"       // frame record (see normal entry comment)
+    "and   x11, x11, #0xfffffffffffffff0\n\t"
+    "mov   sp, x11\n\t"
+    "str   x10, [sp, #0]\n\t"      // [fp+0] = F  -> our sender() is F
+    "adr   x11, 1f\n\t"
+    "str   x11, [sp, #8]\n\t"      // [fp+8] = marker (not a Self frame)
+    "mov   x29, sp\n\t"
+    "mov   x3, x1\n\t"             // arg3: nlrHome   (before x1 is clobbered)
+    "mov   x4, x2\n\t"             // arg4: nlrHomeID (before x2 is clobbered)
+    "mov   x1, x10\n\t"            // arg1: sp_of_patched_frame = F
+    "mov   x2, #1\n\t"             // arg2: nlr = true
+    "bl    _HandleReturnTrap\n\t"  // arg0 (x0) already = result
+    "1:\n\t"
+    "brk   #0x4e\n\t"              // HandleReturnTrap must not return
+    "3:\n\t"                       // ---- normal-return entry ----
+    "sub   x10, sp, #8\n\t"        // x10 = F (patched frame fp)
+    // Reserve 32 (not 16) bytes: F's preserved words live at [F.fp+0] (saved
+    // fp, read by the stack walk) and [F.fp+8] (the patched lr) -- i.e. at
+    // sp-8 and sp on entry.  A 16-byte frame here would put [fp+8] right on
+    // [F.fp+0] and clobber F's saved fp.  32 bytes keeps our record below
+    // those words; the space is F's just-freed locals, safe to reuse.
+    "sub   sp, sp, #32\n\t"        // our frame record (stays 16-aligned)
+    "str   x10, [sp, #0]\n\t"      // [fp+0] = F  -> our sender() is F
+    "adr   x11, 2f\n\t"            // a non-code-zone marker pc
+    "str   x11, [sp, #8]\n\t"      // [fp+8] = marker (so we are not a Self frame)
+    "mov   x29, sp\n\t"            // x29 = our frame
+    "mov   x1, x10\n\t"           // arg1: sp_of_patched_frame = F
+    "mov   x2, #0\n\t"            // arg2: nlr = false
+    "mov   x3, #0\n\t"            // arg3: nlrHome = NULL
+    "mov   x4, #0\n\t"            // arg4: nlrHomeID = 0
+    "bl    _HandleReturnTrap\n\t" // arg0 (x0) already = result
+    "2:\n\t"
+    "brk   #0x4e\n\t"             // HandleReturnTrap must not return
+  );
+}
+
+// Resume normal execution after a return trap: restore the caller's frame
+// pointer and stack, and branch to the continuation PC with the result in
+// x0.  Mirrors i386 ContinueAfterReturnTrap.  sp_arg is the patched frame F.
+extern "C" __attribute__((naked, noreturn))
+void ReturnTrap_resume(oop result, char* pc, char* sp_arg) {
+  // naked: args are referenced directly by register (x0=result, x1=pc, x2=sp)
+  // sp_arg (self_sp) is sp_of_patched_frame as formed by the trap stub:
+  //   ReturnTrap        (returned frame):  self_sp = F.fp        = entry_sp - 8
+  //   PrimCallReturnTrap(active   frame):  self_sp = entry_sp - 16
+  // where entry_sp is the frame's 16-aligned running sp.  In both cases the
+  // correct resume sp is entry_sp, i.e. the next 16-aligned boundary above
+  // self_sp: (self_sp & ~15) + 16.  This is identical to the old "self_sp + 8"
+  // when self_sp is 8 mod 16 (ReturnTrap), and fixes the active-frame
+  // single-step case (self_sp 0 mod 16), which "+8" left 8-misaligned and so
+  // tripped Apple arm64's hardware SP-alignment check on the next sp store.
+  __asm__ __volatile__(
+    "ldr   x29, [x2]\n\t"        // fp = [self_sp]  (uses original, unrounded x2)
+    "and   x2, x2, #0xfffffffffffffff0\n\t" // round down to 16
+    "add   x2, x2, #16\n\t"      // + 16 = trap entry sp (the frame's running sp)
+    "mov   sp, x2\n\t"           // 16-aligned for both returned and active frames
+    "br    x1\n\t"               // continuation PC; x0 still holds the result
+  );
+}
+
+extern "C" void volatile ContinueAfterReturnTrap(oop result, char* pc, char* sp) {
+  processSemaphore = false;
+  ReturnTrap_resume(result, pc, sp);
 }
 
 extern "C" void ReturnTrap2() {
   fatal("ReturnTrap2 called without JIT");
 }
 
-extern "C" void PrimCallReturnTrap() {
-  fatal("PrimCallReturnTrap called without JIT");
+extern "C" __attribute__((naked)) void PrimCallReturnTrap() {
+  // Single-step debugger trap: the patched frame F is still active (a callee
+  // returned into its send site).  The entry sp is running_sp + 8 when a C
+  // prim returns (the true prim-call geometry) but running_sp when the
+  // returner uses the method-epilogue shape -- the patch-time sendee
+  // classification does not always match the actual returner, and no parity
+  // rule works either (JIT records are 8 mod 16 but EnterSelf boundary
+  // records are 0 mod 16).  So pass sp-16 and let get_patched_self_frame
+  // disambiguate {sp-16, sp-8} by content: the true record's saved-pc slot
+  // still holds the patched trap address (is_patched()).  A fixed sp-16
+  // delivered F = frame-8 for the epilogue shape, which poisoned
+  // is_patched()/currentPC reads, the conversion's sp, the watermark walk,
+  // and the resume's fp load (the resumed frame ran on a stale x29 and all
+  // later walks disagreed with the canonical vframeOops by 8). -- rca
+  // Shaped like ReturnTrap: normal entry +0, NLR entry +8.
+  __asm__ __volatile__(
+    "b     3f\n\t"                 // +0: normal (prim-call-return) entry
+    "nop\n\t"                      // +4
+    // +8: NLR entry -- x0 = result, x1 = NLRHomeReg, x2 = NLRHomeIDReg.
+    // F from the unrounded entry sp; own sp rounded down to 16 (see the
+    // ReturnTrap NLR entry comment: the patched record can be the 0 mod 16
+    // C-boundary alias, landing us 8-misaligned).
+    "sub   x10, sp, #8\n\t"        // epilogue geometry: F = sp - 8
+    "sub   x11, sp, #32\n\t"
+    "and   x11, x11, #0xfffffffffffffff0\n\t"
+    "mov   sp, x11\n\t"
+    "str   x10, [sp, #0]\n\t"
+    "adr   x11, 1f\n\t"
+    "str   x11, [sp, #8]\n\t"
+    "mov   x29, sp\n\t"
+    "mov   x3, x1\n\t"             // arg3: nlrHome
+    "mov   x4, x2\n\t"             // arg4: nlrHomeID
+    "mov   x1, x10\n\t"            // arg1: sp_of_patched_frame = F
+    "mov   x2, #1\n\t"             // arg2: nlr = true
+    "bl    _HandleReturnTrap\n\t"
+    "1:\n\t"
+    "brk   #0x4f\n\t"
+    "3:\n\t"                       // ---- normal entry ----
+    "sub   x10, sp, #16\n\t"       // F candidate; C side disambiguates
+                                   //   {sp-16, sp-8} via is_patched()
+    "sub   sp, sp, #32\n\t"
+    "str   x10, [sp, #0]\n\t"
+    "adr   x11, 2f\n\t"
+    "str   x11, [sp, #8]\n\t"
+    "mov   x29, sp\n\t"
+    "mov   x1, x10\n\t"
+    "mov   x2, #0\n\t"
+    "mov   x3, #0\n\t"
+    "mov   x4, #0\n\t"
+    "bl    _HandleReturnTrap\n\t"
+    "2:\n\t"
+    "brk   #0x4f\n\t"
+  );
 }
 
 extern "C" void ProfilerTrap() {
   fatal("ProfilerTrap called without JIT");
 }
 
+// Continue a non-local return after a return trap: restore the caller's frame
+// pointer and stack from the patched frame F (sp_arg), load the NLR register
+// triple, and branch to pc -- the send site's NLR entry (sendDesc +
+// non_local_return_offset), exactly where F's unpatched NLR epilogue would
+// have gone.  Same sp rounding as ReturnTrap_resume: the next 16-aligned
+// boundary above F is the frame's running sp for either trap convention.
+//  -- rca 6/26
+extern "C" __attribute__((naked, noreturn))
+void ReturnTrapNLR_resume(char* pc, char* sp_arg, oop result,
+                          frame* home, smi homeID) {
+  // naked: x0=pc, x1=sp_arg(F), x2=result, x3=home, x4=homeID
+  __asm__ __volatile__(
+    "ldr   x29, [x1]\n\t"          // caller fp = [F] (original, unrounded x1)
+    "and   x16, x1, #0xfffffffffffffff0\n\t"
+    "add   x16, x16, #16\n\t"      // trap entry sp (16-aligned)
+    "mov   x9, x0\n\t"             // continuation pc to scratch
+    "mov   x0, x2\n\t"             // NLRResultReg
+    "mov   x1, x3\n\t"             // NLRHomeReg
+    "mov   x2, x4\n\t"             // NLRHomeIDReg
+    "mov   sp, x16\n\t"
+    "br    x9\n\t"
+  );
+}
+
 extern "C" void volatile ContinueNLRAfterReturnTrap(char* pc, char* sp, oop result,
                                                      frame* home, int32 homeID) {
-  Unused(pc); Unused(sp); Unused(result); Unused(home); Unused(homeID);
-  fatal("ContinueNLRAfterReturnTrap called without JIT");
+  processSemaphore = false;
+  ReturnTrapNLR_resume(pc, sp, result, home, homeID);
 }
 
-extern "C" void firstSelfFrame_returnPC(...) {
-  fatal("firstSelfFrame_returnPC called without JIT");
-}
-
-extern "C" void firstSelfFrameSendDescEnd(...) {
-  fatal("firstSelfFrameSendDescEnd called without JIT");
-}
+// set by generate_EnterSelf() (stubs_aarch64.cpp) when the stub is
+// emitted into the zone
+extern "C" { char* firstSelfFrame_returnPC     = NULL; }
+extern "C" { char* firstSelfFrameSendDescEnd   = NULL; }
 
 // CallPrimitiveFromInterpreter: marshal args from interpreter stack to
 // the C calling convention and call the primitive function.
@@ -366,15 +548,91 @@ extern "C" oop CallPrimitiveFromInterpreter(void* entry_point, oop rcv,
 }
 
 extern "C" oop EnterSelf(oop recv, char* entryPoint, oop arg1) {
+# ifdef SIC_COMPILER
+  if (EnterSelf_generated == NULL) generate_EnterSelf();
+  // the thread's default W^X state is execute; every zone writer brackets
+  // itself with a counted JITWriteScope, so no toggle is needed here
+  return EnterSelf_generated(recv, entryPoint, arg1);
+# else
   Unused(recv); Unused(entryPoint); Unused(arg1);
   fatal("EnterSelf called without JIT");
   return NULL;
+# endif
+}
+
+// Unwind the C/VM frames and resume an NLR in compiled Self code.
+// addr is the send-site return PC that was live when Self called into the
+// VM, i.e. the saved-lr slot of the VM's entry record.  We walk our own
+// frame chain to that record -- SwitchStack leaves x29 alone, so the chain
+// spans the VM/process stack switch -- then restore the Self frame's fp/sp
+// and branch to the send site's NLR entry (return PC + 8; see
+// non_local_return_offset in sendDesc_aarch64.hh).
+//
+// Args land exactly in the NLR register convention (regs_aarch64.hh):
+// x0 = NLRResultReg, x1 = NLRHomeReg, x2 = NLRHomeIDReg.
+
+extern "C" {
+  extern oop   NLRResultFromC;   // set by NLRSupport::save_NLR_results
+  extern smi   NLRHomeFromC;
+  extern int32 NLRHomeIDFromC;
+}
+extern bool8 processSemaphore;   // process.hh
+
+// Final hop: install the computed fp/sp and branch to the NLR target.
+// x0..x2 already hold the NLR register convention values.
+extern "C" __attribute__((naked, noreturn))
+void ContinueNLR_jump(oop result, smi home, int32 homeID,
+                      char* target, frame* new_fp, char* new_sp) {
+  // naked: args are referenced directly by register (x0..x5)
+  __asm__ __volatile__(
+    "mov   x29, x4\n\t"
+    "mov   sp,  x5\n\t"
+    "br    x3\n\t"
+  );
+}
+
+static void ContinueNLR_unwind_and_jump(oop result, smi home, int32 homeID,
+                                        char* match, char* target) {
+  Unused(result); Unused(home); Unused(homeID);
+  // Walk our own frame chain to the record whose saved lr == match.
+  // SwitchStack leaves x29 alone, so the chain spans the VM/process
+  // stack switch.
+  char** x9 = (char**)__builtin_frame_address(0);
+  while (x9 != NULL  &&  x9[1] != match)
+    x9 = (char**)x9[0];
+  if (x9 == NULL)
+    fatal1("ContinueNLR: return PC %#lx not on the frame chain", match);
+
+  // Pop the matched record.  How much to pop depends on who built it:
+  // a JIT prologue record straddles the boundary -- its saved-lr word at
+  // [x9+8] is the caller's reserved lr-hole, so the sp just above it is
+  // x9+8, the caller's running sp.  An EnterSelf/C boundary record is a
+  // self-contained pair, so the sp above it is x9+16.  Disambiguate by
+  // content first: a patched return address only ever lives in a Self
+  // frame record (frame::patch_compiled_self_frame), even one a
+  // conversion rebuilt at 0 mod 16.  For unpatched matches fall back to
+  // parity, "the next 16-aligned boundary at or above x9+8" (same
+  // rounding as ReturnTrap_resume): JIT records are 8 mod 16, boundary
+  // records 0 mod 16.  A flat x9+16 left the JIT case 8-misaligned and
+  // tripped Apple's hardware sp-alignment check at the target's first
+  // sp-relative store (e.g. ReturnTrap+0x10).
+  char* new_sp = isPatchedReturnAddress(match)
+      ?  (char*)x9 + oopSize
+      :  (char*)(((uintptr_t)x9 + 16) & ~(uintptr_t)15);
+  ContinueNLR_jump(NLRResultFromC, NLRHomeFromC, NLRHomeIDFromC,
+                   target, (frame*)x9[0], new_sp);
+  ShouldNotReachHere();
 }
 
 extern "C" oop volatile ContinueNLRFromC(char* addr, bool isInterpreted, bool isSelfIC) {
-  Unused(addr); Unused(isInterpreted); Unused(isSelfIC);
-  fatal("ContinueNLRFromC called without JIT");
-  return NULL;
+  Unused(isSelfIC);  // send and primitive descs both put NLR code at +8
+  if (isInterpreted)
+    fatal("interpreted NLR uses longjmp on 64-bit "
+          "(see continue_NLR_into_interpreted_Self)");
+  processSemaphore = false;
+  ContinueNLR_unwind_and_jump(NLRResultFromC, NLRHomeFromC, NLRHomeIDFromC,
+                              addr, addr + 8 /*non_local_return_offset*/);
+  return NULL; // not reached
 }
 
 // DiscardStack, check_saved_byte_map_base, set_flags_for_platform,
@@ -389,7 +647,10 @@ char* Recompile_stub_returnPC   = NULL;
 char* MakeOld_stub_returnPC     = NULL;
 char* SendMessage_stub_returnPC = NULL;
 
-// zone::frame_chain_nesting static member
+# if !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+// zone::frame_chain_nesting static member (defined in zone.cpp when the
+// real zone is compiled in)
 int32 zone::frame_chain_nesting = 0;
+# endif
 
 # endif // TARGET_ARCH == AARCH64_ARCH

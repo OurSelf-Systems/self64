@@ -13,7 +13,11 @@
 
 oop* dummy_vframe::register_contents_addr(Location r) {
   fint i = index_for_IArgLocation(r);
+# if TARGET_ARCH != AARCH64_ARCH
+  // aarch64 saves the args at patch time despite the flag (see
+  // frame::save_outgoing_arguments)
   assert(SaveOutgoingArgumentsOfPatchedFrames, "I386 needs this");
+# endif
   assert(i + 1  <  OutgoingArgsOfReturnTrapOrRecompileFrame->length(), "bounds");
   oop* argp = OutgoingArgsOfReturnTrapOrRecompileFrame->objs(i + 1);
   assert((*argp)->verify(), "checking arg");

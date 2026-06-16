@@ -445,7 +445,7 @@ inline void PNode::eliminateNode(BB* bb, PReg* r, bool removing, void* misc) {
   if (PrintSICEliminateUnneededNodes) {
     char buf[1024];
     lprintf("*%s node N%ld: %s\n", removing ? "removing" : "eliminating",
-            (void*)id(), print_string(buf));
+            (long)id(), print_string(buf));
   }
   assert( !hasSideEffects() || removing, 
           "shouldn't eliminate this node unless it can never be executed");

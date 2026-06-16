@@ -55,7 +55,7 @@ void EventLog::printPartial(int32 n) {
      case ending:   s = "} "; indent--; break;
      case atomic:   s = "= "; break;
     }
-    lprintf("%*s%s", (void*)(2*indent), " ", s);
+    lprintf("%*s%s", (int)(2*indent), " ", s);
     lprintf(e->name, e->args[0], e->args[1], e->args[2]);
     lprintf("\n");
     if (e->status == starting) indent++;

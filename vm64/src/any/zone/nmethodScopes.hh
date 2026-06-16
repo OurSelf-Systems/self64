@@ -56,11 +56,13 @@ private:
     return oops()[index]; 
   }
  private:
-  int32* values()     { return (int32*) (start() + value_offset()); } 
-  fint   value_size() { return (pcs_offset() - value_offset())/sizeof(int32); }
-  int32  value_at(fint index) {
+  // entries are smi-wide (matching the recorder's Vector); values are
+  // small ints stored widened
+  smi*  values()     { return (smi*) (start() + value_offset()); }
+  fint  value_size() { return (pcs_offset() - value_offset())/sizeof(smi); }
+  int32 value_at(fint index) {
     assert( index < value_size(), "oops index out of range");
-    return values()[index]; 
+    return (int32)values()[index];
   }
 
   inline u_char getIndexAt(int32& offset);
@@ -103,10 +105,18 @@ private:
 
   // used in iterator macro FOR_EACH_SCOPE
   ScopeDesc *getNext(ScopeDesc *s) {
-    if (!s) return at(fint(0));
+    // Synthesized nmethods (no recorder content) have an empty scopes
+    // section; iterating one visits no scopes.  Without this guard at(0)
+    // asserts on debug builds and reads a garbage byte as a scope header
+    // on release builds.
+    if (!s) return length() == 0 ? NULL : at(fint(0));
     fint offset = s->next_offset();
 
-    if (offset + (sizeof(int32) - (offset%sizeof(int32))) % sizeof(int32)
+    // The codes section is padded to a smi boundary (8 bytes on 64-bit; the
+    // recorder packs sections word-aligned), so round the end test by the
+    // same amount -- rounding by int32 lands inside the final padding and
+    // reads it as a scope header (garbage descs).  -- rca 6/26
+    if (offset + (sizeof(smi) - (offset%sizeof(smi))) % sizeof(smi)
         >= (_oops_offset)*sizeof(oop)) return NULL;
     return at(offset);
   }

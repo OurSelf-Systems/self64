@@ -66,8 +66,8 @@ public:
   void Zero();
 
   void Comment(const char* s);
-  void printX(int32 x, OperandType t, bool imm = false);
-  void print_disp(int32 x, OperandType t);
+  void printX(smi x, OperandType t, bool imm = false);
+  void print_disp(smi x, OperandType t);
   
   int32 offset()                { return instsEnd - instsStart; }
   void setOffset(int32 offset)  { instsEnd = instsStart + offset; }

@@ -907,6 +907,20 @@ ExecutionMonitor::Activities ExecutionMonitor::current_tick_activity() {
     }
 # endif  // defined(FAST_COMPILER) || defined(SIC_COMPILER)
 
+# if TARGET_IS_64BIT
+  // On this port the interpreter runs as recursive C++, so interpreted Self
+  // has no native Self frame to walk (frame-walking would only find C++
+  // frames).  Detect interpreted execution by the running interpreter on
+  // the current process, after first ruling out GC/scavenge/idle (which can
+  // be in progress while an interpreter activation is still on the stack).
+  Unused(f);
+  if (ScavengeInProgress)   return scavenge;
+  if (     GCInProgress)    return gc;
+  if (processes->isIdle())  return idle;
+  if (currentProcess != NULL && currentProcess->active_interp_list != NULL)
+    return int_execution;
+  return virtual_machine;
+# else
   if ( f != NULL  &&  f->is_interpreted_self_frame())
     return int_execution;
 
@@ -914,6 +928,7 @@ ExecutionMonitor::Activities ExecutionMonitor::current_tick_activity() {
   if (ScavengeInProgress)   return scavenge;
   if (     GCInProgress)    return gc;
                             return virtual_machine;
+# endif
 }
 
 

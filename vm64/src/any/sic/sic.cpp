@@ -124,6 +124,7 @@
     
   SICompiler::SICompiler(compilingLookup* k, sendDesc* sd, nmln* d)
     : AbstractCompiler(k, sd, d) {
+    generateDebugCode = false;   // complexLookup overrides for debug methods
     if (VMSICProfiling) OS::profile(true);
     initialize();
   }
@@ -152,6 +153,11 @@
   void SICompiler::initialize() {
     assert(theSIC == NULL, "shouldn't have but one compiler at a time");
     theSIC = lastSIC = this;
+    // The previous compile's Assembler lives in the resource area and is
+    // freed without its destructor running, so theAssembler can dangle
+    // between compiles (cf. FCompiler's ctor, which also resets it).
+    //  -- rca 6/26
+    theAssembler = NULL;
     theAssembler = new Assembler(SICInstructionsSize, SICInstructionsSize / 2,
                                  PrintSICCompiledCode, true);
     stackLocCount = argCount = 0;
@@ -178,6 +184,14 @@
     ncodes = 0;
     rec = new ScopeDescRecorder(SICScopesSize, SICPCsSize);
 
+# if TARGET_ARCH == AARCH64_ARCH
+    if (L->resultType() != methodResult) {
+      // access kinds skip the method pipeline (see compileAccessMethod);
+      // initTopScope would call kind() on a non-method slot
+      initializeForPlatform();
+      return;
+    }
+# endif
     initTopScope();
     initLimits();
 
@@ -269,6 +283,12 @@
   }
   
   nmethod* SICompiler::compile() {
+# if TARGET_ARCH == AARCH64_ARCH
+    // SIC-only configuration: access "methods" (slot reads, constants,
+    // assignments) have no NIC to fall back to
+    if (L->resultType() != methodResult) return compileAccessMethod();
+# endif
+
     EventMarker em("SIC-compiling %#lx %#lx", L->selector(), NULL);
     ShowCompileInMonitor sc(L->selector(), "SIC", recompilee != NULL);
 
@@ -284,7 +304,7 @@
     // don't inline into doIt
     FlagSetting fs3(Inline, Inline && L->selector() != VMString[DO_IT]);
 
-    # if TARGET_ARCH != I386_ARCH && TARGET_ARCH != X86_64_ARCH // no FastMapTest possible on I386/X86_64
+    # if TARGET_ARCH == SPARC_ARCH || TARGET_ARCH == PPC_ARCH // FastMapTest is a real flag only there
       // don't use fast map loads if this nmethod trapped a lot
       FlagSetting fs4(FastMapTest, FastMapTest &&
                       (recompilee == NULL ||
@@ -306,7 +326,7 @@
               recompilee ? "re" : "",
               sprintName( (methodMap*) method()->map(), L->selector()),
               sprintValueMethod( L->receiver ),
-              (void*)SICCompilationCount);
+              (int)SICCompilationCount);
     }
 
     topScope->genCode();
@@ -371,13 +391,18 @@
     topScope->describe();    // must come before gen to set scopeInfo   
     genHelper = new SICGenHelper;
     bbIterator->gen();
+# if TARGET_ARCH == AARCH64_ARCH
+    // lay down the oop/address literal pool before the buffer is copied
+    // into the zone (the pool words carry this method's oop addrDescs)
+    theAssembler->flushLiteralPool();
+# endif
     assert(theAssembler->verifyLabels(), "undefined labels");
 
     rec->generate();
     topScope->fixupBlocks();        // must be after rec->gen to know offsets
     if (vscopes) computeMarkers();  // ditto
 
-    nmethod* nm = new_nmethod(this, false);
+    nmethod* nm = new_nmethod(this, generateDebugCode);
 
     if (theAssembler->lastBackpatch >= theAssembler->instsEnd)
       fatal("dangling branch");
@@ -400,8 +425,8 @@
     if (SICDebug && estimatedSize() > inlineLimit[NmInstrLimit]) {
       float rat = (float)estimatedSize() / (float)nm->instsLen();
       lprintf("*est. size = %ld, true size = %ld, ratio = %4.2f\n",
-              (void*)estimatedSize(), (void*)nm->instsLen(),
-              *(void**)&rat);
+              (void*)estimatedSize(), (long)nm->instsLen(),
+              (double)rat);
     }
     if (PrintCompilationStatistics) {
       static fint counter = 0;
@@ -409,12 +434,12 @@
              (void*)ms, 
              (void*) (nm->instsLen() + nm->scopes->length() +
                       nm->locsLen() + nm->depsLen),
-             (void*)nm->instsLen(), 
+             (long)nm->instsLen(), 
              (void*)nm->scopes->length(),
-             (void*)nm->locsLen(), 
-             (void*)nm->depsLen,
-             (void*)BasicNode::currentID,
-             (void*)bbIterator->bbCount,
+             (long)nm->locsLen(), 
+             (long)nm->depsLen,
+             (long)BasicNode::currentID,
+             (long)bbIterator->bbCount,
              (void*)ncodes,
              (void*)counter++);
     }
@@ -602,6 +627,7 @@
 
   
   fint SICompiler::incoming_arg_count() {
+    if (topScope == NULL) return argCount;  // access methods have no top scope
     return topScope->nargs;
   }
 

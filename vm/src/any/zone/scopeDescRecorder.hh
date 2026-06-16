@@ -128,7 +128,7 @@ class ScopeDescRecorder: public ResourceObj {
   fint size();
 
   // Copy the generated scopeDescs to 'addr'
-  void copyTo(VtblPtr_t* addr, int32 backPointer);
+  void copyTo(VtblPtr_t* addr, smi backPointer);  // smi: holds a pointer on 64-bit
 
 # if  GENERATE_DEBUGGING_AIDS
   void verify(nmethodScopes* scopes);

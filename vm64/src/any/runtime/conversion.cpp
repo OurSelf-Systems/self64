@@ -10,7 +10,20 @@
 void Conversion::doit() {
   if (VerifyBeforeConversion) Memory->verify();
   FlushRegisterWindows();
-  lastFrame = currentFrame()->sender();
+  // lastFrame must be the LAST VM-STACK frame (the conversion frame that
+  // fix_frame zaps to lead stack traversal to the rebuilt Self frames).
+  // currentFrame()->sender() overshoots onto the PROCESS stack (inlining and
+  // currentFrame() semantics vary), and fix_frame's two stores then land
+  // just below the rebuilt frames -- once the debug method's frame grew, the
+  // second store smashed [newFr+0] and corrupted the frame chain.  Walk
+  // explicitly instead.  -- rca 6/26
+  // Anchor on our own frame record: currentFrame() returns the CALLER's fp,
+  // which (doit being inlined into the SwitchStack continuation) is already
+  // the process-stack frame.
+  { frame* f = (frame*)__builtin_frame_address(0);
+    while (isOnVMStack(f->sender())) f = f->sender();
+    lastFrame = f;
+  }
   convert();
   if (VerifyAfterConversion) Memory->verify();
   returnToSelf(result, sp, nlr, nlrHome, nlrHomeID, sd, isInterpreting);
@@ -64,6 +77,11 @@ void Conversion::convert() {
            (long unsigned)convertFrame, (long unsigned)convertNM);
   }
   
+  // Frame conversion writes nmethod state in the code zone (frame chains,
+  // save/clear_frame_chain on the new debug methods).  On aarch64 the JIT
+  // area is execute-only by default, so take the W^X write scope across the
+  // whole conversion (counted, so it composes with chainFrames's own).
+  JITWriteScope jit_write_scope;
   Memory->code->chainFrames();
   assert(convertNM->frame_chain != NoFrameChain, "should be on stack");
   init();
@@ -163,7 +181,20 @@ void Conversion::init() {
 
   // pop off the frame to be converted; use copiedFrame for the conversion
   // because the original frame will be overwritten
+# if TARGET_ARCH == AARCH64_ARCH
+  // The pop must leave sp at the convertFrame's caller fp -- that is what the
+  // rebuilt frames chain their saved-fp ([fp+0]) link to, and what
+  // unchainFrames/selfSender later walks.  On aarch64 frame* == fp and a
+  // frame's fp-to-caller-fp distance is the CALLER's frame size plus the
+  // lr-hole at [sp+0] that BL does not push -- NOT this frame's nmethod
+  // frameSize, which the i386 code assumes (frame* == sp there).  Reading the
+  // saved caller fp directly from the still-intact original frame is exact for
+  // any caller; the nmethod-frameSize arithmetic lands one-or-more words off
+  // and corrupts the chain (crash in unchainFrames/selfSender).  -- rca, 6/26
+  sp = (char*)convertFrame->sender();
+# else
   sp += copiedFrame->frame_size() * oopSize;    // assume stack grows downwards
+# endif
   
   retarget_vfs_to_convert(copiedFrame, copiedFrame_rl);
   
@@ -408,7 +439,7 @@ void Conversion::returnToSelf(oop res, char* self_sparc_fp_or_ppc_sp,
 // this may be NULL
 void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSend,
                                                    char* self_sparc_fp_or_ppc_sp, oop res, frame* nlrHome_arg, int32 nlrHomeID_arg) {
-# if !(TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER))
+# if !TARGET_IS_64BIT
    // a bit slow, for sparc f is just callee of self_sparc_fp_or_ppc_sp, same frame on ppc
     frame* f= currentProcess->stack()
                 ->interpreter_frame_for_continuing_from_return_trap();
@@ -436,13 +467,15 @@ void Conversion::return_to_interpreted_self(frame* dest_self_fr, bool restartSen
     if (this) delete rm; // free all resources
     OutgoingArgsOfReturnTrapOrRecompileFrame = NULL; // done
 
-# if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
-    // Interpreter-only builds: ContinueNLRAfterReturnTrap is a JIT assembly
-    // routine that doesn't exist.  Only fake an NLR-through-C when the
-    // return really was an NLR.  For a normal trapped return (e.g. during
-    // single-stepping) faking an NLR would cascade up the stack and
-    // terminate the process; instead let the caller's interpreter send loop
-    // resume with its natural result.
+# if TARGET_IS_64BIT
+    // On this 64-bit port the interpreter is recursive C++, so an
+    // interpreted Self frame has no native continuation PC to jump to:
+    // ContinueNLRAfterReturnTrap (JIT assembly resume) cannot return into
+    // it, even in a SIC build running interpreted.  Only fake an
+    // NLR-through-C when the return really was an NLR.  For a normal
+    // trapped return (e.g. during single-stepping) faking an NLR would
+    // cascade up the stack and terminate the process; instead let the
+    // caller's interpreter send loop resume with its natural result.
     // -- dmu & claude, 5/26
     if (wasNLR)
       NLRSupport::save_NLR_results(res, (smi)nlrHome_arg, nlrHomeID_arg);

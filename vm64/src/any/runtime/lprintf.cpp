@@ -90,7 +90,7 @@ extern "C" void lprint_warning(lprint_format_t msg, ...) {
 
 extern "C" volatile void lprint_fatal(const char* file, int line, lprint_format_t msg, ...) {
   bool saved = PrintVMMessages; PrintVMMessages = true;
-  lprintf("Self VM fatal error (%s, line %ld): ", file, (void*)line );
+  lprintf("Self VM fatal error (%s, line %ld): ", file, (long)line );
   va_list ap;
   va_start(ap, msg);
   vlprintf(msg, ap);

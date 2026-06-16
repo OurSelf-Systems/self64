@@ -35,10 +35,13 @@
 
 # elif (TARGET_OS_VERSION == MACOSX_VERSION || TARGET_OS_VERSION == LINUX_VERSION || TARGET_OS_VERSION == FREEBSD_VERSION || TARGET_OS_VERSION == NETBSD_VERSION) \
     && TARGET_ARCH == AARCH64_ARCH
-  // ARM64 has split I/D caches; interpreter-only builds don't generate code,
-  // so these are no-ops.
-  void MachineCache::flush_instruction_cache_word(void* addr) {}
-  void MachineCache::flush_instruction_cache_range(void* s, void* e) {}
+  // ARM64 has split I/D caches; generated code must be flushed.
+  void MachineCache::flush_instruction_cache_word(void* addr) {
+    __builtin___clear_cache((char*)addr, (char*)addr + sizeof(int32));
+  }
+  void MachineCache::flush_instruction_cache_range(void* s, void* e) {
+    __builtin___clear_cache((char*)s, (char*)e);
+  }
 
 # elif TARGET_OS_VERSION == MACOSX_VERSION \
     && TARGET_ARCH == I386_ARCH  &&  OVERDO_IT

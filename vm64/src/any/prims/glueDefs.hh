@@ -794,7 +794,7 @@ typedef class {
 
 # define proxy_null_or_errno_ret(dummy, type_seal)                            \
     proxyOop result = proxyOop(s_arg(res));                                   \
-    result->set_pointer((void *)res);                                         \
+    result->set_pointer((void *)(unsigned long)res);                                         \
     result->set_type_seal((void *)type_seal);                                 \
     RETURN(result)
 

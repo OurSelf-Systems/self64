@@ -516,7 +516,7 @@ int32 getObjectID(oop obj) {
 
 void printObjectID(oop obj) {
   int32 id = bootstrapping ? -1 : getObjectID(obj);
-  lprintf("<%ld", (void*)id);
+  lprintf("<%ld", (long)id);
   if (PrintOopAddress) {
     lprintf(" (0x%lx)", obj);
   }

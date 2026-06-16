@@ -1001,14 +1001,19 @@
   void BBIterator::checkReturnSomewhere() {
     // ensure that a return exists somwhere
     // check for code at end that falls into space
+    //
+    // A DeadEndNode counts as a way out: a method whose every path ends in
+    // a never-returning prim (e.g. a `_Quit` doIt) has its return dropped
+    // as dead code and deliberately ends in a dead-end trap -- that does
+    // not fall into space.  Only a graph with no exit at all is broken.
+    // -- rca
     fint i;
     for (i = 0; i < bbCount; i++) {
       BB* bb = bbTable->nth(i);
       for (Node* n = bb->first; n;  n = n->next()) {
         if ( n->deleted  ) {
   }
-  else if ( (n->isExitNode()  &&  !n->isDeadEndNode())
-             ||   n->isRestartNode())
+  else if ( n->isExitNode()  ||  n->isRestartNode())
           return; // found return!
         if (n == bb->last)
           break;

@@ -196,6 +196,20 @@ void SignalInterface::init_sig_mask() {
 }
 
 
+// See the comment in sig_unix.hh: a synchronous fault delivered while its
+// own signal is masked (no SA_NODEFER, so that is exactly the state inside
+// its handler) retries the faulting instruction forever.
+void SignalInterface::unblock_synchronous_fault_signals() {
+  sigset_t faults;
+  sigemptyset(&faults);
+  sigaddset(&faults, SIGSEGV);
+  sigaddset(&faults, SIGBUS);
+  sigaddset(&faults, SIGILL);
+  sigaddset(&faults, SIGFPE);
+  sigprocmask(SIG_UNBLOCK, &faults, NULL);
+}
+
+
 static int32 ctrl_z_handler(int sig) {
   if (InterruptedContext::the_interrupted_context->forwarded_to_self_thread(sig))
     return 0;

@@ -204,7 +204,7 @@ private:
   //
   // -- claude & dmu  5/26
   enum SelfFrameQuery {
-# if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+# if TARGET_IS_64BIT  // sentinel distinction exists whenever the interpreter does
     HoldsSelfExecutionState,    // default — sentinel YES (GC-correct)
     AlsoCanBeUnwoundPast,       // refinement — sentinel NO (unwind-correct)
 # else

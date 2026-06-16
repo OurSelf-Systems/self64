@@ -428,7 +428,7 @@
       && (PrintSICTempRegisterAllocation   
           ||   (WizardMode  &&  TARGET_ARCH != I386_ARCH) /* happens normally in I386; few regs */ )) {
         lprintf("*could NOT find temp assignment for local %s in BB%ld\n",
-               r->name(), (void*)id());
+               r->name(), (long)id());
       } else if (r->loc == UnAllocated) {
         if (PrintSICTempRegisterAllocation) lprintf("out of temp regs");
       }
@@ -441,7 +441,7 @@
             "should not allocate to a PReg that has been copy-propagated");
     if (PrintSICTempRegisterAllocation) {
       lprintf("*assigning %s to temp %s in BB%ld\n",
-             locationName(l), r->name(), (void*)id());
+             locationName(l), r->name(), (long)id());
     }
     assert(!r->debug, "should not allocate to temp reg");
     r->loc = l;
@@ -474,17 +474,17 @@
 
   static fint prevsBBLen;
   static void printPrevBBs(AbstractBB* b) {
-    lprintf("BB%ld%s", (void*)b->id(), --prevsBBLen > 0 ? ", " : "");
+    lprintf("BB%ld%s", (long)b->id(), --prevsBBLen > 0 ? ", " : "");
   }
   
   void BB::print_short() {
     lprintf("BB%-3ld %#lx [%ld..%ld]; prevs ",
-            (void*)id(), this, (void*)first->id(), (void*)last->id());
+            (long)id(), this, (long)first->id(), (long)last->id());
     prevsBBLen = _prevs->length();
     _prevs->apply(printPrevBBs);
     lprintf("; ");
-    if (next ()) lprintf("next BB%ld", (void*)next ()->id());
-    if (next1()) lprintf(    " BB%ld", (void*)next1()->id());
+    if (next ()) lprintf("next BB%ld", (long)next ()->id());
+    if (next1()) lprintf(    " BB%ld", (long)next1()->id());
   }
 
   void BB::print() {
@@ -515,7 +515,7 @@
         char b[256], nname[256];
         char* buf = b;
         mysprintf(buf, "node: { title:\"%d\" label: \"%s\" }\n",
-                (void*)n->id(), n->print_string(nname, false));
+                (int)n->id(), n->print_string(nname, false));
         fputs(b, f);
       }
     }
@@ -806,7 +806,7 @@
                                !bbTable->nth(i)->last->isRestartNode())) {
         // non-sequential control flow - insert a branch
         Node* n = bbTable->nth(i)->next()->first;
-        lprintf("\tgoto N%ld\n", (void*)n->id());
+        lprintf("\tgoto N%ld\n", (long)n->id());
       }
       if (!suppressTrivial) lprintf("\n");
     }
@@ -1001,14 +1001,19 @@
   void BBIterator::checkReturnSomewhere() {
     // ensure that a return exists somwhere
     // check for code at end that falls into space
+    //
+    // A DeadEndNode counts as a way out: a method whose every path ends in
+    // a never-returning prim (e.g. a `_Quit` doIt) has its return dropped
+    // as dead code and deliberately ends in a dead-end trap -- that does
+    // not fall into space.  Only a graph with no exit at all is broken.
+    // -- rca
     fint i;
     for (i = 0; i < bbCount; i++) {
       BB* bb = bbTable->nth(i);
       for (Node* n = bb->first; n;  n = n->next()) {
         if ( n->deleted  ) {
   }
-  else if ( (n->isExitNode()  &&  !n->isDeadEndNode())
-             ||   n->isRestartNode())
+  else if ( n->isExitNode()  ||  n->isRestartNode())
           return; // found return!
         if (n == bb->last)
           break;

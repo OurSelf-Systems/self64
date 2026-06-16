@@ -95,6 +95,7 @@ void sweepTrigger() {
 
 
 zone::zone(smi& codeSize, smi& stubSize, smi& depSize, smi& debugSize) {
+  JITWriteScope jit_write_scope;  // Heap setup writes headers into the zone
   used_per_compiler[nm_nic]= 0;
   used_per_compiler[nm_sic]= 0;
   
@@ -190,7 +191,7 @@ void zone::set_sizes_and_allocate_code_and_stub_area(smi& codeSize, smi& stubSiz
     // allocate stubs and code together for span-limited branches -- dmu
     // Warning: PPC Assembler::Assembler counts on stubs being after izone
     // See zone::code_start() and zone::code::end()
-    bottom= (int32*)OS::allocate_idealized_page_aligned(codeAndStubSize_p, "nmethod zone (inst + stubs)", NMethodStart);
+    bottom= (int32*)OS::allocate_jit_area(codeAndStubSize_p, "nmethod zone (inst + stubs)");
     stb= (char*)bottom + codeSize_p; 
   
     if (OS::make_memory_executable(bottom, codeAndStubSize_p))
@@ -266,6 +267,7 @@ void zone::allocate_useCount(fint maxNMs) {
 }
 
 void zone::clear() {
+  JITWriteScope jit_write_scope;
   table->clear();
   debugTable->clear();
   rememberLink.init();
@@ -294,8 +296,10 @@ nmethod* zone::alloc(int32 iLen, int32 sLen, int32 lLen,
   // (compiler may have used peekID to get ID of new nmethod for LRU stuff)
   int32 myID = idManager->newID();
   if (needsSweep()) doSweep();
+  // locs are 4-byte addrDescs (BitsPerDesc), so an odd count leaves lLen
+  // a non-multiple of oopSize on 64-bit; that is fine for the layout below.
   assert(iLen % oopSize == 0 && sLen % oopSize == 0 &&
-         lLen % oopSize == 0 && dLen % oopSize == 0,
+         lLen % sizeof(int32) == 0 && dLen % oopSize == 0,
          "must be multiple of oopSize");
   int32 iSize = sizeof(class nmethod) + iLen + lLen;
   int32 dSize = dLen;
@@ -398,6 +402,7 @@ int32 zone::used() {
 }
 
 void zone::flush() {
+  JITWriteScope jit_write_scope;  // mutates code-zone state
   BlockProfilerTicks bpt(exclude_nmethod_flush);
   CSect cs(profilerSemaphore);          // for profiler
   timer tmr;
@@ -507,6 +512,7 @@ static void moveScopes(char* from, char* to, int32 size) {
 }
 
 void zone::flushZombies() {
+  JITWriteScope jit_write_scope;  // mutates code-zone state
   chainFrames();
   nmln nonFlushable;
   while (zombies.notEmpty()) {
@@ -529,6 +535,7 @@ void zone::flushZombies() {
 }
 
 void zone::markAllUnused() {
+  JITWriteScope jit_write_scope;  // mutates code-zone state
   // mark all nmethods as unused (used for thesis measurements)
   chainFrames();
   FOR_ALL_NMETHODS(p) {
@@ -540,6 +547,7 @@ void zone::markAllUnused() {
 }
 
 void zone::flushUnused() {
+  JITWriteScope jit_write_scope;  // mutates code-zone state
   // flush all nmethods marked as unused
   // NB: access methods are always unused since they don't do the LRU thing
   chainFrames();
@@ -593,6 +601,7 @@ void zone::doWork() {
 }
 
 void zone::compact(bool forced) {
+  JITWriteScope jit_write_scope;  // mutates code-zone state
   BlockProfilerTicks bpt(exclude_nmethod_compact);
   if (VMProfileCompaction) OS::profile(true);
   CSect cs(profilerSemaphore);          // for profiler
@@ -642,6 +651,7 @@ void zone::doChainFrames()   { processes->chainFrames(); }
 void zone::doUnchainFrames() { processes->unchainFrames(); }
 
 void zone::free_nmethod(nmethod* nm) {
+  JITWriteScope jit_write_scope;  // mutates code-zone state
   assert(nm->zoneLink.isEmpty(), "non-empty zone link");
   if (VerifyZoneOften) {
     iZone->verify(); dZone->verify(); sZone->verify();
@@ -653,7 +663,9 @@ void zone::free_nmethod(nmethod* nm) {
   int32 sSize = nm->scopes->size();
   idManager->freeID(nm->id);
   int32* s = (int32*)nm->scopes;
-  int32* d = (int32*)nm->deps()   - 1;  // -1 for backpointer
+  // backpointer is a full pointer (see setDepsMap); int32 arithmetic here
+  // handed deallocate an address 4 bytes into the block on 64-bit
+  int32* d = (int32*)((char*)nm->deps() - sizeof(nmethod*));
   if (dZone->contains(d)) {
     sZone->deallocate(s, sSize);
     dZone->deallocate(d, dSize);
@@ -672,6 +684,7 @@ void zone::addToCodeTable(nmethod* nm, MethodLookupKey *k) {
 }
 
 void zone::flush_inline_cache() {
+  JITWriteScope jit_write_scope;  // mutates code-zone state
   timer tmr;   
   ShowVMActivityInMonitor ss(" ic flush ");
   EventMarker em("flushing inline caches");
@@ -705,7 +718,7 @@ bool zone::verify() {
   r &= debugTable->verify();
   {
     fint n = 0;
-    EventMarker("zone::verify %d nms", (void*)numberOfNMethods());
+    EventMarker("zone::verify %d nms", (void*)(long)numberOfNMethods());
     FOR_ALL_NMETHODS(p) {
       n++;
       eventLog->log("verifying nm %d: 0x%x", (void*)n, p);
@@ -743,6 +756,7 @@ bool zone::verify() {
 }
 
 void zone::scavenge_contents() {
+  JITWriteScope jit_write_scope;  // GC updates words in the zone
   nmln *p = rememberLink.next;
   rememberLink.init(); // cause OopNCode::scavenge_contents will remember methods
   bool needToInvalICache = false;
@@ -754,6 +768,7 @@ void zone::scavenge_contents() {
 }
 
 void zone::switch_pointers(oop from, oop to) {
+  JITWriteScope jit_write_scope;  // GC updates words in the zone
   bool needToInvalICache = false;
   // this code used to invalidate as it went, but since invalidation
   // may free PICS and snap both rememberLinks and next pointers,
@@ -789,11 +804,13 @@ void zone::switch_pointers(oop from, oop to) {
 }
 
 void zone::gc_mark_contents() {
+  JITWriteScope jit_write_scope;  // GC updates words in the zone
   FOR_ALL_NMETHODS(p) p->gc_mark_contents();
   stubs->gc_mark_contents(); 
 }
 
 void zone::gc_unmark_contents() {
+  JITWriteScope jit_write_scope;  // GC updates words in the zone
   bool needToInvalICache = false;
   FOR_ALL_NMETHODS(p) needToInvalICache |= p->gc_unmark_contents();
   needToInvalICache |= stubs->gc_unmark_contents(); 
@@ -810,6 +827,7 @@ void zone::oops_do(oopsDoFn f) {
 void zone::nmethods_do(nmethodDoFn f) { FOR_ALL_NMETHODS(p) f(p); }
 
 char* zone::allocateDeps(fint nbytes) {
+  JITWriteScope jit_write_scope;  // mutates code-zone state
   char *d= (char*) dZone->allocate(nbytes);
 
   if (d == NULL) {
@@ -875,6 +893,7 @@ char* zone::allocateDeps(fint nbytes) {
 }
 
 void zone::setDepsMap(nmln *deps, slotsMapDeps *m) {
+  JITWriteScope jit_write_scope;  // mutates code-zone state
   *(((slotsMapDeps**)deps)-1)= m; }
 
 
@@ -1159,6 +1178,7 @@ inline nmethod* zone::next_circular_nm(nmethod* nm) {
 // returns time at which oldest non-reclaimed nmethod will be reclaimed
 int32 zone::sweeper(int32 maxVisit, int32 maxReclaim,
                     int32* nvisited, int32* nbytesReclaimed) {
+  JITWriteScope jit_write_scope;  // ages count stubs and nmethod flags in the zone
   ShowVMActivityInMonitor ss(" LRU sweep ");
   EventMarker em("LRU sweep");
   ResourceMark rm;
@@ -1311,6 +1331,7 @@ void zone::relocate_nmln(nmln* p) {
 
 #ifdef UNUSED
 void zone::relocate() {
+  JITWriteScope jit_write_scope;  // GC updates words in the zone
   FOR_ALL_NMETHODS(p) {
     p->relocate();
   }
@@ -1319,6 +1340,7 @@ void zone::relocate() {
 #endif
 
 void zone::fixup() {
+  JITWriteScope jit_write_scope;  // mutates code-zone state
   table->clear();
   debugTable->clear();
   FOR_ALL_NMETHODS(p) {
@@ -1447,6 +1469,7 @@ void zone::findNMethodOrMap(nmln *n, nmethod* &nm, slotsMapDeps* &s) {
 
 
 void zone::read_snapshot(FILE* f) {
+  JITWriteScope jit_write_scope;  // mutates code-zone state
   char* buf[sizeof(zone)];
   zone* theZone = (zone*)buf;
 

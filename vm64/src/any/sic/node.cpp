@@ -1256,7 +1256,7 @@
   void TArithRRNode::simplify(PReg* r, oop m) {
     if (r == oper) {
       if (PrintSICTypeTestOpt)
-        lprintf("*could optimize tagged arith N%d\n", (void*)id());
+        lprintf("*could optimize tagged arith N%d\n", (int)id());
       if (m == Memory->smi_map->enclosing_mapOop()) {
         // could eliminate tag check, but it's currently free (SPARC)
       } else {
@@ -1280,7 +1280,7 @@
   void TBranchNode::simplify(PReg* r, oop m) {
     if (r == arg) {
       if (PrintSICTypeTestOpt)
-        lprintf("*optimizing tagged comparison N%d\n", (void*)id());
+        lprintf("*optimizing tagged comparison N%d\n", (int)id());
       if (m == Memory->smi_map->enclosing_mapOop()) {
         // can eliminate tag check
         intArg = true;
@@ -1318,7 +1318,7 @@
         if (!hasUnknown) fatal("conflicting type information");
         return;
       }
-      if (PrintSICTypeTestOpt) lprintf("*eliminating type test N%d\n", (void*)id());
+      if (PrintSICTypeTestOpt) lprintf("*eliminating type test N%d\n", (int)id());
       eliminateUnnecessary(mapOop(m));
     }
   }
@@ -1331,7 +1331,7 @@
   void IndexedBranchNode::simplify(PReg* r, oop m) {
     if (r == _src  &&  m == Memory->smi_map->enclosing_mapOop()) {
       if (PrintSICTypeTestOpt)
-        lprintf("*optimizing type test of indexed branch N%d\n", (void*)id());
+        lprintf("*optimizing type test of indexed branch N%d\n", (int)id());
       srcMustBeSmi = true;
     }
   }
@@ -1351,7 +1351,7 @@
   void AbstractArrayAtNode::simplify(PReg* r, oop m) {
     if (r == arg) {
       if (PrintSICTypeTestOpt)
-        lprintf("*optimizing array access N%d\n", (void*)id());
+        lprintf("*optimizing array access N%d\n", (int)id());
       if (m == Memory->smi_map->enclosing_mapOop()) {
         // can eliminate tag check on index
         intArg = true;
@@ -1401,7 +1401,7 @@
   void ByteArrayAtPutNode::simplify(PReg* r, oop m) {
     if (r == elem) {
       if (PrintSICTypeTestOpt)
-        lprintf("*optimizing byte array access N%d\n (elem)", (void*)id());
+        lprintf("*optimizing byte array access N%d\n (elem)", (int)id());
       if (m == Memory->smi_map->enclosing_mapOop()) {
         // can eliminate tag check on index
         intElem = true;
@@ -1425,7 +1425,7 @@
               needToFlushRegWindow ? "flush " : "",
               isAccessMethod ? "access" : "",
               (void*)nargs,
-              (void*)thisFrameSize);
+              (int)thisFrameSize);
     if (printAddr) mysprintf(buf, "      p *(PrologueNode*)%#lx", this);
     return b;
   }
@@ -1459,7 +1459,7 @@
 
   char* LoadIntNode::print_string(char* buf, bool printAddr) {
     char* b = buf;
-    mysprintf(buf, "LoadInt %#lx, %s", (void*)value, _dest->name());
+    mysprintf(buf, "LoadInt %#lx, %s", (unsigned long)value, _dest->name());
     if (printAddr) mysprintf(buf, "      p *(LoadIntNode*)%#lx", this);
     return b;
   }
@@ -1501,7 +1501,7 @@
   char* SendNode::print_string(char* buf, bool printAddr) {
     char* b = buf;
     mysprintf(buf, "%s %s NLR %ld ", lookupTypeName(l), selector_string(sel),
-           (void*)nlrPoint()->id());
+           (long)nlrPoint()->id());
 /* too verbose for normal use (line gets too long)
     if (del) mysprintf(buf, "del=%#lx ", del);
     if (mh) mysprintf(buf, "mh=%#lx ", mh);
@@ -1512,7 +1512,7 @@
  
   char* PrimNode::print_string(char* buf, bool printAddr) {
     char* b = buf;
-    mysprintf(buf, "PrimCall _%s NLR %ld", pd->name(), (void*)nlrPoint()->id());
+    mysprintf(buf, "PrimCall _%s NLR %ld", pd->name(), (long)nlrPoint()->id());
     if (printAddr) mysprintf(buf, "      p *(PrimNode*)%#lx", this);
     return b;
   }
@@ -1573,8 +1573,8 @@
     char* b = buf;
     mysprintf(buf, "%s %s, %s, %s   N%d, N%d",
               ArithOpName[op], _src->name(), oper->name(), _dest->name(),
-              (void*)next1()->id(),
-              (void*)next()->id());
+              (int)next1()->id(),
+              (int)next()->id());
     if (printAddr) mysprintf(buf, "      p *(TArithRRNode*)%#lx", this);
     return b;
   }
@@ -1582,7 +1582,7 @@
   char* ArithRCNode::print_string(char* buf, bool printAddr) {
     char* b = buf;
     mysprintf(buf, "%s %s, #%#lx, %s",
-           opName(), _src->name(), (void*)oper, _dest->name());
+           opName(), _src->name(), (unsigned long)oper, _dest->name());
     if (printAddr) mysprintf(buf, "      p *(ArithRCNode*)%#lx", this);
     return b;
   }
@@ -1590,7 +1590,7 @@
   char* BranchNode::print_string(char* buf, bool printAddr) {
     char* b = buf;
     mysprintf(buf, "%s  N%ld N%ld",
-           BranchOpName[op], (void*)next1()->id(), (void*)next()->id());
+           BranchOpName[op], (long)next1()->id(), (long)next()->id());
     if (printAddr) mysprintf(buf, "      p *(BranchNode*)%#lx", this);
     return b;
   }
@@ -1601,9 +1601,9 @@
     Node* n2 = nSuccessors() > 2 ? nexti(2) : NULL;
     mysprintf(buf, "T%s %s %s  N%ld N%ld fail N%ld",
               BranchOpName[op], _src->name(), arg->name(),
-              (void*)(n1 ? n1->id() : -1),
-              (void*)(next()->id()),
-              (void*)(n2 ? n2->id() : -1));
+              (long)(n1 ? n1->id() : -1),
+              (long)(next()->id()),
+              (long)(n2 ? n2->id() : -1));
     if (printAddr) mysprintf(buf, "      p *(TBranchNode*)%#lx", this);
     return b;
   }
@@ -1617,11 +1617,11 @@
       else if (m == Memory->float_map->enclosing_mapOop()) mysprintf(buf, "float");
       else mysprintf(buf, m->debug_print());
       mysprintf(buf, ": N%ld; ",
-                (void*)(nSuccessors() > i ? nexti(i)->id() : -1));
+                (long)(nSuccessors() > i ? nexti(i)->id() : -1));
     }
     mysprintf(buf,
               "N%ld%s",
-              (void*)(next() ? next()->id() : -1),
+              (long)(next() ? next()->id() : -1),
               hasUnknown ? "" : "*");
     if (printAddr) mysprintf(buf, "      p *(TypeTestNode*)%#lx", this);
     return b;
@@ -1633,11 +1633,11 @@
     for (fint i = 1;  i <= nCases;  i++) {
       mysprintf(buf, "%d: N%ld; ",
                 (void*)i,
-                (void*)(nSuccessors() > i ? nexti(i)->id() : -1));
+                (long)(nSuccessors() > i ? nexti(i)->id() : -1));
     }
     mysprintf(buf,
               "N%ld%s",
-              (void*)(next() ? next()->id() : -1),
+              (long)(next() ? next()->id() : -1),
               srcMustBeSmi ? "*" : "");
     if (printAddr) mysprintf(buf, "      p *(IndexedBranchNode*)%#lx", this);
     return b;
@@ -1700,7 +1700,7 @@
   static fint prevsLen;
   static char* mergePrintBuf;
   static void printPrevNodes(Node* n) {
-    mysprintf(mergePrintBuf, "N%ld%s", (void*)n->id(),
+    mysprintf(mergePrintBuf, "N%ld%s", (long)n->id(),
               --prevsLen > 0 ? ", " : "");
   }
   
@@ -1717,7 +1717,7 @@
  
   char* RestartNode::print_string(char* buf, bool printAddr) {
     char* b = buf;
-    mysprintf(buf, "Restart N%ld", (void*)loopStart->id());
+    mysprintf(buf, "Restart N%ld", (long)loopStart->id());
     if (printAddr) mysprintf(buf, "      p *(RestartNode*)%#lx", this);
     return b;
   }
@@ -1755,7 +1755,7 @@
 
   void BasicNode::printID() {
     char buf[32];
-    lprintf("%4ld:%1s %-4s", (void*)id(), deleted ? "D" : " ",
+    lprintf("%4ld:%1s %-4s", (long)id(), deleted ? "D" : " ",
             hasSplitSig() ? splitSig()->prefix(buf) : " ");
   }
   

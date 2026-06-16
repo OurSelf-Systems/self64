@@ -26,11 +26,13 @@ static void compileAvgTracker() {
 }
 
 void recompile_init() {
-  # if defined(SIC_COMPILER)
-    # if !defined(FAST_COMPILER)
-      # error unsupported: must have nic if have sic
-    # endif
+  # if defined(SIC_COMPILER) && defined(FAST_COMPILER)
     nstages = 2;
+  # elif defined(SIC_COMPILER)
+    // 64-bit: the interpreter is tier 0 and the SIC is the only compiler.
+    // Hot methods are found by interpreter counters, so compiled code has a
+    // single stage and never embeds recompilation counters.
+    nstages = 1;
   # elif defined(FAST_COMPILER)
     nstages = 1;
   # else
@@ -44,7 +46,11 @@ void recompile_init() {
   switch (nstages) {
    case 0:  break;
    case 1:
-    compilers[0] = NIC;
+    # if defined(FAST_COMPILER)
+      compilers[0] = NIC;
+    # else
+      compilers[0] = SIC;
+    # endif
     break;
    case 2:
     compilers[0] = NIC; compilers[1] = SIC;

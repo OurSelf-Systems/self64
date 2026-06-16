@@ -1294,6 +1294,11 @@ home context -- Mario, 5/18/95\x7fModuleInfo: Module: process InitialContents: F
              step.
              act: currentActivation.
              act ifDead: [^self].
+             "If the home activation has returned there is nothing left to
+              step into lexically; stop here rather than running free.
+              (Formerly this stop happened by accident: a freshly dead
+              myHome compared equal to anything for one send.) -- rca"
+             myHome isLive ifFalse: [^self].
              (act != thisAct) && [myHome = act outermostLexicalScope]  ifTrue: [^self].
             ] loop).
         } | ) 

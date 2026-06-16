@@ -11,6 +11,12 @@
 
 sendDesc* sendDesc::first_sendDesc() {
   // assertion is in sendDes::init
+# if TARGET_ARCH == AARCH64_ARCH
+  // the first sendDesc lives in the EnterSelf stub, which is generated
+  // into the zone on demand (see stubs_aarch64.cpp)
+  extern void generate_EnterSelf();
+  if (firstSelfFrame_returnPC == NULL) generate_EnterSelf();
+# endif
   return sendDesc::sendDesc_from_return_PC(
            first_inst_addr((void*)firstSelfFrame_returnPC));
 }
@@ -85,6 +91,7 @@ bool sendDesc::checkLookupTypeAndEntryPoint(nmethod *nm, char *entryPoint) {
 
 void sendDesc::extend(nmethod* nm, mapOop receiverMapOop,
                       CountStub *cs_from_pic) {
+  JITWriteScope jit_write_scope;  // IC and dependency-link words live in the zone
   char *addr;
   bool isPerform= isPerformLookupType(raw_lookupType());
   if (   PIC && !isPerform
@@ -126,6 +133,7 @@ void sendDesc::extend(nmethod* nm, mapOop receiverMapOop,
 
 // rebind the sendDesc to nm at addr, with cs_from_pic if non-NULL
 void sendDesc::rebind(nmethod* nm, char* addr, CountStub *cs_from_pic) {
+  JITWriteScope jit_write_scope;  // IC and dependency-link words live in the zone
   if (VerifyZoneOften) {
     nm->linkedSends.verify_list_integrity();
     if (dependency()->next == NULL  &&  dependency()->prev == NULL)
@@ -452,6 +460,13 @@ void sendDesc::init() {
   # if HOST_ARCH == PPC_ARCH && TARGET_ARCH == I386_ARCH
     if (true) return; // just testing asm
   # endif
+  # if TARGET_ARCH == AARCH64_ARCH
+    // EnterSelf (and the first sendDesc it carries) is generated into the
+    // zone lazily by first_sendDesc(), because sendDesc::init runs before
+    // the zone exists.  generate_EnterSelf() performs these same checks
+    // when it runs.
+    if (true) return;
+  # endif
   sendDesc* f = sendDesc::first_sendDesc();
 
   // cannot do this test on sparc, it has a register-call which does not read as a call
@@ -505,9 +520,43 @@ void sendDesc::sendMessagePrologue( oop  receiver, frame* lookupFrame ) {
 }
 
 
+extern char* ReturnResult_entry;   // stubs_aarch64.cpp
+extern char* ReturnNLR_entry;
+extern oop   ReturnResult_stub_result;
+
+// mixed mode: run a compiled sender's send in the interpreter (the lookup
+// produced no nmethod, e.g. a block whose home frame is interpreted, or
+// Interpret was switched back on).  Receiver and arguments live in the
+// sender's outgoing area just above the lookup frame record.
+static char* interpretSendForCompiledSender(compilingLookup* L,
+                                            frame* lookupFrame) {
+  oop* out = (oop*)lookupFrame + 2;   // [0] lr hole, [1] receiver, [2..] args
+  fint nargs = L->selector()->is_string()
+    ? stringOop(L->selector())->arg_count()
+    : 0;
+  oop res = L->result()->interpret(L->receiver, L->selector(), L->delegatee(),
+                                   &out[2], nargs);
+  if (NLRSupport::have_NLR_through_C()) {
+    // the compiled caller's NLR code takes over from here (pure register
+    // protocol), mirroring continue_NLR_into_compiled_Self
+    NLRSupport::reset_have_NLR_through_C();
+    return ReturnNLR_entry;
+  }
+  ReturnResult_stub_result = res;
+  return ReturnResult_entry;
+}
+
+
 static nmethod* SendMessage_cont( compilingLookup* L) {
   if ( Interpret ) {
     L->perform_full_lookup();
+    // We are going to interpret, not compile: the dependency nodes the lookup
+    // just spliced into the touched maps' dependent lists will never be
+    // migrated into an nmethod.  Left behind, they dangle in the (heap)
+    // dependent lists while the shared compiler dependency buffer they live in
+    // is reused by the next real compilation -- corrupting the lists.  Unlink
+    // them now.
+    L->remove_all_deps();
     return NULL;
   }
   return L->send_desc()->lookup_compile_and_backpatch(L);
@@ -558,10 +607,10 @@ char* sendDesc::sendMessage( frame* lookupFrame,
   nmethod* nm = switchToVMStack( SendMessage_cont, &L );
   if (SilentTrace) LOG_EVENT1("sendDesc::sendMessage: found %#lx", nm);
 
-  return
-    Interpret
-    ? L.interpretResultForCompiledSender(arg1)
-    : nm->verifiedEntryPoint();
+  Unused(arg1);
+  if (Interpret || nm == NULL)
+    return interpretSendForCompiledSender(&L, lookupFrame);
+  return nm->verifiedEntryPoint();
 }
 
 
@@ -602,7 +651,8 @@ nmethod* sendDesc::lookup_compile_and_backpatch( compilingLookup* L ) {
   assert(zone::frame_chain_nesting == 0 || recompilee != NULL,
          "should not be nested");
   
-  if (InlineCache &&
+  if (nm != NULL &&
+      InlineCache &&
       (InlineCacheNonStatic || L->isReceiverStatic())) {
     // add to PIC
     extend(nm, L->receiverMapOop(), NULL);

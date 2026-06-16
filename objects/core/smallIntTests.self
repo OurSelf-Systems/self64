@@ -143,12 +143,15 @@ SlotsToOmit: directory fileInTimeString myComment postFileIn revision subpartNam
             | 
             assertFail: [|:fb| maxSmallInt _IntAdd:     1 IfFail: fb].
             assertFail: [|:fb| minSmallInt _IntSub:     1 IfFail: fb].
-            assertFail: [|:fb|  16r1FFFFFF _IntMul: 10000 IfFail: fb].
+            "overflow triggers are expressed relative to the VM's smi width
+             (maxSmallInt/minSmallInt) so they fail on any word size, rather
+             than assuming a 30-bit smallInt -- rca 2026"
+            assertFail: [|:fb| maxSmallInt _IntMul:     2 IfFail: fb].
             assertFail: [|:fb|          42 _IntDiv:     0 IfFail: fb].
             assertFail: [|:fb|          42 _IntMod:     0 IfFail: fb].
 
-            assertFail: [|:fb| -50000 _IntArithmeticShiftLeft: 14 IfFail: fb].
-            assertFail: [|:fb| -50000 _IntArithmeticShiftLeft: 15 IfFail: fb].
+            assertFail: [|:fb| minSmallInt _IntArithmeticShiftLeft: 1 IfFail: fb].
+            assertFail: [|:fb| maxSmallInt _IntArithmeticShiftLeft: 1 IfFail: fb].
 
             [assertFail: [|:fb| -1 _IntArithmeticShiftLeft: 64 IfFail: fb]]. [todo selfBug dave]. "Bug in Self."
             self).
@@ -234,8 +237,11 @@ SlotsToOmit: directory fileInTimeString myComment postFileIn revision subpartNam
 
             assert:   5 >> 4 Is:         0.
             assert:  30 >> 3 Is:         3.
-            assert:  -5 >> 4 Is:  67108863.
-            assert: -30 >> 3 Is: 134217724.
+            "logical right shift of a negative depends on the smi width, so
+             express the expected value relative to maxSmallInt (= -1 >> 1)
+             rather than assuming a 30-bit smallInt -- rca 2026"
+            assert:  -5 >> 4 Is: (maxSmallInt >> 3).
+            assert: -30 >> 3 Is: ((maxSmallInt >> 2) - 3).
 
             assert: 1  && 1 Is: 1.
             assert: 14 && 6 Is: 6.

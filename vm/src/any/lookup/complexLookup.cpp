@@ -86,6 +86,7 @@ compilingLookup::compilingLookup(oop rcvr,
 
 // Compile an nmethod
 nmethod* compilingLookup::lookupNMethod() {
+  JITWriteScope jit_write_scope;  // compilation writes the code zone throughout
   if (result() == NULL)                                       
     perform_full_lookup();
 
@@ -93,6 +94,18 @@ nmethod* compilingLookup::lookupNMethod() {
     if ( dc != NULL  &&  status == foundOne )
       assert_methodHolder_is_object();
 # endif
+
+  // mixed-mode: a block whose home frame is interpreted cannot be compiled
+  // (SBlockScope needs a compiled home vframe -- see SICompiler::initTopScope);
+  // returning NULL makes the caller interpret the send instead.
+  if (receiverMap()->is_block()) {
+    blockOop block = (blockOop)receiver;
+    frame* sender = sendingVFrame
+      ? sendingVFrame->fr
+      : currentProcess->last_self_frame(false);
+    abstract_vframe* home = block->parentVFrame(sender, true);
+    if (home != NULL && home->is_interpreted()) return NULL;
+  }
 
   chooseCompiler();
   nmethod* nm= compileOrReuse();
@@ -102,6 +115,12 @@ nmethod* compilingLookup::lookupNMethod() {
 
 
 void compilingLookup::chooseCompiler() {
+# if defined(SIC_COMPILER) && !defined(FAST_COMPILER)
+  // SIC-only configuration (64-bit): there is no NIC to fall back to
+  compiler = SIC;
+  ++SICCompilationCount;
+  return;
+# endif
   if (mustUseNIC()) {  compiler = NIC;  return;  }
   if (mustUseSIC()) {  compiler = SIC;  return;  }
 
@@ -172,14 +191,19 @@ nmethod* compilingLookup::compileNMethod() {
 nmethod* compilingLookup::doCompile(nmln* diLink) {
   BlockProfilerTicks ex(exclude_compile);
   
-  if (compiler == NIC) {
+  if (false) {
+#   ifdef FAST_COMPILER
+  } else if (compiler == NIC) {
     FCompiler* fc= new FCompiler(this, sd, diLink);
     fc->generateDebugCode= needDebug || currentProcess->isSingleStepping();
     activeCompiler= fc;
+#   endif
 
 #   ifdef SIC_COMPILER
   } else if (compiler == SIC) {
-      activeCompiler= new SICompiler(this, sd, diLink);
+      SICompiler* sc= new SICompiler(this, sd, diLink);
+      sc->generateDebugCode= needDebug || currentProcess->isSingleStepping();
+      activeCompiler= sc;
 #   endif
 
   } else {
