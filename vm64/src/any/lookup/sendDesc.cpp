@@ -550,6 +550,13 @@ static char* interpretSendForCompiledSender(compilingLookup* L,
 static nmethod* SendMessage_cont( compilingLookup* L) {
   if ( Interpret ) {
     L->perform_full_lookup();
+    // We are going to interpret, not compile: the dependency nodes the lookup
+    // just spliced into the touched maps' dependent lists will never be
+    // migrated into an nmethod.  Left behind, they dangle in the (heap)
+    // dependent lists while the shared compiler dependency buffer they live in
+    // is reused by the next real compilation -- corrupting the lists.  Unlink
+    // them now.
+    L->remove_all_deps();
     return NULL;
   }
   return L->send_desc()->lookup_compile_and_backpatch(L);
