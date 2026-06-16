@@ -551,19 +551,25 @@ void interpreter::block_scope_and_desc_of_home( frame*& block_scope_frame,
   interpreter* interp= this;
   // try fast case first
   frame* f;
+  oop block;   // the block whose scope() is f; stays valid after the loop even
+               // when interp becomes NULL (f is then a compiled home frame)
   do {
-    assert_block(interp->receiver, "must be a block"); 
-    f = blockOop(interp->receiver)->scope();
+    block = interp->receiver;
+    assert_block(block, "must be a block");
+    f = blockOop(block)->scope();
     interp= f->get_interpreter_of_block_scope();
   } while ( interp  &&  interp->mi.map()->kind() == BlockMethodType );
-  
+
   if (interp) {
       block_scope_frame= f;
       block_desc = BLOCK_PROTO_DESC->value();
   }
   else {
     ResourceMark rm; // for vf
-    abstract_vframe* vf = blockOop(interp->receiver)->parentVFrame(currentFrame())->home();
+    // The block's home method is COMPILED, so f has no interpreter and interp
+    // is NULL here.  Use the saved block -- interp->receiver was a NULL deref
+    // (crashed an interpreted NLR out of a block whose home is compiled). -- rca 6/26
+    abstract_vframe* vf = blockOop(block)->parentVFrame(currentFrame())->home();
     block_scope_frame = vf->fr->block_scope_of_home_frame();
     block_desc = vf->scopeID();
   }
