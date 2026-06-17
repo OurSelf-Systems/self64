@@ -271,6 +271,8 @@ void SetSPAndCall(char** callerSaveAddr, char** calleeSaveAddr,
 # ifdef SIC_COMPILER
 // implemented in stubs_aarch64.cpp
 extern oop (*EnterSelf_generated)(oop recv, char* entryPoint, oop arg1);
+extern oop (*EnterSelfN_generated)(oop recv, char* entryPoint, oop* args, int32 nargs);
+extern const fint EnterSelfMaxArgs;
 extern void generate_EnterSelf();
 # endif
 
@@ -556,6 +558,20 @@ extern "C" oop EnterSelf(oop recv, char* entryPoint, oop arg1) {
 # else
   Unused(recv); Unused(entryPoint); Unused(arg1);
   fatal("EnterSelf called without JIT");
+  return NULL;
+# endif
+}
+
+// Multi-argument C -> compiled entry: marshals nargs args from the C array
+// into a fresh Self outgoing area.  Shares EnterSelf's return point + epilogue.
+extern "C" oop EnterSelfN(oop recv, char* entryPoint, oop* args, int32 nargs) {
+# ifdef SIC_COMPILER
+  if (EnterSelfN_generated == NULL) generate_EnterSelf();
+  assert(nargs <= EnterSelfMaxArgs, "EnterSelfN arg count exceeds outgoing area");
+  return EnterSelfN_generated(recv, entryPoint, args, nargs);
+# else
+  Unused(recv); Unused(entryPoint); Unused(args); Unused(nargs);
+  fatal("EnterSelfN called without JIT");
   return NULL;
 # endif
 }

@@ -26,8 +26,14 @@ inline oop simpleLookup::evaluateResult(oop* argp, int32 nargs, nmethod* nm) {
 # if defined(FAST_COMPILER) || defined(SIC_COMPILER)
   // Enter compiled code when an nmethod is in hand.  Callers decide whether
   // to supply one: compiled-mode lookups always do; the interpreter passes
-  // NULL unless RouteToCompiled routing found an nmethod for a <=1-arg send.
+  // NULL unless RouteToCompiled routing found an nmethod for this send.
   if (nm != NULL) {
+#   if TARGET_IS_64BIT
+    // routing (interpreter->compiled) can hand us a multi-arg send; marshal
+    // the args via EnterSelfN.  The 0/1-arg case keeps the legacy EnterSelf.
+    if (nargs > 1)
+      return EnterSelfN(receiver, nm->insts(), argp, nargs);
+#   endif
     assert(nargs <= 1, "have not implemented compiled evaluation > 1 arg");
     return EnterSelf( receiver,
                       nm->insts(),

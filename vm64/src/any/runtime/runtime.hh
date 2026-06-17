@@ -104,6 +104,10 @@ extern "C" {
   
   oop EnterSelf(oop recv, char* entryPoint, oop arg1);
         // call nmethod with given receiver and 1st arg
+# if TARGET_IS_64BIT
+  oop EnterSelfN(oop recv, char* entryPoint, oop* args, int32 nargs);
+        // call nmethod with given receiver and nargs stack-passed args
+# endif
   oop volatile ContinueNLRFromC(char* addr, bool isInterpreted, bool isSelfIC);
   void volatile DiscardStack();
 }

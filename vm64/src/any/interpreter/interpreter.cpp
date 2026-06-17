@@ -865,15 +865,18 @@ oop interpreter::try_perform_prim( bool hasFailBlock,
 }
 
 
-// Routing (tier-up stage a): if RouteToCompiled is on and a compiled nmethod
-// exists for this resolved <=1-arg send, return it so evaluateResult enters
+// Routing (tier-up stages a/b): if RouteToCompiled is on and a compiled
+// nmethod exists for this resolved send, return it so evaluateResult enters
 // compiled code instead of interpreting.  Returns NULL (interpret) otherwise.
+// The arg cap matches EnterSelfN's fixed outgoing area (EnterSelfMaxArgs in
+// stubs_amd64.cpp); larger sends fall back to interpretation.
 static nmethod* route_to_nmethod(simpleLookup& L, int32 arg_count) {
 # if defined(SIC_COMPILER) || defined(FAST_COMPILER)
-  if (RouteToCompiled && arg_count <= 1 && L.result() != NULL) {
+  if (RouteToCompiled && arg_count <= 14 && L.result() != NULL) {
     nmethod* rnm = Memory->code->lookup(L.key);
     if (rnm && (PrintCompilation || PrintRecompilation))
-      lprintf("interpreter routing send to compiled nmethod %#lx\n", (long)rnm);
+      lprintf("interpreter routing %ld-arg send to compiled nmethod %#lx\n",
+              (long)arg_count, (long)rnm);
     return rnm;
   }
 # endif
