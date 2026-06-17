@@ -198,6 +198,7 @@ class interpreter: public abstract_interpreter {
 
   int32 num_pics() { return _num_pics; }
   void  attach_pics();  // look up or create PICs in the persistent table
+  void  maybe_tier_up();  // SIC-compile this method once it is hot enough
 
   void interpret_method();
 

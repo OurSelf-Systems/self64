@@ -41,7 +41,19 @@ void recompile_init() {
   
   compilers=       NEW_C_HEAP_ARRAY(fint, nstages);
   compileCounts=   NEW_C_HEAP_ARRAY( smi, nstages);
+# if defined(SIC_COMPILER) && !defined(FAST_COMPILER)
+  // The interpreter is tier 0; recompileLimits[0] is the interpreter->SIC
+  // promotion threshold, read by the interpreter's invocation counter.
+  recompileLimits= NEW_C_HEAP_ARRAY(fint, 1);
+  // 0 disables interpreter->SIC tier-up.  The trigger+compile mechanism works
+  // (verified: methods auto-compile to nmethods), but enabling it currently
+  // hangs: a tier-up compile has a side effect that makes a later interpreted
+  // send recurse forever (lookup_and_send loop) -- needs root-causing before
+  // it can be turned on by default.  Set >0 (e.g. 10*K) to re-enable for debug.
+  recompileLimits[0] = 0;
+# else
   recompileLimits= NEW_C_HEAP_ARRAY(fint, max(fint(0), nstages - 1));
+# endif
   
   switch (nstages) {
    case 0:  break;
@@ -62,7 +74,20 @@ void recompile_init() {
   for (fint i= 0; i < nstages; i++)
     compileCounts[i]= 0;
   compileAvg = new SlidingAverage(TicksPerSec);
-  IntervalTimer::CPU_timer()->enroll_async(TicksPerSec, compileAvgTracker); 
+  IntervalTimer::CPU_timer()->enroll_async(TicksPerSec, compileAvgTracker);
+}
+
+// Interpreter->SIC promotion threshold: # of interpreted invocations of a
+// method before it is SIC-compiled.  Reuses recompileLimits[0] (the tier-0
+// recompile limit) rather than introducing a separate knob, so it is tuned
+// through the same _RecompileLimits surface.  Returns 0 (disabled) outside
+// the SIC-only / interpreter-tier-0 configuration.
+fint interpreterTierUpThreshold() {
+# if defined(SIC_COMPILER) && !defined(FAST_COMPILER)
+  return recompileLimits[0];
+# else
+  return 0;
+# endif
 }
 
 

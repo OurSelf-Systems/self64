@@ -171,6 +171,41 @@ void interpreter::attach_pics() {
 }
 
 
+// Tier-0 -> SIC promotion.  Called once per activation, after this interpreter
+// is registered on active_interp_list (so a GC during the compile sees its
+// oops) and before the method body runs.  When this method's interpreted
+// invocation count reaches the promotion threshold (recompileLimits[0]) we
+// SIC-compile it, modelled on the _Perform path in oopClass: a synthetic
+// first_sendDesc() and a vframe for the current Self frame, then lookupNMethod.
+// The resulting nmethod just enters the code table; routing to it (the
+// interpreter checking the code table on send) is a separate step, so this
+// alone does not yet change which code runs.
+void interpreter::maybe_tier_up() {
+# if TARGET_IS_64BIT
+  if (!interpreter_pic_table) return;
+  extern fint interpreterTierUpThreshold();
+  fint threshold = interpreterTierUpThreshold();
+  if (threshold <= 0) return;                       // tiering disabled
+  InterpreterPICData* pd = interpreter_pic_table->lookup(method_object);
+  if (pd == NULL || pd->invocation_count != threshold) return;  // fire once, on the crossing
+
+  abstract_vframe* vf = new_vframe(currentProcess->last_self_frame(false));
+  if (vf == NULL) return;
+  cacheProbingLookup L(receiver, selector, delegatee, MH_TBD, vf,
+                       sendDesc::first_sendDesc(), NULL, false);
+  interpreter* active = currentProcess->active_interp_list;
+  if (active) active->set_lookup_in_progress(&L);   // GC-protect L's oops during compile
+  nmethod* nm = L.lookupNMethod();                  // mixed-mode blocks return NULL (no-op)
+  if (active) active->lookup_in_progress = NULL;
+  if (PrintCompilation || PrintRecompilation)
+    lprintf("*tier-up: SIC-compiled %s after %ld interp calls -> nm=%p\n",
+            selector->is_string()
+              ? stringOop(selector)->copy_null_terminated() : "?",
+            (long)threshold, (void*)nm);
+# endif
+}
+
+
 inline int32 interpreter::length_cloned_blocks() { return mi.length_literals; }
 
 inline void  interpreter::set_cloned_blocks(void* p) { 
@@ -239,6 +274,9 @@ oop interpret( oop rcv,
   interp._prev_interp = interpreter::_active_interp_list;
   interpreter::_active_interp_list = &interp;
 # endif
+
+  // Promote this method to compiled code if it has become hot (tier-0 -> SIC).
+  interp.maybe_tier_up();
 
   ((interpreter*)save1Arg(&interp))->interpret_method();
 
