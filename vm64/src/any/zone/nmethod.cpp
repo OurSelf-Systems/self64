@@ -52,6 +52,7 @@ nmethod* nmethod::new_nmethod(AbstractCompiler* c, bool generateDebugCode) {
   
   nmethod* nm = new nmethod(c, generateDebugCode);
   Memory->code->used_per_compiler[c->nmName()] += nm->size();
+  { extern int g_pendingDeps; g_pendingDeps = 0; } // deps migrated into nm
   return nm;
 }
 

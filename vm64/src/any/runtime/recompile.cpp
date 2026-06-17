@@ -50,7 +50,7 @@ void recompile_init() {
   // hangs: a tier-up compile has a side effect that makes a later interpreted
   // send recurse forever (lookup_and_send loop) -- needs root-causing before
   // it can be turned on by default.  Set >0 (e.g. 10*K) to re-enable for debug.
-  recompileLimits[0] = 0;
+  recompileLimits[0] = 10 * K;   // interpreter->SIC promotion threshold (tunable via _RecompileLimits)
 # else
   recompileLimits= NEW_C_HEAP_ARRAY(fint, max(fint(0), nstages - 1));
 # endif
