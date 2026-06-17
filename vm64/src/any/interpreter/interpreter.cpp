@@ -52,6 +52,10 @@ void interpreter_longjmp_for_NLR() {
 }
 # endif
 
+// Bumped in nmethod::flush(); routing PICs stamp cached nmethods with it so a
+// flushed (possibly reused) nmethod is never entered on a stale PIC hit.
+extern uint32 codeFlushGeneration;
+
 void invalidate_all_interpreter_pics() {
 # if TARGET_IS_64BIT
   // Persistent PICs live in the heap table — invalidate them there.
@@ -197,6 +201,10 @@ void interpreter::maybe_tier_up() {
   if (active) active->set_lookup_in_progress(&L);   // GC-protect L's oops during compile
   nmethod* nm = L.lookupNMethod();                  // mixed-mode blocks return NULL (no-op)
   if (active) active->lookup_in_progress = NULL;
+  // Drop interpreter PIC entries that cached this method as "interpret"; the
+  // next send re-looks-up and caches the fresh nmethod, so routing enters it.
+  // Only needed when routing is on (otherwise the cache is never consulted).
+  if (nm != NULL && RouteToCompiled) invalidate_all_interpreter_pics();
   if (PrintCompilation || PrintRecompilation)
     lprintf("*tier-up: SIC-compiled %s after %ld interp calls -> nm=%p\n",
             selector->is_string()
@@ -733,6 +741,21 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
     case methodResult: {
       oop holder = pic.entries[i].cachedHolder;
       if (holder == NULL) holder = rcvToSend;
+#   if TARGET_IS_64BIT
+      // Routing: enter the cached compiled method instead of interpreting,
+      // unless it has since been flushed (generation stamp mismatch).
+      nmethod* nm = pic.entries[i].cachedNMethod;
+      if (RouteToCompiled && nm != NULL
+          && pic.entries[i].cachedNMethodGen == codeFlushGeneration) {
+        oop* args = &stack[sp - arg_count];
+        oop res = arg_count > 1
+                ? EnterSelfN(rcvToSend, nm->insts(), args, arg_count)
+                : EnterSelf (rcvToSend, nm->insts(),
+                             arg_count == 0 ? badOop : args[0]);
+        oop res_after_trap = handle_return_trap_after_send_if_needed(res);
+        return res_after_trap == badOop ? res : res_after_trap;
+      }
+#   endif
       oop res = ::interpret( rcvToSend,
                          selToSend,
                          delToSend,
@@ -872,8 +895,16 @@ oop interpreter::try_perform_prim( bool hasFailBlock,
 // stubs_amd64.cpp); larger sends fall back to interpretation.
 static nmethod* route_to_nmethod(simpleLookup& L, int32 arg_count) {
 # if defined(SIC_COMPILER) || defined(FAST_COMPILER)
-  if (RouteToCompiled && arg_count <= 14 && L.result() != NULL) {
-    nmethod* rnm = Memory->code->lookup(L.key);
+  // Only normal sends are routed (resends/delegated key differently).
+  if (RouteToCompiled && arg_count <= 14 && L.result() != NULL
+      && baseLookupType(L.key.lookupType) == NormalBaseLookupType) {
+    // nmethods are keyed by a CANONICAL key: NormalLookupType (no implicit-self
+    // or receiver-static bits) and MH_NOT_A_RESEND (no resolved holder), keyed
+    // on the receiver map -- mirror that here, else the resolved send key (with
+    // those bits + a holder) never EQ-matches the compiled method.
+    MethodLookupKey ck(NormalLookupType, MH_NOT_A_RESEND, L.receiverMapOop(),
+                       L.selector(), L.delegatee());
+    nmethod* rnm = Memory->code->lookup(ck);
     if (rnm && (PrintCompilation || PrintRecompilation))
       lprintf("interpreter routing %ld-arg send to compiled nmethod %#lx\n",
               (long)arg_count, (long)rnm);
@@ -933,6 +964,11 @@ oop interpreter::lookup_and_send( LookupType type,
     // L.evaluateResult below, before returning.
     // -- claude & dmu  5/26
     
+    // Resolve a routed nmethod once: cached in the PIC (so future hits enter
+    // compiled code) and passed to evaluateResult (so this send does too).
+    // NULL when routing is off or no nmethod exists.
+    nmethod* routedNM = route_to_nmethod(L, arg_count);
+
     // Exclude performs — their selector varies at runtime, so caching
     // the result at this bytecode PC would be incorrect.
     if ( canCache && L.result() != NULL ) {
@@ -960,6 +996,9 @@ oop interpreter::lookup_and_send( LookupType type,
             pic.entries[slot].cachedMethod = L.result()->contents();
             // NULL holder signals "use rcvToSend" on PIC hit
             pic.entries[slot].cachedHolder = (resultMH == rcvToSend) ? NULL : resultMH;
+            // Enter compiled code on future hits when routing found an nmethod.
+            pic.entries[slot].cachedNMethod    = routedNM;
+            pic.entries[slot].cachedNMethodGen = codeFlushGeneration;
             break;
           }
           case constantResult:
@@ -986,8 +1025,7 @@ oop interpreter::lookup_and_send( LookupType type,
     // must happen before the function returns so the field doesn't
     // outlive L's C-stack storage.
     // -- claude & dmu  5/26
-    oop res = L.evaluateResult(&stack[sp - arg_count], arg_count,
-                               route_to_nmethod(L, arg_count));
+    oop res = L.evaluateResult(&stack[sp - arg_count], arg_count, routedNM);
     lookup_in_progress = NULL;
     return res;
   }

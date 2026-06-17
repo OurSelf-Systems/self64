@@ -477,7 +477,14 @@ void nmethod::makeZombie(bool unlnk) {
   }
 }
 
+// Bumped every time an nmethod is flushed.  The interpreter's routing PICs
+// stamp each cached nmethod with the current value and only enter a cached
+// nmethod when the stamp still matches, so a flushed (possibly reused) nmethod
+// is never entered.  -- routing (RouteToCompiled)
+uint32 codeFlushGeneration = 0;
+
 void nmethod::flush() {
+  codeFlushGeneration++;
   JITWriteScope jit_write_scope;  // mutates nmethod state in the code zone
   BlockProfilerTicks bpt(exclude_nmethod_flush);
   CSect cs(profilerSemaphore);          // for profiler

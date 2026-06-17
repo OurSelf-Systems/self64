@@ -27,10 +27,17 @@ enum ReturnPatchReason { not_patched, patched_for_profiling, patched };
 
 static const int PIC_SIZE = 4;
 
+class nmethod;
+
 struct PICEntry {
   mapOop  cachedMap;
   oop     cachedMethod;
   oop     cachedHolder;   // NULL means "use current receiver" on PIC hit
+  // Routing (RouteToCompiled): a compiled method to enter on a PIC hit instead
+  // of interpreting.  NULL = interpret.  Validated against codeFlushGeneration
+  // so a flushed nmethod is never entered (the stamp won't match after a flush).
+  nmethod* cachedNMethod;
+  uint32   cachedNMethodGen;
 };
 
 struct InterpreterPIC {
