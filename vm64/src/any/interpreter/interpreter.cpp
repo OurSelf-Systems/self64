@@ -865,6 +865,22 @@ oop interpreter::try_perform_prim( bool hasFailBlock,
 }
 
 
+// Routing (tier-up stage a): if RouteToCompiled is on and a compiled nmethod
+// exists for this resolved <=1-arg send, return it so evaluateResult enters
+// compiled code instead of interpreting.  Returns NULL (interpret) otherwise.
+static nmethod* route_to_nmethod(simpleLookup& L, int32 arg_count) {
+# if defined(SIC_COMPILER) || defined(FAST_COMPILER)
+  if (RouteToCompiled && arg_count <= 1 && L.result() != NULL) {
+    nmethod* rnm = Memory->code->lookup(L.key);
+    if (rnm && (PrintCompilation || PrintRecompilation))
+      lprintf("interpreter routing send to compiled nmethod %#lx\n", (long)rnm);
+    return rnm;
+  }
+# endif
+  (void)L; (void)arg_count;
+  return NULL;
+}
+
 oop interpreter::lookup_and_send( LookupType type,
                                          oop mh,
                                          oop delOrNameToSend ) {
@@ -967,7 +983,8 @@ oop interpreter::lookup_and_send( LookupType type,
     // must happen before the function returns so the field doesn't
     // outlive L's C-stack storage.
     // -- claude & dmu  5/26
-    oop res = L.evaluateResult(&stack[sp - arg_count], arg_count, NULL);
+    oop res = L.evaluateResult(&stack[sp - arg_count], arg_count,
+                               route_to_nmethod(L, arg_count));
     lookup_in_progress = NULL;
     return res;
   }
@@ -1013,7 +1030,8 @@ oop interpreter::lookup_and_send( LookupType type,
     // Compute result first (evaluateResult uses L's fields and may
     // allocate), then clear lookup_in_progress, then return.
     //  -- dmu 5/26
-    oop res = L.evaluateResult(&stack[sp - arg_count], arg_count, NULL);
+    oop res = L.evaluateResult(&stack[sp - arg_count], arg_count,
+                               route_to_nmethod(L, arg_count));
     lookup_in_progress = NULL;
     return res;
   }

@@ -24,9 +24,10 @@ inline void simpleLookup::setResult(oop resultMethod, oop resultMethodHolderOrMa
 inline oop simpleLookup::evaluateResult(oop* argp, int32 nargs, nmethod* nm) {
 
 # if defined(FAST_COMPILER) || defined(SIC_COMPILER)
-  // mixed-mode rule: enter compiled code when an nmethod is in hand;
-  // interpret otherwise (interpreter callers always pass nm == NULL)
-  if (!Interpret && nm != NULL) {
+  // Enter compiled code when an nmethod is in hand.  Callers decide whether
+  // to supply one: compiled-mode lookups always do; the interpreter passes
+  // NULL unless RouteToCompiled routing found an nmethod for a <=1-arg send.
+  if (nm != NULL) {
     assert(nargs <= 1, "have not implemented compiled evaluation > 1 arg");
     return EnterSelf( receiver,
                       nm->insts(),
