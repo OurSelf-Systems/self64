@@ -276,6 +276,13 @@ oop universe::garbage_collect(oop p) {
 
   object_table->gc_mark_rest();
 
+# if TARGET_IS_64BIT
+  // Weak-key finalization for the interpreter PIC cache: park entries whose
+  // method is now known to be unreachable from any real root (freed later by
+  // drain_pending_free).  Must run after the full strong closure above.
+  interpreter_pic_table->gc_weak_finalize();
+# endif
+
   // finalize unreachable objects - must be after all other gc_mark routines!
   string_table->gc_mark_contents();
 

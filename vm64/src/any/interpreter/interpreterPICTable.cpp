@@ -14,6 +14,7 @@ InterpreterPICTable* interpreter_pic_table = NULL;
 InterpreterPICTable::InterpreterPICTable() {
   memset(buckets, 0, sizeof(buckets));
   _count = 0;
+  pending_free = NULL;
 }
 
 
@@ -120,6 +121,7 @@ void InterpreterPICTable::flush_all() {
     buckets[i] = NULL;
   }
   _count = 0;
+  drain_pending_free();
 }
 
 
@@ -177,16 +179,17 @@ void InterpreterPICTable::scavenge_contents() {
 }
 
 
-// Mark all oop pointers during mark-sweep GC
+// Mark oop pointers during mark-sweep GC.
+//
+// d->method is a WEAK key — deliberately NOT marked here, so the PIC cache
+// cannot keep an otherwise-dead method (and all its literals) alive.  Entries
+// whose method is unreachable from a real root are dropped in gc_weak_finalize()
+// after the full strong closure.  The cached send-site data (maps/methods/
+// holders) IS strong-marked: those oops are non-leaf and need transitive marking
+// during the strong phase, and surviving entries need them to stay valid.
 void InterpreterPICTable::gc_mark_contents() {
-  bool need_rehash = false;
   for (int32 i = 0; i < TABLE_SIZE; i++) {
     for (InterpreterPICData* d = buckets[i]; d; d = d->next) {
-      oop old_method = d->method;
-      d->method = d->method->gc_mark();
-      if (d->method != old_method)
-        need_rehash = true;
-
       for (int32 j = 0; j < d->num_pics; j++) {
         InterpreterPIC& pic = d->pics[j];
         for (int32 k = 0; k < pic.count; k++) {
@@ -202,8 +205,57 @@ void InterpreterPICTable::gc_mark_contents() {
       }
     }
   }
+}
+
+
+// Weak-key finalization — must run AFTER the full strong-mark closure
+// (universe::garbage_collect calls this right after object_table->gc_mark_rest).
+// An entry whose method was not marked by a real root is unreachable except
+// through this cache.  We UNLINK it from the buckets and park it on pending_free
+// (freed later by drain_pending_free) — freeing here is unsafe (an interpreter
+// may hold raw _pics/_pc_to_pic pointers into the entry, and freeing during GC
+// risks the heap).  A running method has an active interpreter whose
+// method_object is marked by processes->gc_mark_contents(), so it is never
+// evicted while live.  Surviving entries' method pointers are forwarded.
+void InterpreterPICTable::gc_weak_finalize() {
+  bool need_rehash = false;
+  for (int32 i = 0; i < TABLE_SIZE; i++) {
+    InterpreterPICData** pp = &buckets[i];
+    while (*pp) {
+      InterpreterPICData* d = *pp;
+      if (!memOop(d->method)->is_gc_marked()) {
+        // method is dead — unlink and park for later free (do NOT free now)
+        *pp = d->next;
+        d->next = pending_free;
+        pending_free = d;
+        _count--;
+      } else {
+        oop old_method = d->method;
+        d->method = d->method->gc_mark();   // already marked; just forwards addr
+        if (d->method != old_method)
+          need_rehash = true;
+        pp = &d->next;
+      }
+    }
+  }
   if (need_rehash)
     rebuild_hash();
+}
+
+
+// Free entries parked by gc_weak_finalize().  Called from a non-GC point (the
+// top of interpreter::attach_pics): any interpreter currently on the stack has a
+// live (marked) method, so its entry was never parked — nothing references a
+// parked entry's raw _pics/_pc_to_pic arrays.  d->method here is a dangling oop
+// (its method was swept) but we never dereference it.
+void InterpreterPICTable::drain_pending_free() {
+  while (pending_free) {
+    InterpreterPICData* d = pending_free;
+    pending_free = d->next;
+    free(d->pc_to_pic);
+    free(d->pics);
+    free(d);
+  }
 }
 
 

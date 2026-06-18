@@ -29,6 +29,12 @@ class InterpreterPICTable : public CHeapObj {
   InterpreterPICData* buckets[TABLE_SIZE];
   int32 _count;
 
+  // Entries evicted by gc_weak_finalize() are unlinked from the buckets and
+  // parked here (linked via ->next) rather than freed during GC.  They are
+  // off the buckets, so no scavenge/mark/switch walk touches their (now dead)
+  // method; drain_pending_free() frees them at a safe, non-GC point.
+  InterpreterPICData* pending_free;
+
   int32 hash(oop method);
   void  rebuild_hash();
 
@@ -46,6 +52,14 @@ class InterpreterPICTable : public CHeapObj {
   // GC integration
   void scavenge_contents();
   void gc_mark_contents();
+  // Weak-key finalization: run AFTER the full strong-mark closure (mirrors the
+  // string table). Unlinks entries whose method is otherwise unreachable so the
+  // PIC cache stops keeping transient methods (and their literals) alive. The
+  // method oop is a WEAK key.
+  void gc_weak_finalize();
+  // Free entries parked by gc_weak_finalize(). Must be called at a non-GC point
+  // where no interpreter references a parked entry's _pics/_pc_to_pic.
+  void drain_pending_free();
   void gc_unmark_contents();
   void switch_pointers(oop from, oop to);
 };

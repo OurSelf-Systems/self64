@@ -163,6 +163,10 @@ void interpreter::attach_pics() {
 # if TARGET_IS_64BIT
   if (!PIC) return;
   if (!interpreter_pic_table) return;
+  // Safe point to reclaim entries parked by the GC's weak-key finalization:
+  // every interpreter currently on the stack has a live (marked) method, so its
+  // entry was never parked — nothing references a parked entry's raw arrays.
+  interpreter_pic_table->drain_pending_free();
   InterpreterPICData* pd = interpreter_pic_table->lookup_or_create(
       method_object, mi.length_codes, mi.codes);
   if (pd) {
