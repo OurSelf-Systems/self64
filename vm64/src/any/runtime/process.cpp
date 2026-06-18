@@ -1980,8 +1980,18 @@ void Process::prepare_to_return_to_self_after_conversion(
 }
 
 bool Process::is_done_with_killing_or_deoptimizing(frame* dest_self_fr) {
-  return  isDeoptimizing() // only used for goto bytecode primitive (only last stack frame)
-  ||      (isKilling()  &&  killVF()->as_vframe()->fr == dest_self_fr); // for killActivationsUpTo prim
-
+  if (isDeoptimizing()) // only used for goto bytecode primitive (only last stack frame)
+    return true;
+  if (!isKilling())
+    return false;
+  // _killUpToVF can already have been killed (its locals cleared) as the unwind
+  // popped past the boundary -- e.g. killActivationsUpTo: applied cross-process
+  // to a process suspended on an error pops the boundary frame itself.  Once the
+  // vframeOop is dead, every targeted activation is gone, so the kill is done;
+  // reconstructing the dead vframeOop via as_vframe() would dereference a NULL
+  // frame and crash. -- claude 6/26
+  if (killVF()->locals() == NULL)
+    return true;
+  return killVF()->as_vframe()->fr == dest_self_fr; // for killActivationsUpTo prim
 }
 
