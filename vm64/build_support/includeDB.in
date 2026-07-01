@@ -2412,6 +2412,7 @@ rscope.cpp                    addrDesc.hh
 rscope.cpp                    codeSlotsMap.hh
 rscope.cpp                    countStub.hh
 rscope.cpp                    fields.hh
+rscope.cpp                    interpreterPICTable.hh
 rscope.cpp                    recompile.hh
 rscope.cpp                    rscope.hh
 rscope.cpp                    sicExpr.hh
