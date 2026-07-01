@@ -117,6 +117,7 @@ inline interpreter::interpreter( oop rcv,
   rcvToSend= rcv;
   selToSend= VMString[VALUE]; // just a placeholder
   return_patch_reason= not_patched;
+  restartSend = false; // was uninitialized; only ever set true by recompilation / uncommon traps
   current_primDesc = NULL;
   _my_frame = NULL;
   _prev_interp = NULL;
