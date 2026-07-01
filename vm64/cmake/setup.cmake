@@ -21,10 +21,20 @@ endif()
 
 # 64-bit JIT: the SIC is the only compiler; the interpreter is tier 0.
 # (No FAST_COMPILER/NIC tier on 64-bit — see docs and the new-sic branch plan.)
-if(TARGET_ARCH STREQUAL "AARCH64_ARCH" OR TARGET_ARCH STREQUAL "X86_64_ARCH")
+#
+# SELF_INTERP_ONLY builds tier 0 alone, with no SIC compiler defined — the
+# AVP-port / headless-iOS interpreter-only configuration. Use it to compile and
+# exercise the interpreter-only kill path (the send() safepoint and its
+# handlePreemption completion, both guarded to !SIC_COMPILER). Default OFF keeps
+# the normal 64-bit JIT build.
+option(SELF_INTERP_ONLY "Build the interpreter-only VM (no SIC compiler) on 64-bit" OFF)
+if((TARGET_ARCH STREQUAL "AARCH64_ARCH" OR TARGET_ARCH STREQUAL "X86_64_ARCH") AND NOT SELF_INTERP_ONLY)
   list(APPEND _defines
     SIC_COMPILER
   )
+endif()
+if(SELF_INTERP_ONLY)
+  message(STATUS "SELF_INTERP_ONLY: building tier-0 interpreter only (no SIC_COMPILER).")
 endif()
 
 list(APPEND _defines

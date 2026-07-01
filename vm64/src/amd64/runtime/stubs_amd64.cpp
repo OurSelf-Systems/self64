@@ -25,6 +25,19 @@ extern "C" {  oop ReturnResult_stub(...) { fatal("unimp intel");  return NULL; }
 oop ReturnResult_stub_result;
 
 
+# if TARGET_ARCH == AARCH64_ARCH && !defined(SIC_COMPILER)
+// Interpreter-only build (SELF_INTERP_ONLY): the SIC compiler and its generated
+// trapdoor stubs are absent, but shared runtime code still takes the address of
+// the send-message stubs as markers (sendDesc::lookupRoutine, nlrSupport's
+// fix_current_return_address, frame asserts). No compiled code is ever entered
+// in this build, so these addresses are never jumped to; return a stable,
+// unique, non-null sentinel that can never alias a real nmethod entry.
+// -- interpreter-only build
+static char aarch64_interp_only_send_stub[2] = { 0, 0 };
+char* aarch64_SendMessage_stub()   { return &aarch64_interp_only_send_stub[0]; }
+char* aarch64_SendDIMessage_stub() { return &aarch64_interp_only_send_stub[1]; }
+# endif
+
 # if TARGET_ARCH == AARCH64_ARCH && defined(SIC_COMPILER)
 
 extern "C" oop capture_NLR_parameters_from_registers(oop result,

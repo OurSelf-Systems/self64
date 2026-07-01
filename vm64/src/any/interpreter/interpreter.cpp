@@ -217,7 +217,7 @@ void interpreter::attach_pics() {
 // interpreter checking the code table on send) is a separate step, so this
 // alone does not yet change which code runs.
 void interpreter::maybe_tier_up() {
-# if TARGET_IS_64BIT
+# if TARGET_IS_64BIT && defined(SIC_COMPILER)
   if (!interpreter_pic_table) return;
   extern fint interpreterTierUpThreshold();
   fint threshold = interpreterTierUpThreshold();
@@ -791,7 +791,7 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
     case methodResult: {
       oop holder = pic.entries[i].cachedHolder;
       if (holder == NULL) holder = rcvToSend;
-#   if TARGET_IS_64BIT
+#   if TARGET_IS_64BIT && defined(SIC_COMPILER)
       // Routing: enter the cached compiled method instead of interpreting,
       // unless it has since been flushed (generation stamp mismatch).
       nmethod* nm = pic.entries[i].cachedNMethod;
@@ -1046,9 +1046,13 @@ oop interpreter::lookup_and_send( LookupType type,
             pic.entries[slot].cachedMethod = L.result()->contents();
             // NULL holder signals "use rcvToSend" on PIC hit
             pic.entries[slot].cachedHolder = (resultMH == rcvToSend) ? NULL : resultMH;
+#         if defined(SIC_COMPILER)
             // Enter compiled code on future hits when routing found an nmethod.
+            // Routing state is SIC-only; the interpreter-only build never enters
+            // compiled code, so it neither caches an nmethod nor stamps it.
             pic.entries[slot].cachedNMethod    = routedNM;
             pic.entries[slot].cachedNMethodGen = codeFlushGeneration;
+#         endif
             break;
           }
           case constantResult:
