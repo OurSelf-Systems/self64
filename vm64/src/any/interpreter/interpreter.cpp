@@ -11,6 +11,25 @@ oop sneaky_method_argument_to_interpret;
 
 interpreter* interpreter::_active_interp_list = NULL;
 
+# if TARGET_IS_64BIT
+// Last-resort lookup used when neither currentProcess nor stackFor() owns the
+// frame -- e.g. the debugger primitives (_ActivationStack, _ActivationAt:)
+// walking a suspended process's stack from the shell. Matching by _my_frame
+// identity is authoritative: distinct stacks occupy distinct memory, so a
+// frame address can belong to at most one live interpreter.
+// -- claude & dmu 6/2026
+static frame*       interp_search_frame;
+static interpreter* interp_search_result;
+static void find_interp_in_process(Process* p) {
+  if (interp_search_result != NULL)  return;
+  for (interpreter* i = p->active_interp_list; i != NULL; i = i->_prev_interp)
+    if (i->_my_frame == interp_search_frame) {
+      interp_search_result = i;
+      return;
+    }
+}
+# endif
+
 interpreter* interpreter::find_interpreter_for_frame(frame* f) {
 # if TARGET_IS_64BIT
   // On x86_64, interpreter lists are per-process. First check the
@@ -27,7 +46,15 @@ interpreter* interpreter::find_interpreter_for_frame(frame* f) {
         return i;
     }
   }
-  return NULL;
+  // Fall back to scanning every process's list. Covers callers that walk a
+  // foreign stack whose owner stackFor() misidentifies (the console and ui
+  // debuggers' activation primitives); unlike the bare stackFor() path it
+  // can't return a spurious NULL for a live interpreted frame.
+  // -- claude & dmu 6/2026
+  interp_search_frame  = f;
+  interp_search_result = NULL;
+  processes->processesDo(find_interp_in_process, true);
+  return interp_search_result;
 # else
   for (interpreter* i = _active_interp_list; i != NULL; i = i->_prev_interp) {
     if (i->_my_frame == f)
