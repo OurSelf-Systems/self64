@@ -690,7 +690,25 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
     if (!restartSend)
       break;
 #if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
-    fatal("sends only restart for uncommon traps or recompilation");
+    // Kill/retry on the interpreter-only build.  `restartSend` means "re-dispatch
+    // this send", and on this build it is set only by the kill convert (no
+    // recompilation).  Re-dispatch happens by simply looping back to re-run
+    // lookup_and_send below: rcvToSend/selToSend/arg_count and the expression-
+    // stack operands are all intact (sp is not adjusted until after this loop)
+    // and this C frame survives the green-thread suspend, so no bytecode is
+    // replayed -- no is.index/selector rebuild needed.
+    //
+    // But first mirror the compiled VM's per-send stack-limit safepoint: the
+    // kill armed preemption, so service it here, BEFORE re-running the send.
+    // interruptCheck -> handlePreemption is the completion that resets the
+    // killing flag and transfers control back to the killer process, leaving
+    // this process parked at this send.  A later `continue` resumes here and
+    // the loop re-runs lookup_and_send (re-lookup picks up an edited method).
+    // This sits past `if (!restartSend) break`, so normal sends never reach it
+    // -- zero cost off the kill path.  -- claude & dmu 6/2026
+    restartSend = false;
+    if (fastPreemptionCheck())
+      SaveNonVolRegsAndCall0(interruptCheck);
 #endif
   }
   stack[resSP] = res;
