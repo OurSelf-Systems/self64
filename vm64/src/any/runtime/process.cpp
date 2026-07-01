@@ -794,6 +794,34 @@ inline void handlePreemption() {
     // done killing frames / deoptimizing - return to caller of primitive
     currentProcess->resetKilling();
     currentProcess->resetDeoptimizing();
+#if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+    // The interpreter-only kill reaches its target via a per-send stack-limit
+    // safepoint (see interpreter::send) rather than a JIT return trap, so on
+    // the way out we must hand the killer a clean global VM state -- otherwise
+    // the leftovers below bite, since all of these are global / not restored by
+    // transfer() on a cooperative switch.  Guarded to the interpreter-only build
+    // (same as the send() safepoint); the JIT kill path is unaffected.
+    // -- claude & dmu 6/2026
+    // (1) The kill ran through the single-step/stop machinery, which can leave
+    //     the process flagged to stop at every bytecode (+ a stale preemptCause).
+    //     Left set, on resume it yields to twains, twains re-runs it, it yields
+    //     again -- the scheduler spins in transfer:/twains:Result:SingleStep:Stop:.
+    currentProcess->resetStopping();
+    currentProcess->resetSingleStepping();
+    currentProcess->setStopPoint(NULL);
+    preemptCause = cNoCause;
+    // (2) The kill's fake NLR (re-armed by the convert's save_NLR_results) can
+    //     leave have_NLR_through_C set; the killer's next send would then see a
+    //     pending NLR and unwind its OWN doIt.  The kill is finished here, so
+    //     clear it.
+    NLRSupport::reset_have_NLR_through_C();
+    // (3) The kill armed preemption (SPLimit=stackEnd).  SPLimit is global and
+    //     transfer() does not restore it per-process, so disarm against the
+    //     stack we are about to resume (the killer, prevProcess) -- not
+    //     currentProcess (the killed process, a different stack) -- or the
+    //     killer trips fastPreemptionCheck at its next send and yields forever.
+    setSPLimit(prevProcess->spLimit());
+#endif
     prevProcess->transfer();
   } else if (twainsProcess && preemptCause != cNoCause) {
     if (SignalInterface::are_self_signals_blocked()  &&  preemptCause == cSignal) {
