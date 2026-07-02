@@ -634,6 +634,7 @@ deps.hh                       slotsMapDeps.hh
 diDesc.cpp                    abstract_interpreter_inline.hh
 diDesc.cpp                    complexLookup.hh
 diDesc.cpp                    diDesc.hh
+diDesc.cpp                    preserve.hh
 diDesc.cpp                    fields.hh
 diDesc.cpp                    label_inline.hh
 diDesc.cpp                    nmethod.hh

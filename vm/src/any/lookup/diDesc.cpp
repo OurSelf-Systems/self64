@@ -65,6 +65,9 @@ pc_t DIDesc::sendMessage( frame* lookupFrame,
 
   ResourceMark m;
   FlushRegisterWindows(); // for vframe conversion below
+  // Same GC hazard as sendDesc::sendMessage: the lookup can scavenge, and
+  // receiver/selector/delegatee/arg1 live only in C locals and L's captures.
+  preserved p_rcvr(receiver), p_sel(selector), p_del(delegatee), p_arg(arg1);
   compilingLookup L( receiver,
                      selector,
                      delegatee,
@@ -77,10 +80,13 @@ pc_t DIDesc::sendMessage( frame* lookupFrame,
   nmethod* nm = switchToVMStack(SendDIMessage_cont,  &L);
   if (SilentTrace) LOG_EVENT1("DIDesc::sendMessage: found %#lx", nm);
 
-  return 
-    Interpret
-    ? L.interpretResultForCompiledSender(arg1)
-    : nm->insts();
+  if (Interpret) {
+    L.receiver      = p_rcvr.value;
+    L.key.selector  = p_sel.value;
+    L.key.delegatee = p_del.value;
+    return L.interpretResultForCompiledSender(p_arg.value);
+  }
+  return nm->insts();
 }
 
 

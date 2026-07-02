@@ -80,7 +80,9 @@ static char* SendDIMessage_stub_generated = NULL;
 // (EnterSelfMaxArgs + 2) words (lr hole + receiver + args).  Routing
 // (route_to_nmethod in interpreter.cpp) must not enter compiled code for a
 // send with more arguments than this -- keep that cap in sync.
-const fint EnterSelfMaxArgs = 14;
+extern const fint EnterSelfMaxArgs = 14; // extern: consts are internal by
+                                         // default, and the debug build's
+                                         // assert in EnterSelfN references it
 
 // the trapdoor-resident lookup stub that empty/missed inline caches call
 char* aarch64_SendMessage_stub() {

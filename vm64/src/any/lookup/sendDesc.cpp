@@ -593,6 +593,13 @@ char* sendDesc::sendMessage( frame* lookupFrame,
   // have to do it the slow way
   ResourceMark m;
   FlushRegisterWindows(); // for vframe conversion below
+  // The lookup below can run Self code and scavenge.  receiver/sel/del live
+  // only in C locals and L's captures, which no GC walk sees (the
+  // interpreter-sender path protects its lookup via lookup_in_progress);
+  // preserve them and refresh L's captures for the mixed-mode interpret
+  // path, which reads them after the lookup.  A stale receiver here is
+  // handed to the interpreted callee and corrupts from there.
+  preserved p_rcvr(receiver), p_sel(sel), p_del(del);
   cacheProbingLookup L( receiver,
                         sel,
                         del,
@@ -608,8 +615,12 @@ char* sendDesc::sendMessage( frame* lookupFrame,
   if (SilentTrace) LOG_EVENT1("sendDesc::sendMessage: found %#lx", nm);
 
   Unused(arg1);
-  if (Interpret || nm == NULL)
+  if (Interpret || nm == NULL) {
+    L.receiver      = p_rcvr.value;
+    L.key.selector  = p_sel.value;
+    L.key.delegatee = p_del.value;
     return interpretSendForCompiledSender(&L, lookupFrame);
+  }
   return nm->verifiedEntryPoint();
 }
 
