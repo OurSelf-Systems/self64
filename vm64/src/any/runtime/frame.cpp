@@ -721,7 +721,11 @@ void  unpatch_the_convertFrame_and_get_returnTrap_info(
 
   if ( Memory->code->contains(selfPC) ) {
     // aha! compiled code
-    assert(!Interpret, "interpreted code should not get here");
+    // Under tiering (Interpret + RouteToCompiled) patched compiled frames are
+    // normal: interpreted sends route into nmethods, and a routed frame can be
+    // patched like any eager-mode frame (same glue-caller shape as the
+    // firstSelfFrame), so the eager handling below applies unchanged.
+    assert(!Interpret || RouteToCompiled, "interpreted code should not get here");
     if (patched_self_frame->is_patched()) {
       // really is a return trap; outgoing args were saved when frame was patched
       OutgoingArgsOfReturnTrapOrRecompileFrame = patched_self_frame->patched_frame_saved_outgoing_args();
