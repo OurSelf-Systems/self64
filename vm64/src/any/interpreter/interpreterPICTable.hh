@@ -17,6 +17,8 @@ struct InterpreterPICData {
   oop               method;     // key (method oop) — for GC traversal
   int32             num_pics;   // number of send sites in method
   int32             invocation_count; // activations; the SIC trigger input
+  int32             tier_up_at; // 0: promote at the threshold; >0: retry
+                                // trigger after a failed compile; -1: never
   int32             map_len;    // length of pc_to_pic array
   InterpreterPIC*   pics;       // malloc'd array of PICs
   int16_t*          pc_to_pic;  // malloc'd PC→PIC index map
@@ -47,6 +49,10 @@ class InterpreterPICTable : public CHeapObj {
                                        u_char* codes);
 
   void invalidate_all();
+  // Drop just the entries whose cached result is `method` (used after a
+  // tier-up compile so those sites re-look-up and route to the new nmethod,
+  // leaving every other method's type feedback intact).
+  void invalidate_entries_caching(oop method);
   void flush_all();
 
   // GC integration

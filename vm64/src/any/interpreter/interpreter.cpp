@@ -38,6 +38,13 @@ interpreter* interpreter::find_interpreter_for_frame(frame* f) {
     if (i->_my_frame == f)
       return i;
   }
+  // A frame on the current process's own stack that the scan above missed is
+  // definitely not an interpreted frame (a stack belongs to exactly one
+  // process, whose interpreters are all on its list).  Answer without the
+  // global fallback: trap-time stack walks classify every C frame through
+  // here, and scanning every process's interpreter list for each of them
+  // made routed startup quadratically slow.
+  if (currentProcess->contains(f)) return NULL;
   // Frame not found in current process — find its owning process
   Stack* stk = processes->stackFor(f);
   if (stk && stk->process != currentProcess) {
@@ -223,7 +230,16 @@ void interpreter::maybe_tier_up() {
   fint threshold = interpreterTierUpThreshold();
   if (threshold <= 0) return;                       // tiering disabled
   InterpreterPICData* pd = interpreter_pic_table->lookup(method_object);
-  if (pd == NULL || pd->invocation_count != threshold) return;  // fire once, on the crossing
+  if (pd == NULL) return;
+  // Fire only on the crossing (one int compare per activation off it).
+  // tier_up_at is 0 until a compile fails; a failure moves the trigger to
+  // 2x the current count so failing methods retry with doubling backoff.
+  fint trigger = pd->tier_up_at > 0 ? pd->tier_up_at : threshold;
+  if (pd->invocation_count != trigger) return;
+  // Mixed-mode blocks can't be compiled standalone (lookupNMethod returns
+  // NULL for them every time); returning without arming a retry makes this
+  // the last time the block's entry is ever considered.
+  if (receiver->map()->is_block()) return;
 
   abstract_vframe* vf = new_vframe(currentProcess->last_self_frame(false));
   if (vf == NULL) return;
@@ -231,17 +247,24 @@ void interpreter::maybe_tier_up() {
                        sendDesc::first_sendDesc(), NULL, false);
   interpreter* active = currentProcess->active_interp_list;
   if (active) active->set_lookup_in_progress(&L);   // GC-protect L's oops during compile
-  nmethod* nm = L.lookupNMethod();                  // mixed-mode blocks return NULL (no-op)
+  nmethod* nm = L.lookupNMethod();
   if (active) active->lookup_in_progress = NULL;
-  // Drop interpreter PIC entries that cached this method as "interpret"; the
-  // next send re-looks-up and caches the fresh nmethod, so routing enters it.
-  // Only needed when routing is on (otherwise the cache is never consulted).
-  if (nm != NULL && RouteToCompiled) invalidate_all_interpreter_pics();
+  if (nm == NULL) {
+    // Compile failed; retry at double the count, giving up once the trigger
+    // would no longer fit the int32 counter.
+    pd->tier_up_at = trigger <= (1 << 29) ? int32(trigger * 2) : -1;
+  } else if (RouteToCompiled) {
+    // Drop only the PIC entries that cached this method as "interpret"; the
+    // next send at those sites re-looks-up and caches the fresh nmethod, so
+    // routing enters it -- without wiping every other method's type feedback
+    // (which the SIC now reads on tier-up).
+    interpreter_pic_table->invalidate_entries_caching(method_object);
+  }
   if (PrintCompilation || PrintRecompilation)
     lprintf("*tier-up: SIC-compiled %s after %ld interp calls -> nm=%p\n",
             selector->is_string()
               ? stringOop(selector)->copy_null_terminated() : "?",
-            (long)threshold, (void*)nm);
+            (long)trigger, (void*)nm);
 # endif
 }
 

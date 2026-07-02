@@ -63,6 +63,7 @@ InterpreterPICData* InterpreterPICTable::lookup_or_create(
   d->method   = method;
   d->num_pics = num_sends;
   d->invocation_count = 0;
+  d->tier_up_at = 0;
   d->map_len  = num_codes;
 
   d->pc_to_pic = (int16_t*)malloc(num_codes * sizeof(int16_t));
@@ -102,6 +103,33 @@ void InterpreterPICTable::invalidate_all() {
       for (int32 j = 0; j < d->num_pics; j++) {
         d->pics[j].count = 0;
         memset(d->pics[j].hitCount, 0, sizeof(d->pics[j].hitCount));
+      }
+    }
+  }
+}
+
+
+void InterpreterPICTable::invalidate_entries_caching(oop method) {
+  for (int32 i = 0; i < TABLE_SIZE; i++) {
+    for (InterpreterPICData* d = buckets[i]; d; d = d->next) {
+      for (int32 j = 0; j < d->num_pics; j++) {
+        InterpreterPIC& pic = d->pics[j];
+        // compact the entries, dropping those whose cached result is `method`
+        int32 dst = 0;
+        for (int32 k = 0; k < pic.count; k++) {
+          if (pic.entries[k].cachedMethod == method) continue;
+          if (dst != k) {
+            pic.entries[dst]    = pic.entries[k];
+            pic.hitCount[dst]   = pic.hitCount[k];
+            pic.resultType[dst] = pic.resultType[k];
+            pic.slotOffset[dst] = pic.slotOffset[k];
+          }
+          dst++;
+        }
+        if (dst != pic.count) {
+          pic.count = (int8_t)dst;
+          pic.next  = 0;  // only read once the PIC refills to PIC_SIZE
+        }
       }
     }
   }
