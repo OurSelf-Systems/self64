@@ -103,7 +103,9 @@ void set_flags_for_platform(bool verbose) {
   if (verbose) lprintf("Platform flags:\n");
   LogVMMessages                        = true;   if (verbose) lprintf("LogVMMessages = true\n");
   PrintScriptName                      = true;   if (verbose) lprintf("PrintScriptName = true\n");
-  Inline                               = false;  if (verbose) lprintf("Inline = false\n");
+  // Inline was forced off during the port's bring-up; the SIC now inlines
+  // with interpreter type feedback on tier-up, so leave the default (true).
+  if (verbose) lprintf("Inline = %s\n", Inline ? "true" : "false");
 # ifdef SIC_COMPILER
     SICDeferUncommonBranches             = false;  if (verbose) lprintf("SICDeferUncommonBranches = false (not implemented)\n");
     SICReplaceOnStack                    = false;  if (verbose) lprintf("SICReplaceOnStack = false (not implemented)\n");

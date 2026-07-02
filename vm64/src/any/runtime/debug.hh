@@ -591,8 +591,8 @@ class FlagSettingInt {
     BOOLEAN_PRIM_TEMPLATE(template, PrintSICCompilation, false,               \
     "print each SIC compilation", false)                                      \
                                                                               \
-    BOOLEAN_PRIM_TEMPLATE(template, RouteToCompiled, false,                   \
-    "interpreter enters a compiled nmethod (<=1 arg) when one exists", true)  \
+    BOOLEAN_PRIM_TEMPLATE(template, RouteToCompiled, true,                    \
+    "interpreter enters a compiled nmethod when one exists", true)            \
                                                                               \
     BOOLEAN_PRIM_TEMPLATE(template, SICDebug, false,                          \
     "enable various features for debugging the SIC", true)                    \
