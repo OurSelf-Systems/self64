@@ -550,17 +550,30 @@ char* interpretSendForCompiledSender(compilingLookup* L,
 
 static nmethod* SendMessage_cont( compilingLookup* L) {
   if ( Interpret ) {
-    L->perform_full_lookup();
-    // We are going to interpret, not compile: the dependency nodes the lookup
-    // just spliced into the touched maps' dependent lists will never be
-    // migrated into an nmethod.  Left behind, they dangle in the (heap)
-    // dependent lists while the shared compiler dependency buffer they live in
-    // is reused by the next real compilation -- corrupting the lists.  Unlink
-    // them now.
-    L->remove_all_deps();
-    return NULL;
+    extern fint interpreterTierUpThreshold();
+    if (interpreterTierUpThreshold() <= 0) {
+      // Pure interpretation (tiering off): no compiling at all.  We are going
+      // to interpret, not compile: the dependency nodes the lookup just
+      // spliced into the touched maps' dependent lists will never be migrated
+      // into an nmethod.  Left behind, they dangle in the (heap) dependent
+      // lists while the shared compiler dependency buffer they live in is
+      // reused by the next real compilation -- corrupting the lists.  Unlink
+      // them now.
+      L->perform_full_lookup();
+      L->remove_all_deps();
+      return NULL;
+    }
+    // Tiered mode: this trap only fires for COMPILED senders, so this send
+    // runs at compiled-code frequency.  Bridging it to the interpreter every
+    // time dominates steady state (data-slot accessors never tier up --
+    // there is no method activation to count), so compile the callee exactly
+    // as eager mode does below.  lookupNMethod returns NULL cheaply for a
+    // block callee whose home frame is interpreted; those keep bridging.
   }
-  return L->send_desc()->lookup_compile_and_backpatch(L);
+  nmethod* nm = L->send_desc()->lookup_compile_and_backpatch(L);
+  if (nm == NULL)
+    L->remove_all_deps();  // interpreting after all; see dangling-deps note
+  return nm;
 }
 
 
@@ -625,7 +638,7 @@ char* sendDesc::sendMessage( frame* lookupFrame,
   if (SilentTrace) LOG_EVENT1("sendDesc::sendMessage: found %#lx", nm);
 
   Unused(arg1);
-  if (Interpret || nm == NULL) {
+  if (nm == NULL) {   // uncompilable or pure-interpretation mode: bridge
     L.receiver      = p_rcvr.value;
     L.key.selector  = p_sel.value;
     L.key.delegatee = p_del.value;
@@ -644,10 +657,20 @@ char* sendDesc::fastCacheLookupAndBackpatch( LookupType t,
     // too complicated to short-circuit these lookups
     return NULL;
   }
-  // try mh-independent 
+  // try mh-independent
   MethodLookupKey key(t, MH_TBD, receiverMapOop, sel, del);
   nmethod* nm= Memory->code->lookup(key);
-  
+
+  if (nm == NULL) {
+    // Tier-up nmethods enter the code table under the CANONICAL key
+    // (NormalLookupType, MH_NOT_A_RESEND -- see interpreter routing); a send
+    // site whose lookup type carries static bits misses them above, so
+    // re-probe canonically before giving up.
+    MethodLookupKey ck(NormalLookupType, MH_NOT_A_RESEND, receiverMapOop,
+                       sel, del);
+    nm= Memory->code->lookup(ck);
+  }
+
   if (nm == NULL) {
     NumberOfFastLookupMisses++;
     return NULL;

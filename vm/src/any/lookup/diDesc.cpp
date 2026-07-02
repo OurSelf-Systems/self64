@@ -47,6 +47,16 @@ pc_t SendDIMessage(sendDesc* sd, frame* lookupFrame, DIDesc* dc,
 
 static nmethod* SendDIMessage_cont( compilingLookup* L ) {
   if ( Interpret ) {
+# if TARGET_IS_64BIT
+    extern fint interpreterTierUpThreshold();
+    if (interpreterTierUpThreshold() > 0) {
+      // Tiered mode: compile through instead of bridging every send to the
+      // interpreter -- see SendMessage_cont.  NULL (uncompilable) bridges.
+      nmethod* nm = L->di_desc()->lookup_compile_and_backpatch(L);
+      if (nm == NULL) L->remove_all_deps();
+      return nm;
+    }
+# endif
     L->perform_full_lookup();
     return NULL;
   }
@@ -96,11 +106,11 @@ pc_t DIDesc::sendMessage( frame* lookupFrame,
   nmethod* nm = switchToVMStack(SendDIMessage_cont,  &L);
   if (SilentTrace) LOG_EVENT1("DIDesc::sendMessage: found %#lx", nm);
 
-  if (Interpret) {
+# if TARGET_IS_64BIT
+  if (nm == NULL) {   // uncompilable or pure-interpretation mode: bridge
     L.receiver      = p_rcvr.value;
     L.key.selector  = p_sel.value;
     L.key.delegatee = p_del.value;
-# if TARGET_IS_64BIT
     // Full mixed-mode send: marshal every argument from the caller's
     // outgoing area and handle method results.  (The arg1-only
     // interpretResultForCompiledSender bridge covers just data/constant/
@@ -108,10 +118,15 @@ pc_t DIDesc::sendMessage( frame* lookupFrame,
     // for methods.)  Returns through ReturnResult/ReturnNLR, which end in a
     // plain return to lr and so work for compiled and glue callers alike.
     return interpretSendForCompiledSender(&L, lookupFrame);
-# else
-    return L.interpretResultForCompiledSender(p_arg.value);
-# endif
   }
+# else
+  if (Interpret) {
+    L.receiver      = p_rcvr.value;
+    L.key.selector  = p_sel.value;
+    L.key.delegatee = p_del.value;
+    return L.interpretResultForCompiledSender(p_arg.value);
+  }
+# endif
   return nm->insts();
 }
 
