@@ -419,13 +419,24 @@ extern "C" __attribute__((naked)) void PrimCallReturnTrap() {
   // later walks disagreed with the canonical vframeOops by 8). -- rca
   // Shaped like ReturnTrap: normal entry +0, NLR entry +8.
   __asm__ __volatile__(
+    "0:\n\t"
     "b     3f\n\t"                 // +0: normal (prim-call-return) entry
     "nop\n\t"                      // +4
     // +8: NLR entry -- x0 = result, x1 = NLRHomeReg, x2 = NLRHomeIDReg.
     // F from the unrounded entry sp; own sp rounded down to 16 (see the
     // ReturnTrap NLR entry comment: the patched record can be the 0 mod 16
     // C-boundary alias, landing us 8-misaligned).
-    "sub   x10, sp, #8\n\t"        // epilogue geometry: F = sp - 8
+    // The NLR geometry is ambiguous just like the normal entry's: an NLR can
+    // arrive through the true prim-call shape (sp = F + 16, e.g. a failing
+    // prim's fail block doing ^) as well as the epilogue shape (sp = F + 8).
+    // Disambiguate by the patched-slot content; sp-8 stays the fallback.
+    "sub   x10, sp, #16\n\t"       // candidate F (true prim-call geometry)
+    "adr   x13, 0b\n\t"            // this trap's entry (the patched value)
+    "ldur  x11, [sp, #-8]\n\t"     // [x10 + 8]: sp-16's saved-pc slot
+    "cmp   x11, x13\n\t"
+    "b.eq  5f\n\t"                 // sp-16 is patched -> use it
+    "sub   x10, sp, #8\n\t"        // fallback: epilogue geometry, F = sp - 8
+    "5:\n\t"
     "sub   x11, sp, #32\n\t"
     "and   x11, x11, #0xfffffffffffffff0\n\t"
     "mov   sp, x11\n\t"
@@ -441,8 +452,23 @@ extern "C" __attribute__((naked)) void PrimCallReturnTrap() {
     "1:\n\t"
     "brk   #0x4f\n\t"
     "3:\n\t"                       // ---- normal entry ----
-    "sub   x10, sp, #16\n\t"       // F candidate; C side disambiguates
-                                   //   {sp-16, sp-8} via is_patched()
+    // Disambiguate {sp-16, sp-8} HERE, not on the C side: the frame record
+    // stored below is read by every independent stack walk (the watermark
+    // kill, conversion, GC), so a stale sp-16 guess in it sends those walks
+    // one word low into the patched frame's saved words.  The true record's
+    // saved-pc slot still holds this trap's address at this instant (the
+    // is_patched() invariant); same precedence as get_patched_self_frame:
+    // sp-16 if patched, else sp-8 if patched, else sp-16.
+    "sub   x10, sp, #16\n\t"       // candidate F (true prim-call geometry)
+    "adr   x13, 0b\n\t"            // this trap's entry (the patched value)
+    "ldur  x11, [sp, #-8]\n\t"     // [x10 + 8]: sp-16's saved-pc slot
+    "cmp   x11, x13\n\t"
+    "b.eq  4f\n\t"                 // sp-16 is patched -> use it
+    "ldr   x11, [sp]\n\t"          // [(sp-8) + 8]: sp-8's saved-pc slot
+    "sub   x12, sp, #8\n\t"        // candidate F (method-epilogue geometry)
+    "cmp   x11, x13\n\t"
+    "csel  x10, x12, x10, eq\n\t"  // sp-8 patched -> sp-8, else keep sp-16
+    "4:\n\t"
     "sub   sp, sp, #32\n\t"
     "str   x10, [sp, #0]\n\t"
     "adr   x11, 2f\n\t"
