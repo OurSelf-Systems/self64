@@ -600,6 +600,15 @@ char* sendDesc::sendMessage( frame* lookupFrame,
   // path, which reads them after the lookup.  A stale receiver here is
   // handed to the interpreted callee and corrupts from there.
   preserved p_rcvr(receiver), p_sel(sel), p_del(del);
+  // Also walk the sender's outgoing receiver/argument SLOTS for the duration
+  // of the lookup: a mixed-mode interpreted callee reads its arguments from
+  // these frame slots for its whole activation, and no frame walk covers
+  // them while the send is still in the VM -- the callee frame that would
+  // cover them does not yet exist.  Anchored to this real send, this needs
+  // none of the parked-pc heuristics that sank the gated do_vm_frame walk.
+  // Layout above lookupFrame: [2] lr hole, [3] receiver, [4..] args.
+  fint out_n = sel->is_string() ? stringOop(sel)->arg_count() : 0;
+  preservedArray p_out((oop*)lookupFrame + 3, 1 + out_n);
   cacheProbingLookup L( receiver,
                         sel,
                         del,

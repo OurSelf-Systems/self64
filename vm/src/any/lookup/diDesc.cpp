@@ -68,6 +68,10 @@ pc_t DIDesc::sendMessage( frame* lookupFrame,
   // Same GC hazard as sendDesc::sendMessage: the lookup can scavenge, and
   // receiver/selector/delegatee/arg1 live only in C locals and L's captures.
   preserved p_rcvr(receiver), p_sel(selector), p_del(delegatee), p_arg(arg1);
+  // Walk the sender's outgoing receiver/argument slots across the lookup;
+  // see sendDesc::sendMessage for why.
+  fint out_n = selector->is_string() ? stringOop(selector)->arg_count() : 0;
+  preservedArray p_out((oop*)lookupFrame + 3, 1 + out_n);
   compilingLookup L( receiver,
                      selector,
                      delegatee,
