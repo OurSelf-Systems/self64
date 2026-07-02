@@ -276,6 +276,11 @@
   }
 
   RAbstractSelfScope* constructInterpreterRScope(oop method, mapOop rcvrMap) {
+    // Escape hatch for bisecting miscompiles: compile without interpreter
+    // type feedback when SELF_NO_INTERP_FEEDBACK is set.
+    { static int no_fb = -1;
+      if (no_fb < 0) no_fb = getenv("SELF_NO_INTERP_FEEDBACK") != NULL;
+      if (no_fb) return NULL; }
     if (interpreter_pic_table == NULL) return NULL;
     InterpreterPICData* pd = interpreter_pic_table->lookup(method);
     if (pd == NULL) return NULL;
