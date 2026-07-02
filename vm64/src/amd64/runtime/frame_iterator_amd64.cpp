@@ -14,16 +14,18 @@ void FrameIterator::do_vm_frame() {
 # if TARGET_ARCH == I386_ARCH
   assert(SaveOutgoingArgumentsOfPatchedFrames, "always true for I386");
 # endif
-# if TARGET_ARCH != AARCH64_ARCH
   if (!SaveOutgoingArgumentsOfPatchedFrames)
     return;
-# endif
-  // aarch64 walks these regardless of the flag (which set_flags_for_platform
-  // leaves false): while a compiled send is in the VM doing its lookup, the
-  // in-flight receiver and arguments live in the sender's outgoing area with
-  // no other GC coverage -- the callee frame that would cover them via
-  // do_incoming_arguments does not exist yet.  A scavenge during the lookup
-  // otherwise hands the interpreted callee stale oops at birth.
+  // KNOWN GAP (aarch64, flag off): while a compiled send is in the VM doing
+  // its lookup, the in-flight receiver and arguments live in the sender's
+  // outgoing area with no GC coverage -- the callee frame that would cover
+  // them via do_incoming_arguments does not exist yet, so a scavenge during
+  // the lookup hands the interpreted callee stale oops at birth (richards'
+  // results-check failure).  An attempt to walk them here regardless of the
+  // flag fixed that but crashed on other in-flight shapes (non-send VM
+  // calls, layouts outgoing_arg_count misjudges) even with the sendDesc-
+  // relocation validation below; enabling this safely needs the compiler to
+  // record in-flight send geometry rather than heuristics over parked pcs.
   do_incoming_arguments_of_vm_frame_called_from_self();
 }
 
