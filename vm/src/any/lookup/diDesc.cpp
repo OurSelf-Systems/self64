@@ -72,11 +72,23 @@ pc_t DIDesc::sendMessage( frame* lookupFrame,
   // see sendDesc::sendMessage for why.
   fint out_n = selector->is_string() ? stringOop(selector)->arg_count() : 0;
   preservedArray p_out((oop*)lookupFrame + 3, 1 + out_n);
+# if TARGET_IS_64BIT
+  // A routed (EnterSelf-glue) caller reaches this trap too: its outgoing
+  // area has send-site shape and its return point is the firstSelfFrame
+  // sendDesc, so everything here works EXCEPT describing the sending frame
+  // -- the glue is not an nmethod, and new_vframe would findNMethod its pc.
+  // Hand the lookup a NULL sending vframe instead (block-home checks fall
+  // back to last_self_frame).
+  extern char* firstSelfFrame_returnPC;
+  bool routed_caller = (char*)sd == firstSelfFrame_returnPC;
+# else
+  bool routed_caller = false;
+# endif
   compilingLookup L( receiver,
                      selector,
                      delegatee,
                      MH_TBD,  // method holder
-                     new_vframe(lookupFrame),
+                     routed_caller ? NULL : new_vframe(lookupFrame),
                      sd,
                      this,
                      false ); // don't want a debug version
@@ -88,7 +100,17 @@ pc_t DIDesc::sendMessage( frame* lookupFrame,
     L.receiver      = p_rcvr.value;
     L.key.selector  = p_sel.value;
     L.key.delegatee = p_del.value;
+# if TARGET_IS_64BIT
+    // Full mixed-mode send: marshal every argument from the caller's
+    // outgoing area and handle method results.  (The arg1-only
+    // interpretResultForCompiledSender bridge covers just data/constant/
+    // assignment slots -- interpret_from_compiled_sender is unimplemented
+    // for methods.)  Returns through ReturnResult/ReturnNLR, which end in a
+    // plain return to lr and so work for compiled and glue callers alike.
+    return interpretSendForCompiledSender(&L, lookupFrame);
+# else
     return L.interpretResultForCompiledSender(p_arg.value);
+# endif
   }
   return nm->insts();
 }

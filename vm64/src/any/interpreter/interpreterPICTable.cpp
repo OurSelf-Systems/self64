@@ -123,6 +123,12 @@ void InterpreterPICTable::invalidate_entries_caching(oop method) {
             pic.hitCount[dst]   = pic.hitCount[k];
             pic.resultType[dst] = pic.resultType[k];
             pic.slotOffset[dst] = pic.slotOffset[k];
+            pic.adepsCount[dst] = pic.adepsCount[k];
+            for (int32 a = 0; a < pic.adepsCount[k]; a++) {
+              pic.adepsHolder[dst][a] = pic.adepsHolder[k][a];
+              pic.adepsOffset[dst][a] = pic.adepsOffset[k][a];
+              pic.adepsValue [dst][a] = pic.adepsValue [k][a];
+            }
           }
           dst++;
         }
@@ -198,6 +204,10 @@ void InterpreterPICTable::scavenge_contents() {
           if (pic.entries[k].cachedHolder)
             pic.entries[k].cachedHolder =
                 pic.entries[k].cachedHolder->scavenge();
+          for (int32 a = 0; a < pic.adepsCount[k]; a++) {
+            pic.adepsHolder[k][a] = pic.adepsHolder[k][a]->scavenge();
+            pic.adepsValue [k][a] = pic.adepsValue [k][a]->scavenge();
+          }
         }
       }
     }
@@ -229,6 +239,10 @@ void InterpreterPICTable::gc_mark_contents() {
           if (pic.entries[k].cachedHolder)
             pic.entries[k].cachedHolder =
                 pic.entries[k].cachedHolder->gc_mark();
+          for (int32 a = 0; a < pic.adepsCount[k]; a++) {
+            pic.adepsHolder[k][a] = pic.adepsHolder[k][a]->gc_mark();
+            pic.adepsValue [k][a] = pic.adepsValue [k][a]->gc_mark();
+          }
         }
       }
     }
@@ -308,6 +322,10 @@ void InterpreterPICTable::gc_unmark_contents() {
           if (pic.entries[k].cachedHolder)
             pic.entries[k].cachedHolder =
                 pic.entries[k].cachedHolder->gc_unmark();
+          for (int32 a = 0; a < pic.adepsCount[k]; a++) {
+            pic.adepsHolder[k][a] = pic.adepsHolder[k][a]->gc_unmark();
+            pic.adepsValue [k][a] = pic.adepsValue [k][a]->gc_unmark();
+          }
         }
       }
     }
@@ -335,6 +353,10 @@ void InterpreterPICTable::switch_pointers(oop from, oop to) {
             pic.entries[k].cachedMethod = to;
           if (pic.entries[k].cachedHolder && pic.entries[k].cachedHolder == from)
             pic.entries[k].cachedHolder = to;
+          for (int32 a = 0; a < pic.adepsCount[k]; a++) {
+            if (pic.adepsHolder[k][a] == from) pic.adepsHolder[k][a] = to;
+            if (pic.adepsValue [k][a] == from) pic.adepsValue [k][a] = to;
+          }
         }
       }
     }

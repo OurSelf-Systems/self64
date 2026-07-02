@@ -527,9 +527,10 @@ extern oop   ReturnResult_stub_result;
 // mixed mode: run a compiled sender's send in the interpreter (the lookup
 // produced no nmethod, e.g. a block whose home frame is interpreted, or
 // Interpret was switched back on).  Receiver and arguments live in the
-// sender's outgoing area just above the lookup frame record.
-static char* interpretSendForCompiledSender(compilingLookup* L,
-                                            frame* lookupFrame) {
+// sender's outgoing area just above the lookup frame record.  Exported for
+// DIDesc::sendMessage, whose own interpret bridge only handles data slots.
+char* interpretSendForCompiledSender(compilingLookup* L,
+                                     frame* lookupFrame) {
   oop* out = (oop*)lookupFrame + 2;   // [0] lr hole, [1] receiver, [2..] args
   fint nargs = L->selector()->is_string()
     ? stringOop(L->selector())->arg_count()

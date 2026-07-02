@@ -9,6 +9,25 @@
 
 oop sneaky_method_argument_to_interpret;
 
+
+// Collect the (holder, slot offset, expected parent) constraints a lookup
+// traversed through assignable parent slots -- the same walk a compiled DI
+// prologue verifies (SICGenHelper::verifyParents).  False if more than
+// PIC_MAX_ADEPS constraints are needed.
+static bool collect_adeps(objectLookupTarget* t,
+                          oop* h, int32* o, oop* v, int& n) {
+  for (assignableSlotLink* l = t->links; l != NULL; l = l->next) {
+    if (n == PIC_MAX_ADEPS) return false;
+    h[n] = t->obj;
+    o[n] = smiOop(l->slot->data)->value();
+    v[n] = l->target->obj;
+    n++;
+    if (l->target->links != NULL && !collect_adeps(l->target, h, o, v, n))
+      return false;
+  }
+  return true;
+}
+
 interpreter* interpreter::_active_interp_list = NULL;
 
 # if TARGET_IS_64BIT
@@ -876,6 +895,13 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
                                  oop delToSend, fint arg_count, int32 resSP ) {
   if (pic.entries[i].cachedMap != rMap)
     return badOop;
+  // Parents-verified entries: re-check the recorded assignable-parent slots
+  // before trusting anything; a mismatch is a miss and the full lookup
+  // re-decides (see InterpreterPIC).
+  for (int j = 0; j < pic.adepsCount[i]; j++)
+    if (*oopsOop(pic.adepsHolder[i][j])->oops(pic.adepsOffset[i][j])
+        != pic.adepsValue[i][j])
+      return badOop;
   switch (pic.resultType[i]) {
     default: fatal1("unknown resultType %d", pic.resultType[i]);
     case constantResult:
@@ -1063,13 +1089,10 @@ static nmethod* route_to_nmethod(simpleLookup& L, int32 arg_count) {
     MethodLookupKey ck(NormalLookupType, MH_NOT_A_RESEND, L.receiverMapOop(),
                        L.selector(), L.delegatee());
     nmethod* rnm = Memory->code->lookup(ck);
-    // Never route into a DI nmethod: its prologue re-verifies assignable
-    // parents and bails to SendDIMessage_stub on a mismatch, which assumes a
-    // compiled send site (lr = a sendDesc, caller frame = a compiled sender).
-    // A routed (EnterSelf) entry has neither -- the bail would hand the glue's
-    // return pc to sendDesc/findNMethod and crash.  Compiled senders still
-    // call DI nmethods through real send sites.
-    if (rnm != NULL && rnm->flags.isDI) rnm = NULL;
+    // DI nmethods (assignable-parent prologue checks) are routable: on a
+    // parent mismatch the trap ends up in DIDesc::sendMessage, which handles
+    // an EnterSelf-glue caller explicitly (the glue's return point is the
+    // firstSelfFrame sendDesc and its outgoing area has send-site shape).
     if (rnm && (PrintCompilation || PrintRecompilation))
       lprintf("interpreter routing %ld-arg send to compiled nmethod %#lx\n",
               (long)arg_count, (long)rnm);
@@ -1086,7 +1109,16 @@ oop interpreter::lookup_and_send( LookupType type,
   ResourceMark rm; // for sub-objects of L and vf
   // since we come here from perform, selToSend may not be a string!
 
-  if (UseLocalAccessBytecodes && !hasParentLocalSlot) {
+  // The vframe branch below exists for lookups that may consult the sending
+  // ACTIVATION (implicit-self and resend lookups from methods with a parent
+  // local slot -- dynamic scoping).  An EXPLICIT-receiver normal send never
+  // touches the activation, so it can use the simple branch -- and its PIC
+  // caching -- no matter what the sending method declares.  Morphic methods
+  // all carry parent local slots; routing every send they make through the
+  // uncached vframe branch made the desktop lookup-bound.
+  bool explicit_normal = baseLookupType(type) == NormalBaseLookupType
+                      && (type & ImplicitSelfBit) == 0;
+  if (UseLocalAccessBytecodes && (!hasParentLocalSlot || explicit_normal)) {
     bool canCache = _pics && baseLookupType(type) == NormalBaseLookupType
                     && !isPerformLookupType(type);
     assignableDependencyList adepsList;
@@ -1138,11 +1170,25 @@ oop interpreter::lookup_and_send( LookupType type,
     // the result at this bytecode PC would be incorrect.
     if ( canCache && L.result() != NULL ) {
       ResultType rt = L.resultType();
-      // Don't cache when lookup traversed assignable parent slots —
-      // different receivers with the same map may have different parents,
-      // making map-keyed caching incorrect.
-      if (adepsList.nonEmpty())
-        rt = (ResultType)-1;
+      // A lookup that traversed assignable parent slots cannot be cached on
+      // the receiver map alone — same-map receivers can differ in parents.
+      // Record the traversed parent slots and their values instead and
+      // re-verify them on every hit (what a compiled DI prologue does);
+      // these sends are dynamic inheritance's (morphic's) bread and butter.
+      // Lookups traversing more than PIC_MAX_ADEPS parents stay uncached.
+      bool cache_as_adeps = false;
+      oop   a_holder[PIC_MAX_ADEPS];
+      oop   a_value [PIC_MAX_ADEPS];
+      int32 a_offset[PIC_MAX_ADEPS];
+      int   a_n = 0;
+      if (adepsList.nonEmpty()) {
+        bool ok = rt >= 0;
+        for (objectLookupTarget** t = adepsList.start();
+             ok && t < adepsList.top; t++)
+          ok = collect_adeps(*t, a_holder, a_offset, a_value, a_n);
+        if (ok && a_n > 0) cache_as_adeps = true;
+        else rt = (ResultType)-1;
+      }
       // Don't cache parent-slot assignments — they require PIC invalidation
       // that only happens in realSlotRef::set_contents().
       if (rt == assignmentResult && L.result()->is_real()
@@ -1155,6 +1201,15 @@ oop interpreter::lookup_and_send( LookupType type,
         pic.hitCount[slot] = 0; // fresh entry (slot may be round-robin reused)
         pic.entries[slot].cachedMap = L.receiverMapOop();
         pic.resultType[slot] = (int8_t)rt;
+        pic.adepsCount[slot] = 0;
+        if (cache_as_adeps) {
+          for (int j = 0; j < a_n; j++) {
+            pic.adepsHolder[slot][j] = a_holder[j];
+            pic.adepsOffset[slot][j] = a_offset[j];
+            pic.adepsValue [slot][j] = a_value [j];
+          }
+          pic.adepsCount[slot] = (int8_t)a_n;
+        }
         switch (rt) {
           case methodResult: {
             oop resultMH = L.result()->methodHolder_or_map(rcvToSend);

@@ -25,7 +25,10 @@ extern "C" {
 enum ReturnPatchReason { not_patched, patched_for_profiling, patched };
 
 
-static const int PIC_SIZE = 4;
+// 16, not 4: morphic send sites commonly cycle through a dozen receiver
+// types (every morph kind through one draw/layout site); at 4 the round-robin
+// evicted entries before reuse and half of all desktop sends missed forever.
+static const int PIC_SIZE = 16;
 
 class nmethod;
 
@@ -40,6 +43,10 @@ struct PICEntry {
   uint32   cachedNMethodGen;
 };
 
+// Max assignable-parent constraints recorded per PIC entry; lookups that
+// traversed more stay uncached.
+static const int PIC_MAX_ADEPS = 4;
+
 struct InterpreterPIC {
   PICEntry entries[PIC_SIZE];
   int8_t   count;
@@ -52,6 +59,18 @@ struct InterpreterPIC {
   // without full lookup or interpret() call.
   // Values: 0=methodResult, 1=constantResult, 2=dataResult, 3=assignmentResult
   int8_t   resultType[PIC_SIZE];
+  // Parents-verified entries (dynamic inheritance): a result found through
+  // ASSIGNABLE parents cannot be cached on the receiver map alone, since
+  // same-map receivers can differ in parents.  Such entries record the
+  // traversed parent slots and their values here, and a hit first re-verifies
+  // them -- the same check a compiled DI prologue performs; parent
+  // reassignment self-invalidates by value mismatch.  Parent slot j of entry
+  // i is adepsHolder[i][j]->oops(adepsOffset[i][j]) and must still contain
+  // adepsValue[i][j].  adepsCount[i] is 0 for ordinary entries.
+  oop      adepsHolder[PIC_SIZE][PIC_MAX_ADEPS];
+  oop      adepsValue [PIC_SIZE][PIC_MAX_ADEPS];
+  int32    adepsOffset[PIC_SIZE][PIC_MAX_ADEPS];
+  int8_t   adepsCount [PIC_SIZE];
   int32    slotOffset[PIC_SIZE]; // obj_slot offset for data/assignment results
 };
 
