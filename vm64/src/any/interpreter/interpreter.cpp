@@ -274,12 +274,11 @@ void interpreter::maybe_tier_up() {
   // the current count so failing methods retry with doubling backoff.
   fint trigger = pd->tier_up_at > 0 ? pd->tier_up_at : threshold;
   if (pd->invocation_count < trigger) return;
-  // A hot block method can't be compiled standalone while its home is
-  // interpreted (SBlockScope needs a compiled home vframe), so promote the
-  // block's HOME method instead -- Self-93's recompilee selection climbed
-  // from a hot block to its home the same way.  Once the home is compiled,
-  // fresh activations of it carry compiled home frames, and the hot block
-  // falls through to the normal path below and compiles standalone.
+  // A hot block method is never compiled standalone (see
+  // maybe_tier_up_block_home for why); promote the block's HOME method
+  // instead -- Self-93's recompilee selection climbed from a hot block to
+  // its home the same way.  Once the home is compiled, fresh activations
+  // inline their block literals.
   if (method_object->kind() == BlockMethodType
       && !maybe_tier_up_block_home(pd))
     return;
@@ -332,9 +331,8 @@ void interpreter::maybe_tier_up() {
 // receiver map, so the home's block literals -- including the hot one -- get
 // compiled homes on fresh activations).  pd is the BLOCK method's table
 // entry; it carries the retry state for the whole redirect.  Returns true
-// when the home is already compiled: then the block itself is compilable
-// (SBlockScope has its compiled home) and the caller runs the normal tier-up
-// path on the block.
+// when the caller should run the normal tier-up path on the block itself
+// (currently never -- standalone block nmethods are unsound, see below).
 bool interpreter::maybe_tier_up_block_home(InterpreterPICData* pd) {
 # if TARGET_IS_64BIT && defined(SIC_COMPILER)
   abstract_vframe* home =
@@ -349,8 +347,17 @@ bool interpreter::maybe_tier_up_block_home(InterpreterPICData* pd) {
   // method (hot loop bodies nest), which is just as uncompilable standalone
   // as this one -- only the outer method anchors the compiled-home chain.
   home = home->home();
-  if (!home->is_interpreted())
-    return true;
+  if (!home->is_interpreted()) {
+    // Home is compiled; the block COULD compile standalone, but such an
+    // nmethod is unsound to reuse: its implicit-self sends resolve through
+    // the compile-time home RECEIVER (constants like a set's emptyMarker
+    // get embedded), while the nmethod is keyed only on the block map,
+    // which every home receiver flavor shares.  Poisoned world building
+    // (module-cache sets probed with another flavor's markers).  Leave hot
+    // blocks to inline into their homes; standalone they stay interpreted.
+    pd->tier_up_at = -1;
+    return false;
+  }
   interpreter* hin = ((interpreted_vframe*)home)->interp();
   if (hin == NULL) { pd->tier_up_at = -1; return false; }
   cacheProbingLookup L(hin->receiver, hin->selector, hin->delegatee, MH_TBD,
@@ -970,6 +977,14 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
         pic.entries[i].cachedNMethod = NULL;  // flushed; may be freed memory
         nm = NULL;
       }
+      if (nm != NULL && nm->isInvalid()) {
+        // Invalidated (programming change): the code still exists but its
+        // inlined offsets/constants are stale.  Compiled callers get
+        // unlinked by invalidate(); this cached route is our equivalent --
+        // drop it and let the re-probe below find a recompiled version.
+        pic.entries[i].cachedNMethod = NULL;
+        nm = NULL;
+      }
       // An entry filled before its callee tiered up cached NULL here, and a
       // stable site never misses, so it would interpret the callee forever.
       // Re-probe the code cache every 64th hit so routing spreads through
@@ -1136,8 +1151,13 @@ oop interpreter::try_perform_prim( bool hasFailBlock,
 static nmethod* route_to_nmethod(simpleLookup& L, int32 arg_count) {
 # if defined(SIC_COMPILER) || defined(FAST_COMPILER)
   // Only normal sends are routed (resends/delegated key differently).
+  // Block receivers are excluded: a standalone block nmethod (eager-made,
+  // or predating the ban in maybe_tier_up_block_home) may embed constants
+  // resolved through a compile-time home receiver that this block's home
+  // does not share (the key is only the block map).
   if (RouteToCompiled && arg_count <= 14 && L.result() != NULL
-      && baseLookupType(L.key.lookupType) == NormalBaseLookupType) {
+      && baseLookupType(L.key.lookupType) == NormalBaseLookupType
+      && !L.receiverMap()->is_block()) {
     // nmethods are keyed by a CANONICAL key: NormalLookupType (no implicit-self
     // or receiver-static bits) and MH_NOT_A_RESEND (no resolved holder), keyed
     // on the receiver map -- mirror that here, else the resolved send key (with

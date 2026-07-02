@@ -567,8 +567,16 @@ static nmethod* SendMessage_cont( compilingLookup* L) {
     // runs at compiled-code frequency.  Bridging it to the interpreter every
     // time dominates steady state (data-slot accessors never tier up --
     // there is no method activation to count), so compile the callee exactly
-    // as eager mode does below.  lookupNMethod returns NULL cheaply for a
-    // block callee whose home frame is interpreted; those keep bridging.
+    // as eager mode does below -- EXCEPT block value sends: a standalone
+    // block nmethod embeds constants resolved through the compile-time home
+    // RECEIVER but is keyed only on the block map, which every home flavor
+    // shares, so reuse runs one receiver's constants against another's
+    // objects (this corrupted world building).  Bridge those instead.
+    if (L->receiverMap()->is_block()) {
+      L->perform_full_lookup();
+      L->remove_all_deps();
+      return NULL;
+    }
   }
   nmethod* nm = L->send_desc()->lookup_compile_and_backpatch(L);
   if (nm == NULL)
