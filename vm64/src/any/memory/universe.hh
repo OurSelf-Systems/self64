@@ -269,6 +269,14 @@ void check_delim(FILE *file, char *expected);
 void write_delim(FILE *file, char *delim);
 
 
+// The NLR result travels through this global while a non-local return
+// unwinds through C frames and stubs (see nlrSupport.cpp); the unwind can
+// cross allocation points (block cleanup, frame conversion), so the GC walks
+// must visit it (explicitly, NOT via APPLY_TO_VM_OOPS -- that list is also
+// the snapshot serialization format) or a scavenge in that window strands
+// the result.
+extern "C" { extern oop NLRResultFromC; }
+
 # define APPLY_TO_VM_OOPS(template)                                           \
     template(&Memory->lobbyObj)                                               \
     template(&Memory->nilObj)                                                 \

@@ -432,10 +432,24 @@ fint frame::outgoing_arg_count(frame* sendee) {
   sendDesc* sd = send_desc();
   if (sd == NULL) return -1; // no JIT, no sendDesc
   fint r;
+  // A perform site's selector (and so its arg count) is dynamic -- registers
+  // only; the walk cannot size its outgoing area.
+  if (isPerformLookupType(sd->lookupType())) return -1;
+  // An unbound send still targets a runtime-stub trapdoor (it is mid-lookup;
+  // frame walks reach such in-flight sites now); count its args from the
+  // selector like any non-prim send rather than letting isPrimCall classify
+  // the trapdoor as a prim.
+  { char* target = (char*)sd->jump_addr();
+    if (target == (char*)Memory->code->trapdoors->SendMessage_stub_td()
+     || target == (char*)Memory->code->trapdoors->SendDIMessage_stub_td())
+      return sd->arg_count(); }
   if (sd->isPrimCall()) {
     char* addr = sd->jump_addr();
     PrimDesc* pd = getPrimDescOfFirstInstruction(addr, true);
-    assert(pd != NULL, "no primitive descriptor");
+    // Not every non-zone target is a prim (e.g. the recompile trapdoors are
+    // VM text); fall back to the selector-based count instead of crashing on
+    // a NULL descriptor -- frame walks now reach these in-flight sites.
+    if (pd == NULL) return sd->arg_count();
     r = pd->arg_count();
     if (traceOAC) lprintf("***** frame::outgoing_arg_count: pd = %s, r = %d\n", pd->name(), r);
   }

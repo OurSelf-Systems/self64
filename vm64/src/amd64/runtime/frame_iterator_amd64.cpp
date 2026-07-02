@@ -14,16 +14,39 @@ void FrameIterator::do_vm_frame() {
 # if TARGET_ARCH == I386_ARCH
   assert(SaveOutgoingArgumentsOfPatchedFrames, "always true for I386");
 # endif
+# if TARGET_ARCH != AARCH64_ARCH
   if (!SaveOutgoingArgumentsOfPatchedFrames)
     return;
+# endif
+  // aarch64 walks these regardless of the flag (which set_flags_for_platform
+  // leaves false): while a compiled send is in the VM doing its lookup, the
+  // in-flight receiver and arguments live in the sender's outgoing area with
+  // no other GC coverage -- the callee frame that would cover them via
+  // do_incoming_arguments does not exist yet.  A scavenge during the lookup
+  // otherwise hands the interpreted callee stale oops at birth.
   do_incoming_arguments_of_vm_frame_called_from_self();
 }
 
 
 void FrameIterator::do_incoming_arguments_of_vm_frame_called_from_self() {
   frame* s = f->sender();
-  if (s == NULL  ||  !s->is_self_frame())
+  // Compiled senders only: an interpreted sender's return pc is VM code, not
+  // a sendDesc, so send_desc()/outgoing_arg_count would read garbage -- and
+  // its in-flight send values live in walked interpreter state anyway.
+  if (s == NULL  ||  !s->is_compiled_self_frame())
     return;
+  // Trust only genuine send sites: compiled code also calls the VM from
+  // non-send positions (allocation, stack checks), where interpreting the
+  // return pc as a sendDesc reads garbage.  The nmethod registers each real
+  // sendDesc as a relocation entry; require the parked pc to be one of them.
+  { nmethod* nm = s->code();
+    if (nm == NULL) return;
+    sendDesc* sd = s->send_desc();
+    bool genuine = false;
+    for (addrDesc* l = nm->locs(), *lend = nm->locsEnd(); l < lend; l++)
+      if (l->isSendDesc() && l->asSendDesc(nm) == sd) { genuine = true; break; }
+    if (!genuine) return;
+  }
   // hit the outgoing args of the self frame in case it is later patched
   // (when a frame is patched we grab its outgoing args)
   fint n = s->outgoing_arg_count(f);
