@@ -205,7 +205,8 @@ void InterpreterPICTable::scavenge_contents() {
             pic.entries[k].cachedHolder =
                 pic.entries[k].cachedHolder->scavenge();
           for (int32 a = 0; a < pic.adepsCount[k]; a++) {
-            pic.adepsHolder[k][a] = pic.adepsHolder[k][a]->scavenge();
+            if (pic.adepsHolder[k][a] != NULL)  // NULL = activation sentinel
+              pic.adepsHolder[k][a] = pic.adepsHolder[k][a]->scavenge();
             pic.adepsValue [k][a] = pic.adepsValue [k][a]->scavenge();
           }
         }
@@ -240,7 +241,8 @@ void InterpreterPICTable::gc_mark_contents() {
             pic.entries[k].cachedHolder =
                 pic.entries[k].cachedHolder->gc_mark();
           for (int32 a = 0; a < pic.adepsCount[k]; a++) {
-            pic.adepsHolder[k][a] = pic.adepsHolder[k][a]->gc_mark();
+            if (pic.adepsHolder[k][a] != NULL)  // NULL = activation sentinel
+              pic.adepsHolder[k][a] = pic.adepsHolder[k][a]->gc_mark();
             pic.adepsValue [k][a] = pic.adepsValue [k][a]->gc_mark();
           }
         }
@@ -323,7 +325,8 @@ void InterpreterPICTable::gc_unmark_contents() {
             pic.entries[k].cachedHolder =
                 pic.entries[k].cachedHolder->gc_unmark();
           for (int32 a = 0; a < pic.adepsCount[k]; a++) {
-            pic.adepsHolder[k][a] = pic.adepsHolder[k][a]->gc_unmark();
+            if (pic.adepsHolder[k][a] != NULL)  // NULL = activation sentinel
+              pic.adepsHolder[k][a] = pic.adepsHolder[k][a]->gc_unmark();
             pic.adepsValue [k][a] = pic.adepsValue [k][a]->gc_unmark();
           }
         }
@@ -354,7 +357,8 @@ void InterpreterPICTable::switch_pointers(oop from, oop to) {
           if (pic.entries[k].cachedHolder && pic.entries[k].cachedHolder == from)
             pic.entries[k].cachedHolder = to;
           for (int32 a = 0; a < pic.adepsCount[k]; a++) {
-            if (pic.adepsHolder[k][a] == from) pic.adepsHolder[k][a] = to;
+            if (pic.adepsHolder[k][a] != NULL
+                && pic.adepsHolder[k][a] == from) pic.adepsHolder[k][a] = to;
             if (pic.adepsValue [k][a] == from) pic.adepsValue [k][a] = to;
           }
         }

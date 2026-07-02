@@ -895,13 +895,19 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
                                  oop delToSend, fint arg_count, int32 resSP ) {
   if (pic.entries[i].cachedMap != rMap)
     return badOop;
-  // Parents-verified entries: re-check the recorded assignable-parent slots
+  // Parents-verified entries: re-check the recorded parent constraints
   // before trusting anything; a mismatch is a miss and the full lookup
-  // re-decides (see InterpreterPIC).
-  for (int j = 0; j < pic.adepsCount[i]; j++)
-    if (*oopsOop(pic.adepsHolder[i][j])->oops(pic.adepsOffset[i][j])
-        != pic.adepsValue[i][j])
+  // re-decides (see InterpreterPIC).  holder NULL means "this activation's
+  // parent local" (offset < 0 encodes an arg slot).
+  for (int j = 0; j < pic.adepsCount[i]; j++) {
+    oop holder = pic.adepsHolder[i][j];
+    int32 off  = pic.adepsOffset[i][j];
+    oop cur = holder != NULL ? *oopsOop(holder)->oops(off)
+            : off < 0       ? args[-(off + 1)]
+                            : locals[off];
+    if (cur != pic.adepsValue[i][j])
       return badOop;
+  }
   switch (pic.resultType[i]) {
     default: fatal1("unknown resultType %d", pic.resultType[i]);
     case constantResult:
@@ -1103,6 +1109,115 @@ static nmethod* route_to_nmethod(simpleLookup& L, int32 arg_count) {
   return NULL;
 }
 
+// Cache the completed lookup L at this send site.  from_activation means L
+// was a vframeLookup that consulted the sending ACTIVATION (an implicit or
+// resend lookup from a method with a parent local slot); such a result is
+// cacheable only when every activation-dependent input is re-checked on each
+// hit, so this method's parent local slots are recorded as constraints
+// (holder NULL = "the hitting activation"; offset < 0 encodes arg slot
+// ~(off)) alongside the regular assignable-parent constraints.  Bails when an
+// enclosing lexical activation could contribute a dynamic parent or the
+// result itself lives in an activation.
+void interpreter::fill_pic(simpleLookup& L,
+                           assignableDependencyList& adepsList,
+                           nmethod* routedNM, bool from_activation) {
+  ResultType rt = L.resultType();
+  bool constrained = false;
+  oop   a_holder[PIC_MAX_ADEPS];
+  oop   a_value [PIC_MAX_ADEPS];
+  int32 a_offset[PIC_MAX_ADEPS];
+  int   a_n = 0;
+  if (from_activation) {
+    for (interpreter* pi = parentI; pi != NULL; pi = pi->parentI)
+      if (pi->hasParentLocalSlot) return;
+    if (L.result() == NULL || !L.result()->is_real()) return;
+    FOR_EACH_SLOTDESC(mi.map(), sd) {
+      if (sd->is_vm_slot() || !sd->is_parent()) continue;
+      if (!sd->is_obj_slot() && !sd->is_arg_slot()) continue; // map-constant parent: static
+      if (a_n == PIC_MAX_ADEPS) return;
+      int32 off = smiOop(sd->data)->value();
+      a_holder[a_n] = NULL;
+      if (sd->is_arg_slot()) {
+        a_offset[a_n] = -(off + 1);
+        a_value [a_n] = args[off];
+      } else {
+        a_offset[a_n] = off - minOffset;
+        a_value [a_n] = locals[off - minOffset];
+      }
+      a_n++;
+    }
+    constrained = a_n > 0;
+  }
+  // A lookup that traversed assignable parent slots cannot be cached on
+  // the receiver map alone — same-map receivers can differ in parents.
+  // Record the traversed parent slots and their values instead and
+  // re-verify them on every hit (what a compiled DI prologue does);
+  // these sends are dynamic inheritance's (morphic's) bread and butter.
+  // Lookups traversing more than PIC_MAX_ADEPS parents stay uncached.
+  if (adepsList.nonEmpty()) {
+    bool ok = rt >= 0;
+    for (objectLookupTarget** t = adepsList.start();
+         ok && t < adepsList.top; t++)
+      ok = collect_adeps(*t, a_holder, a_offset, a_value, a_n);
+    if (ok && a_n > 0) constrained = true;
+    else rt = (ResultType)-1;
+  }
+  // Don't cache parent-slot assignments — they require PIC invalidation
+  // that only happens in realSlotRef::set_contents().
+  if (rt == assignmentResult && L.result()->is_real()
+      && L.result()->as_real()->desc->is_parent())
+    rt = (ResultType)-1; // sentinel: don't cache
+  int pic_idx = _pc_to_pic[pc];
+  if (pic_idx >= 0 && rt >= 0) {
+    InterpreterPIC& pic = _pics[pic_idx];
+    int slot = (pic.count < PIC_SIZE) ? pic.count++ : pic.next;
+    pic.hitCount[slot] = 0; // fresh entry (slot may be round-robin reused)
+    pic.entries[slot].cachedMap = L.receiverMapOop();
+    pic.resultType[slot] = (int8_t)rt;
+    pic.adepsCount[slot] = 0;
+    if (constrained) {
+      for (int j = 0; j < a_n; j++) {
+        pic.adepsHolder[slot][j] = a_holder[j];
+        pic.adepsOffset[slot][j] = a_offset[j];
+        pic.adepsValue [slot][j] = a_value [j];
+      }
+      pic.adepsCount[slot] = (int8_t)a_n;
+    }
+    switch (rt) {
+      case methodResult: {
+        oop resultMH = L.result()->methodHolder_or_map(rcvToSend);
+        pic.entries[slot].cachedMethod = L.result()->contents();
+        // NULL holder signals "use rcvToSend" on PIC hit
+        pic.entries[slot].cachedHolder = (resultMH == rcvToSend) ? NULL : resultMH;
+#     if defined(SIC_COMPILER)
+        // Enter compiled code on future hits when routing found an nmethod.
+        // Routing state is SIC-only; the interpreter-only build never enters
+        // compiled code, so it neither caches an nmethod nor stamps it.
+        pic.entries[slot].cachedNMethod    = routedNM;
+        pic.entries[slot].cachedNMethodGen = codeFlushGeneration;
+#     endif
+        break;
+      }
+      case constantResult:
+        pic.entries[slot].cachedMethod = L.result()->contents();
+        pic.entries[slot].cachedHolder = NULL;
+        break;
+      case dataResult:
+      case assignmentResult: {
+        oop resultMH = L.result()->methodHolder_or_map(rcvToSend);
+        pic.entries[slot].cachedMethod = NULL;
+        // NULL holder signals "use rcvToSend" on PIC hit
+        pic.entries[slot].cachedHolder = (resultMH == rcvToSend) ? NULL : resultMH;
+        pic.slotOffset[slot] = smiOop(L.result()->as_real()->desc->data)->value();
+        break;
+      }
+      default: break;
+    }
+    pic.next = (slot + 1) % PIC_SIZE;
+  }
+}
+
+
 oop interpreter::lookup_and_send( LookupType type,
                                          oop mh,
                                          oop delOrNameToSend ) {
@@ -1168,81 +1283,8 @@ oop interpreter::lookup_and_send( LookupType type,
 
     // Exclude performs — their selector varies at runtime, so caching
     // the result at this bytecode PC would be incorrect.
-    if ( canCache && L.result() != NULL ) {
-      ResultType rt = L.resultType();
-      // A lookup that traversed assignable parent slots cannot be cached on
-      // the receiver map alone — same-map receivers can differ in parents.
-      // Record the traversed parent slots and their values instead and
-      // re-verify them on every hit (what a compiled DI prologue does);
-      // these sends are dynamic inheritance's (morphic's) bread and butter.
-      // Lookups traversing more than PIC_MAX_ADEPS parents stay uncached.
-      bool cache_as_adeps = false;
-      oop   a_holder[PIC_MAX_ADEPS];
-      oop   a_value [PIC_MAX_ADEPS];
-      int32 a_offset[PIC_MAX_ADEPS];
-      int   a_n = 0;
-      if (adepsList.nonEmpty()) {
-        bool ok = rt >= 0;
-        for (objectLookupTarget** t = adepsList.start();
-             ok && t < adepsList.top; t++)
-          ok = collect_adeps(*t, a_holder, a_offset, a_value, a_n);
-        if (ok && a_n > 0) cache_as_adeps = true;
-        else rt = (ResultType)-1;
-      }
-      // Don't cache parent-slot assignments — they require PIC invalidation
-      // that only happens in realSlotRef::set_contents().
-      if (rt == assignmentResult && L.result()->is_real()
-          && L.result()->as_real()->desc->is_parent())
-        rt = (ResultType)-1; // sentinel: don't cache
-      int pic_idx = _pc_to_pic[pc];
-      if (pic_idx >= 0 && rt >= 0) {
-        InterpreterPIC& pic = _pics[pic_idx];
-        int slot = (pic.count < PIC_SIZE) ? pic.count++ : pic.next;
-        pic.hitCount[slot] = 0; // fresh entry (slot may be round-robin reused)
-        pic.entries[slot].cachedMap = L.receiverMapOop();
-        pic.resultType[slot] = (int8_t)rt;
-        pic.adepsCount[slot] = 0;
-        if (cache_as_adeps) {
-          for (int j = 0; j < a_n; j++) {
-            pic.adepsHolder[slot][j] = a_holder[j];
-            pic.adepsOffset[slot][j] = a_offset[j];
-            pic.adepsValue [slot][j] = a_value [j];
-          }
-          pic.adepsCount[slot] = (int8_t)a_n;
-        }
-        switch (rt) {
-          case methodResult: {
-            oop resultMH = L.result()->methodHolder_or_map(rcvToSend);
-            pic.entries[slot].cachedMethod = L.result()->contents();
-            // NULL holder signals "use rcvToSend" on PIC hit
-            pic.entries[slot].cachedHolder = (resultMH == rcvToSend) ? NULL : resultMH;
-#         if defined(SIC_COMPILER)
-            // Enter compiled code on future hits when routing found an nmethod.
-            // Routing state is SIC-only; the interpreter-only build never enters
-            // compiled code, so it neither caches an nmethod nor stamps it.
-            pic.entries[slot].cachedNMethod    = routedNM;
-            pic.entries[slot].cachedNMethodGen = codeFlushGeneration;
-#         endif
-            break;
-          }
-          case constantResult:
-            pic.entries[slot].cachedMethod = L.result()->contents();
-            pic.entries[slot].cachedHolder = NULL;
-            break;
-          case dataResult:
-          case assignmentResult: {
-            oop resultMH = L.result()->methodHolder_or_map(rcvToSend);
-            pic.entries[slot].cachedMethod = NULL;
-            // NULL holder signals "use rcvToSend" on PIC hit
-            pic.entries[slot].cachedHolder = (resultMH == rcvToSend) ? NULL : resultMH;
-            pic.slotOffset[slot] = smiOop(L.result()->as_real()->desc->data)->value();
-            break;
-          }
-          default: break;
-        }
-        pic.next = (slot + 1) % PIC_SIZE;
-      }
-    }
+    if ( canCache && L.result() != NULL )
+      fill_pic(L, adepsList, routedNM, false);
 
     // Compute result FIRST (evaluateResult uses L's fields and may
     // allocate), then clear lookup_in_progress, then return. The clear
@@ -1256,6 +1298,9 @@ oop interpreter::lookup_and_send( LookupType type,
   else {
     FlushRegisterWindows();
     interpreted_vframe ivf(currentProcess->last_self_frame(true));
+    bool canCache = _pics && baseLookupType(type) == NormalBaseLookupType
+                    && !isPerformLookupType(type);
+    assignableDependencyList adepsList;
     vframeLookup L( type,
                     rcvToSend,
                     selToSend,
@@ -1263,7 +1308,7 @@ oop interpreter::lookup_and_send( LookupType type,
                     mh,
                     &ivf,
                     NULL,
-                    NULL);
+                    canCache ? &adepsList : NULL);
 
     // Register L (a vframeLookup IS-A simpleLookup) so a scavenge fired
     // during the lookup updates L's captured oops in place.
@@ -1292,11 +1337,18 @@ oop interpreter::lookup_and_send( LookupType type,
       return nlr_res;
     }
 
+    nmethod* routedNM = route_to_nmethod(L, arg_count);
+
+    // Cache with activation-local constraints: the lookup consulted the
+    // sending activation, so the entry records this method's parent local
+    // values (re-checked against the hitting activation) -- see fill_pic.
+    if (canCache && L.result() != NULL)
+      fill_pic(L, adepsList, routedNM, true);
+
     // Compute result first (evaluateResult uses L's fields and may
     // allocate), then clear lookup_in_progress, then return.
     //  -- dmu 5/26
-    oop res = L.evaluateResult(&stack[sp - arg_count], arg_count,
-                               route_to_nmethod(L, arg_count));
+    oop res = L.evaluateResult(&stack[sp - arg_count], arg_count, routedNM);
     lookup_in_progress = NULL;
     return res;
   }

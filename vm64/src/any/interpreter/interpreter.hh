@@ -66,7 +66,9 @@ struct InterpreterPIC {
   // them -- the same check a compiled DI prologue performs; parent
   // reassignment self-invalidates by value mismatch.  Parent slot j of entry
   // i is adepsHolder[i][j]->oops(adepsOffset[i][j]) and must still contain
-  // adepsValue[i][j].  adepsCount[i] is 0 for ordinary entries.
+  // adepsValue[i][j].  a NULL holder means "the hitting
+  // activation's parent local" (offset < 0 encodes arg slot ~off);
+  // adepsCount[i] is 0 for ordinary entries.
   oop      adepsHolder[PIC_SIZE][PIC_MAX_ADEPS];
   oop      adepsValue [PIC_SIZE][PIC_MAX_ADEPS];
   int32    adepsOffset[PIC_SIZE][PIC_MAX_ADEPS];
@@ -240,6 +242,9 @@ class interpreter: public abstract_interpreter {
 
   int32 num_pics() { return _num_pics; }
   void  attach_pics();  // look up or create PICs in the persistent table
+  void  fill_pic(class simpleLookup& L,
+                 class assignableDependencyList& adepsList,
+                 nmethod* routedNM, bool from_activation);
   void  maybe_tier_up();  // SIC-compile this method once it is hot enough
   void  maybe_tier_up_block_home(struct InterpreterPICData* pd);
 
