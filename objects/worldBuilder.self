@@ -154,6 +154,12 @@ This is not a module and not managed by Transporter.
   ).
 
   boot: lobby = (
+    "World building must run interpreted: executing compiled code during
+     bootstrap is broken on the 64-bit VM (tiered mode corrupts the module
+     cache; eager mode crashes converting frames during early reading).
+     Fresh VMs default routing back on, so a world saved from this session
+     starts tiered as usual.  IfFail: keeps VMs without the flag working."
+    _RouteToCompiled: false IfFail: [|:e. :n| nil].
     env: lobby.
     inMinimalEnvironment: [setupPaths].
     loadBasicWorld.
