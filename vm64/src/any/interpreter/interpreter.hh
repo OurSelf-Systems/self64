@@ -246,7 +246,7 @@ class interpreter: public abstract_interpreter {
                  class assignableDependencyList& adepsList,
                  nmethod* routedNM, bool from_activation);
   void  maybe_tier_up();  // SIC-compile this method once it is hot enough
-  void  maybe_tier_up_block_home(struct InterpreterPICData* pd);
+  bool  maybe_tier_up_block_home(struct InterpreterPICData* pd);
 
   void interpret_method();
 

@@ -260,16 +260,15 @@ void interpreter::maybe_tier_up() {
   // the current count so failing methods retry with doubling backoff.
   fint trigger = pd->tier_up_at > 0 ? pd->tier_up_at : threshold;
   if (pd->invocation_count < trigger) return;
-  // A hot block method can't be compiled standalone (SBlockScope needs a
-  // compiled home vframe), so promote the block's HOME method instead --
-  // Self-93's recompilee selection climbed from a hot block to its home the
-  // same way.  Once the home is compiled, its block literals get compiled
-  // homes, and outer methods running ON a block receiver (loop, whileTrue:)
-  // stop being mixed-mode and compile on their backoff retry below.
-  if (method_object->kind() == BlockMethodType) {
-    maybe_tier_up_block_home(pd);
+  // A hot block method can't be compiled standalone while its home is
+  // interpreted (SBlockScope needs a compiled home vframe), so promote the
+  // block's HOME method instead -- Self-93's recompilee selection climbed
+  // from a hot block to its home the same way.  Once the home is compiled,
+  // fresh activations of it carry compiled home frames, and the hot block
+  // falls through to the normal path below and compiles standalone.
+  if (method_object->kind() == BlockMethodType
+      && !maybe_tier_up_block_home(pd))
     return;
-  }
 
   abstract_vframe* vf = new_vframe(currentProcess->last_self_frame(false));
   if (vf == NULL) return;   // no vframe this time; retry next activation
@@ -314,30 +313,46 @@ void interpreter::maybe_tier_up() {
 }
 
 
-// Promotion target for a hot block: its home method, compiled with the home
-// activation's own receiver and selector (customized on the home receiver
-// map, so the home's block literals -- including the hot one -- get compiled
-// homes and can compile/inline on later retries).  pd is the BLOCK method's
-// table entry; it carries the retry state for the whole redirect.
-void interpreter::maybe_tier_up_block_home(InterpreterPICData* pd) {
+// Promotion target for a hot block: its OUTERMOST home method, compiled with
+// the home activation's own receiver and selector (customized on the home
+// receiver map, so the home's block literals -- including the hot one -- get
+// compiled homes on fresh activations).  pd is the BLOCK method's table
+// entry; it carries the retry state for the whole redirect.  Returns true
+// when the home is already compiled: then the block itself is compilable
+// (SBlockScope has its compiled home) and the caller runs the normal tier-up
+// path on the block.
+bool interpreter::maybe_tier_up_block_home(InterpreterPICData* pd) {
 # if TARGET_IS_64BIT && defined(SIC_COMPILER)
   abstract_vframe* home =
     blockOop(receiver)->parentVFrame(currentProcess->last_self_frame(false),
                                      true);
-  if (home == NULL || !home->is_interpreted()) {
-    // home is dead (non-LIFO block) or already compiled; nothing to promote
+  if (home == NULL) {
+    // home is dead (non-LIFO block); nothing to promote
     pd->tier_up_at = -1;
-    return;
+    return false;
   }
+  // Climb to the OUTERMOST home: an intermediate home can itself be a block
+  // method (hot loop bodies nest), which is just as uncompilable standalone
+  // as this one -- only the outer method anchors the compiled-home chain.
+  home = home->home();
+  if (!home->is_interpreted())
+    return true;
   interpreter* hin = ((interpreted_vframe*)home)->interp();
-  if (hin == NULL) { pd->tier_up_at = -1; return; }
+  if (hin == NULL) { pd->tier_up_at = -1; return false; }
   cacheProbingLookup L(hin->receiver, hin->selector, hin->delegatee, MH_TBD,
                        home, sendDesc::first_sendDesc(), NULL, false);
-  // Home already compiled for this receiver map (canonical key -- see
-  // maybe_tier_up): this block's redirect is done.
+  // Home METHOD already compiled for this receiver map (canonical key -- see
+  // maybe_tier_up), but this block instance still lives in an interpreted
+  // home activation.  A fresh activation of the home will run compiled and
+  // its blocks fall through to standalone compilation, so back off and
+  // re-check rather than giving up.
   { MethodLookupKey ck(NormalLookupType, MH_NOT_A_RESEND, L.receiverMapOop(),
                        L.selector(), L.delegatee());
-    if (Memory->code->lookup(ck) != NULL) { pd->tier_up_at = -1; return; } }
+    if (Memory->code->lookup(ck) != NULL) {
+      fint c = pd->invocation_count;
+      pd->tier_up_at = c <= (1 << 29) ? int32(c * 2) : -1;
+      return false;
+    } }
   interpreter* active = currentProcess->active_interp_list;
   if (active) active->set_lookup_in_progress(&L);   // GC-protect L's oops
   nmethod* nm = L.lookupNMethod();   // NULL when the home is itself a
@@ -358,8 +373,10 @@ void interpreter::maybe_tier_up_block_home(InterpreterPICData* pd) {
             hin->selector->is_string()
               ? stringOop(hin->selector)->copy_null_terminated() : "?",
             (void*)nm);
+  return false;
 # else
   Unused(pd);
+  return false;
 # endif
 }
 
@@ -935,8 +952,27 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
       // Routing: enter the cached compiled method instead of interpreting,
       // unless it has since been flushed (generation stamp mismatch).
       nmethod* nm = pic.entries[i].cachedNMethod;
-      if (RouteToCompiled && nm != NULL
-          && pic.entries[i].cachedNMethodGen == codeFlushGeneration) {
+      if (nm != NULL && pic.entries[i].cachedNMethodGen != codeFlushGeneration) {
+        pic.entries[i].cachedNMethod = NULL;  // flushed; may be freed memory
+        nm = NULL;
+      }
+      // An entry filled before its callee tiered up cached NULL here, and a
+      // stable site never misses, so it would interpret the callee forever.
+      // Re-probe the code cache every 64th hit so routing spreads through
+      // already-warm entries as tier-up proceeds (same canonical key as
+      // route_to_nmethod; arg cap matches EnterSelfN's outgoing area).
+      if (RouteToCompiled && nm == NULL && arg_count <= 14
+          && (pic.hitCount[i] & 63) == 63) {
+        MethodLookupKey ck(NormalLookupType, MH_NOT_A_RESEND, rMap,
+                           selToSend, delToSend);
+        nm = Memory->code->lookup(ck);
+        pic.entries[i].cachedNMethod    = nm;
+        pic.entries[i].cachedNMethodGen = codeFlushGeneration;
+        if (nm && (PrintCompilation || PrintRecompilation))
+          lprintf("interpreter late-routing PIC entry to nmethod %#lx\n",
+                  (long)nm);
+      }
+      if (RouteToCompiled && nm != NULL) {
         oop* args = &stack[sp - arg_count];
         oop res = arg_count > 1
                 ? EnterSelfN(rcvToSend, nm->insts(), args, arg_count)
