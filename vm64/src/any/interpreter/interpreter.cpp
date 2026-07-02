@@ -235,6 +235,20 @@ void interpreter::attach_pics() {
 }
 
 
+// Register/unregister a lookup for GC walking (see lookup_in_progress in
+// interpreter.hh: a chain, since routed compiled callees beneath this
+// activation can start lookups while one is already registered).
+void interpreter::push_lookup_in_progress(simpleLookup* L) {
+  L->next_in_progress = lookup_in_progress;
+  lookup_in_progress = L;
+}
+
+void interpreter::pop_lookup_in_progress() {
+  assert(lookup_in_progress != NULL, "pop with no lookup registered");
+  lookup_in_progress = lookup_in_progress->next_in_progress;
+}
+
+
 // Tier-0 -> SIC promotion.  Called once per activation, after this interpreter
 // is registered on active_interp_list (so a GC during the compile sees its
 // oops) and before the method body runs.  When this method's interpreted
@@ -282,10 +296,10 @@ void interpreter::maybe_tier_up() {
                        L.selector(), L.delegatee());
     if (Memory->code->lookup(ck) != NULL) { pd->tier_up_at = 0; return; } }
   interpreter* active = currentProcess->active_interp_list;
-  if (active) active->set_lookup_in_progress(&L);   // GC-protect L's oops during compile
+  if (active) active->push_lookup_in_progress(&L);  // GC-protect L's oops during compile
   fint compiles_before = SICCompilationCount;
   nmethod* nm = L.lookupNMethod();
-  if (active) active->lookup_in_progress = NULL;
+  if (active) active->pop_lookup_in_progress();
   if (nm == NULL) {
     // Compile failed; retry once the count doubles from here, giving up when
     // the trigger would no longer fit the int32 counter.
@@ -354,10 +368,10 @@ bool interpreter::maybe_tier_up_block_home(InterpreterPICData* pd) {
       return false;
     } }
   interpreter* active = currentProcess->active_interp_list;
-  if (active) active->set_lookup_in_progress(&L);   // GC-protect L's oops
+  if (active) active->push_lookup_in_progress(&L);  // GC-protect L's oops
   nmethod* nm = L.lookupNMethod();   // NULL when the home is itself a
                                      // mixed-mode block; the backoff retries
-  if (active) active->lookup_in_progress = NULL;
+  if (active) active->pop_lookup_in_progress();
   if (nm == NULL) {
     fint c = pd->invocation_count;
     pd->tier_up_at = c <= (1 << 29) ? int32(c * 2) : -1;
@@ -1282,10 +1296,10 @@ oop interpreter::lookup_and_send( LookupType type,
                     canCache ? &adepsList : NULL ); // track assignable parent dependencies only when cacheable
 
     // Register L so a scavenge fired during the lookup updates L's
-    // captured oops in place. Asserts no other lookup is in progress on
-    // this interpreter (re-entrancy invariant).
+    // captured oops in place. A chain link: routed compiled callees
+    // beneath this send may register further lookups on this interp.
     // -- claude & dmu  5/26
-    set_lookup_in_progress(&L);
+    push_lookup_in_progress(&L);
 
     // XXXXXX check code table, use compiled method, get compiler to call me
 
@@ -1296,7 +1310,9 @@ oop interpreter::lookup_and_send( LookupType type,
     if (NLRSupport::have_NLR_through_C()) { // recursive lookup error
       // Clear before the function returns. After the return, L's C-stack
       // storage is gone; a still-set lookup_in_progress would dangle and
-      // the next scavenge that walks this interp would deref it.
+      // the next scavenge that walks this interp would deref it.  NULL
+      // (not pop): &L is this activation's bottom chain link, and any
+      // links above it live in C frames this NLR abandons.
       // -- claude & dmu  5/26
       oop nlr_res = NLRSupport::NLR_result_from_C();
       lookup_in_progress = NULL;
@@ -1350,7 +1366,7 @@ oop interpreter::lookup_and_send( LookupType type,
     // during the lookup updates L's captured oops in place.
     // -- claude & dmu  5/26
 
-    set_lookup_in_progress(&L);
+    push_lookup_in_progress(&L);
 
     // XXXXXX check code table, use compiled method, get compiler to call me
 

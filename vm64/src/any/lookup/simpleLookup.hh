@@ -166,6 +166,10 @@ class simpleLookup: public ResourceObj {
   virtual void oops_do(oopsDoFn f);
   void         oops_do(OopClosure* c);
 
+  // Link in the owning interpreter's lookup_in_progress chain; set by
+  // interpreter::push_lookup_in_progress, meaningful only while registered.
+  simpleLookup* next_in_progress;
+
  protected:
   void assert_static_selector();
   void assert_static_delegatee();

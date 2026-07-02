@@ -186,18 +186,19 @@ class interpreter: public abstract_interpreter {
   // -- dmu & claude, 5/26
   class simpleLookup* lookup_in_progress;
 
-  // Setter that asserts the no-re-entrancy invariant: each interpreter
-  // activation has at most one lookup in progress at a time. Nested sends
-  // create new interpreter activations (each with its own
-  // lookup_in_progress), so re-entrancy on the same interp would indicate
-  // a structural change we'd need to handle (e.g. switching to a chain).
+  // Registration is a CHAIN (intrusive, through simpleLookup::
+  // next_in_progress), not a single slot: nested sends create new
+  // interpreter activations with their own lookup_in_progress, but a
+  // ROUTED compiled callee runs beneath this activation without creating
+  // one, and a lookup it starts (unwind_protect_prim, a compile-through
+  // miss that re-enters the VM, ...) registers on this interpreter while
+  // this activation's own lookup is still in progress.  Push/pop are
+  // strictly LIFO through the C stack.  Defined out of line: simpleLookup
+  // is incomplete here.
   //
-  // -- dmu & claude, 5/26
-  inline void set_lookup_in_progress(class simpleLookup* L) {
-    assert(lookup_in_progress == NULL,
-           "re-entrant lookup — previous one should have been cleared");
-    lookup_in_progress = L;
-  }
+  // -- dmu & claude, 5/26; chained 7/26
+  void push_lookup_in_progress(class simpleLookup* L);
+  void pop_lookup_in_progress();
 
 # if TARGET_IS_64BIT
   // On x86_64 interpreter-only builds, ContinueNLRFromC and c_entry_point()
@@ -422,12 +423,16 @@ class InterpreterIterator: public StackObj {
     p =       &(interp)->rcvToSend;  oop_closure->do_oop(p);
     p = (oop*)&(interp)->selToSend;  oop_closure->do_oop(p);
 
-    // If a lookup is in progress on this interpreter activation, walk its
+    // If lookups are in progress on this interpreter activation, walk their
     // captured oops too so a scavenge / mark / etc. updates them in place.
+    // A chain, not a single slot: a routed compiled callee running beneath
+    // this activation can start its own lookup (e.g. unwind_protect_prim)
+    // while this activation's lookup is still registered.
     // See interpreter::lookup_in_progress for why.
     // -- dmu & claude, 5/26
-    if ((interp)->lookup_in_progress)
-      (interp)->lookup_in_progress->oops_do(oop_closure);
+    for (class simpleLookup* l = (interp)->lookup_in_progress;
+         l != NULL;  l = l->next_in_progress)
+      l->oops_do(oop_closure);
   }
 };
     

@@ -391,13 +391,13 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
         
     makeALookup( L, doBlock, VMString[VALUE] );
 #   if TARGET_IS_64BIT
-    // Register L immediately after construction. set_lookup_in_progress
-    // asserts no other lookup is already in progress on this interp
-    // (re-entrancy invariant). For compiler builds, &L is a
+    // Register L immediately after construction, as a chain link: this
+    // prim can run beneath a routed compiled callee while the interp's
+    // own send lookup is still registered. For compiler builds, &L is a
     // cacheProbingLookup* which upcasts cleanly to simpleLookup*.
     //
     // -- claude & dmu  5/26
-    if (active_interp) active_interp->set_lookup_in_progress(&L);
+    if (active_interp) active_interp->push_lookup_in_progress(&L);
 #   endif
 
     nmethod* nm = NULL;
@@ -428,7 +428,7 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
     // happens AFTER this clear, which is correct.
     //
     // -- claude & dmu  5/26
-    if (active_interp) active_interp->lookup_in_progress = NULL;
+    if (active_interp) active_interp->pop_lookup_in_progress();
 #   endif
 
     if (!NLRSupport::have_NLR_through_C()) {
@@ -451,9 +451,8 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
     // lookup nmethod for 2nd value: message send
     makeALookup( Ltwo, protectBlock, VMString[VALUE_] );
 #   if TARGET_IS_64BIT
-    // Register Ltwo. The L from earlier was already cleared above, so
-    // the re-entrancy assert in set_lookup_in_progress passes here.
-    if (active_interp) active_interp->set_lookup_in_progress(&Ltwo);
+    // Register Ltwo. The L from earlier was already popped above.
+    if (active_interp) active_interp->push_lookup_in_progress(&Ltwo);
 #   endif
 
     nmethod* nm2 = NULL;
@@ -479,7 +478,7 @@ oop oopClass::unwind_protect_prim(oop doBlock, oop protectBlock) {
     }
 #   if TARGET_IS_64BIT
     // Ltwo's captures no longer needed.
-    if (active_interp) active_interp->lookup_in_progress = NULL;
+    if (active_interp) active_interp->pop_lookup_in_progress();
 #   endif
 
     // determine target of nlr
