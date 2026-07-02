@@ -191,6 +191,7 @@ inline interpreter::interpreter( oop rcv,
   _pics = NULL;
   _num_pics = 0;
   _pc_to_pic = NULL;
+  _invocation_count = NULL;
 }
 
 
@@ -209,6 +210,7 @@ void interpreter::attach_pics() {
     _pics       = pd->pics;
     _num_pics   = pd->num_pics;
     _pc_to_pic  = pd->pc_to_pic;
+    _invocation_count = &pd->invocation_count; // for count_back_edge
   }
 # endif
 }
@@ -231,40 +233,114 @@ void interpreter::maybe_tier_up() {
   if (threshold <= 0) return;                       // tiering disabled
   InterpreterPICData* pd = interpreter_pic_table->lookup(method_object);
   if (pd == NULL) return;
-  // Fire only on the crossing (one int compare per activation off it).
-  // tier_up_at is 0 until a compile fails; a failure moves the trigger to
-  // 2x the current count so failing methods retry with doubling backoff.
+  if (pd->tier_up_at < 0) return;   // compiled, block, or gave up
+  // Back edges bump invocation_count mid-activation (count_back_edge), so
+  // the counter can pass any exact value between activation entries; compare
+  // >= and record the outcome in tier_up_at instead of firing on a crossing.
+  // tier_up_at is 0 until a compile fails; a failure moves the trigger to 2x
+  // the current count so failing methods retry with doubling backoff.
   fint trigger = pd->tier_up_at > 0 ? pd->tier_up_at : threshold;
-  if (pd->invocation_count != trigger) return;
-  // Mixed-mode blocks can't be compiled standalone (lookupNMethod returns
-  // NULL for them every time); returning without arming a retry makes this
-  // the last time the block's entry is ever considered.
-  if (receiver->map()->is_block()) return;
+  if (pd->invocation_count < trigger) return;
+  // A hot block method can't be compiled standalone (SBlockScope needs a
+  // compiled home vframe), so promote the block's HOME method instead --
+  // Self-93's recompilee selection climbed from a hot block to its home the
+  // same way.  Once the home is compiled, its block literals get compiled
+  // homes, and outer methods running ON a block receiver (loop, whileTrue:)
+  // stop being mixed-mode and compile on their backoff retry below.
+  if (method_object->kind() == BlockMethodType) {
+    maybe_tier_up_block_home(pd);
+    return;
+  }
 
   abstract_vframe* vf = new_vframe(currentProcess->last_self_frame(false));
-  if (vf == NULL) return;
+  if (vf == NULL) return;   // no vframe this time; retry next activation
   cacheProbingLookup L(receiver, selector, delegatee, MH_TBD, vf,
                        sendDesc::first_sendDesc(), NULL, false);
+  // Skip if this receiver map's version already exists.  nmethods are keyed
+  // canonically (NormalLookupType, MH_NOT_A_RESEND); the lookup's own key
+  // carries resolved-holder bits that never EQ-match it, so probeCache alone
+  // misses and would recompile a fresh duplicate every activation.
+  { MethodLookupKey ck(NormalLookupType, MH_NOT_A_RESEND, L.receiverMapOop(),
+                       L.selector(), L.delegatee());
+    if (Memory->code->lookup(ck) != NULL) { pd->tier_up_at = 0; return; } }
   interpreter* active = currentProcess->active_interp_list;
   if (active) active->set_lookup_in_progress(&L);   // GC-protect L's oops during compile
+  fint compiles_before = SICCompilationCount;
   nmethod* nm = L.lookupNMethod();
   if (active) active->lookup_in_progress = NULL;
   if (nm == NULL) {
-    // Compile failed; retry at double the count, giving up once the trigger
-    // would no longer fit the int32 counter.
-    pd->tier_up_at = trigger <= (1 << 29) ? int32(trigger * 2) : -1;
-  } else if (RouteToCompiled) {
-    // Drop only the PIC entries that cached this method as "interpret"; the
-    // next send at those sites re-looks-up and caches the fresh nmethod, so
-    // routing enters it -- without wiping every other method's type feedback
-    // (which the SIC now reads on tier-up).
-    interpreter_pic_table->invalidate_entries_caching(method_object);
+    // Compile failed; retry once the count doubles from here, giving up when
+    // the trigger would no longer fit the int32 counter.
+    fint c = pd->invocation_count;
+    pd->tier_up_at = c <= (1 << 29) ? int32(c * 2) : -1;
+  } else {
+    // Success -- but nmethods are customized per receiver map, so LEAVE the
+    // trigger armed: a different receiver map arriving later compiles its own
+    // version, while already-compiled maps exit via the cheap probeCache hit.
+    pd->tier_up_at = 0;
+    if (RouteToCompiled && SICCompilationCount != compiles_before)
+      // Fresh compile: drop only the PIC entries that cached this method as
+      // "interpret"; the next send at those sites re-looks-up and caches the
+      // new nmethod, so routing enters it -- without wiping every other
+      // method's type feedback (which the SIC now reads on tier-up).
+      interpreter_pic_table->invalidate_entries_caching(method_object);
   }
-  if (PrintCompilation || PrintRecompilation)
+  if ((PrintCompilation || PrintRecompilation)
+      && (nm == NULL || SICCompilationCount != compiles_before))
     lprintf("*tier-up: SIC-compiled %s after %ld interp calls -> nm=%p\n",
             selector->is_string()
               ? stringOop(selector)->copy_null_terminated() : "?",
-            (long)trigger, (void*)nm);
+            (long)pd->invocation_count, (void*)nm);
+# endif
+}
+
+
+// Promotion target for a hot block: its home method, compiled with the home
+// activation's own receiver and selector (customized on the home receiver
+// map, so the home's block literals -- including the hot one -- get compiled
+// homes and can compile/inline on later retries).  pd is the BLOCK method's
+// table entry; it carries the retry state for the whole redirect.
+void interpreter::maybe_tier_up_block_home(InterpreterPICData* pd) {
+# if TARGET_IS_64BIT && defined(SIC_COMPILER)
+  abstract_vframe* home =
+    blockOop(receiver)->parentVFrame(currentProcess->last_self_frame(false),
+                                     true);
+  if (home == NULL || !home->is_interpreted()) {
+    // home is dead (non-LIFO block) or already compiled; nothing to promote
+    pd->tier_up_at = -1;
+    return;
+  }
+  interpreter* hin = ((interpreted_vframe*)home)->interp();
+  if (hin == NULL) { pd->tier_up_at = -1; return; }
+  cacheProbingLookup L(hin->receiver, hin->selector, hin->delegatee, MH_TBD,
+                       home, sendDesc::first_sendDesc(), NULL, false);
+  // Home already compiled for this receiver map (canonical key -- see
+  // maybe_tier_up): this block's redirect is done.
+  { MethodLookupKey ck(NormalLookupType, MH_NOT_A_RESEND, L.receiverMapOop(),
+                       L.selector(), L.delegatee());
+    if (Memory->code->lookup(ck) != NULL) { pd->tier_up_at = -1; return; } }
+  interpreter* active = currentProcess->active_interp_list;
+  if (active) active->set_lookup_in_progress(&L);   // GC-protect L's oops
+  nmethod* nm = L.lookupNMethod();   // NULL when the home is itself a
+                                     // mixed-mode block; the backoff retries
+  if (active) active->lookup_in_progress = NULL;
+  if (nm == NULL) {
+    fint c = pd->invocation_count;
+    pd->tier_up_at = c <= (1 << 29) ? int32(c * 2) : -1;
+  } else {
+    pd->tier_up_at = -1;
+    InterpreterPICData* hpd = interpreter_pic_table->lookup(hin->method_object);
+    if (hpd != NULL) hpd->tier_up_at = -1;
+    if (RouteToCompiled)
+      interpreter_pic_table->invalidate_entries_caching(hin->method_object);
+  }
+  if (PrintCompilation || PrintRecompilation)
+    lprintf("*tier-up: SIC-compiled home %s of hot block -> nm=%p\n",
+            hin->selector->is_string()
+              ? stringOop(hin->selector)->copy_null_terminated() : "?",
+            (void*)nm);
+# else
+  Unused(pd);
 # endif
 }
 
@@ -467,7 +543,13 @@ void interpreter::interpret_method() {
     }
     pc = mi.firstBCI();
     abstract_interpreter::interpret_method();
-  } while ( pc == restart_pc() + 1); // interpret_method incremented it
+    if (pc != restart_pc() + 1)  // interpret_method incremented it
+      break;
+    // _Restart is the interpreter's loop back edge (Self loops restart the
+    // activation -- traits block loop -- rather than branching backward);
+    // count it toward this method's tier-up trigger.
+    count_loop_back_edge();
+  } while (true);
 
   // zap blocks
   for ( oop* cb = cloned_blocks;
@@ -510,6 +592,7 @@ void interpreter::do_branch_code( int32 target_PC, oop target_oop ) {
     if ( stack[--sp] != target_oop )
       return;
   }
+  count_back_edge(target_PC);
   pc = target_PC;
 }
 
@@ -527,7 +610,9 @@ void interpreter::do_BRANCH_INDEXED_CODE() {
     return;
   
   oop npco= v->obj_at(index);
-  pc = smiOop(v->obj_at(smiOop(npco)->value()))->value();
+  int32 target_PC = smiOop(v->obj_at(smiOop(npco)->value()))->value();
+  count_back_edge(target_PC);
+  pc = target_PC;
 }
  
  
@@ -978,6 +1063,13 @@ static nmethod* route_to_nmethod(simpleLookup& L, int32 arg_count) {
     MethodLookupKey ck(NormalLookupType, MH_NOT_A_RESEND, L.receiverMapOop(),
                        L.selector(), L.delegatee());
     nmethod* rnm = Memory->code->lookup(ck);
+    // Never route into a DI nmethod: its prologue re-verifies assignable
+    // parents and bails to SendDIMessage_stub on a mismatch, which assumes a
+    // compiled send site (lr = a sendDesc, caller frame = a compiled sender).
+    // A routed (EnterSelf) entry has neither -- the bail would hand the glue's
+    // return pc to sendDesc/findNMethod and crash.  Compiled senders still
+    // call DI nmethods through real send sites.
+    if (rnm != NULL && rnm->flags.isDI) rnm = NULL;
     if (rnm && (PrintCompilation || PrintRecompilation))
       lprintf("interpreter routing %ld-arg send to compiled nmethod %#lx\n",
               (long)arg_count, (long)rnm);

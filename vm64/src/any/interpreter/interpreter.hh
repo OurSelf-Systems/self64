@@ -116,6 +116,22 @@ class interpreter: public abstract_interpreter {
   InterpreterPIC* _pics;       // points into InterpreterPICTable (heap) or NULL
   int32           _num_pics;
   int16_t*        _pc_to_pic;  // points into InterpreterPICTable (heap) or NULL
+  int32*          _invocation_count; // -> pd->invocation_count (heap) or NULL
+
+  // A loop back edge counts toward the tier-up threshold just like an
+  // activation, so a method that loops inside few activations still promotes.
+  // (Promotion happens at the NEXT activation entry -- maybe_tier_up -- since
+  // there is no on-stack replacement.)  Capped so a long-lived loop can't
+  // overflow the int32 counter.  Self loops are _Restart-shaped (see
+  // interpret_method's retry loop); branch bytecodes are counted too for
+  // worlds that use them.
+  void count_loop_back_edge() {
+    if (_invocation_count != NULL && *_invocation_count < (1 << 30))
+      ++*_invocation_count;
+  }
+  void count_back_edge(int32 target_PC) {
+    if (target_PC <= pc) count_loop_back_edge();
+  }
 
   // Pointer to the in-progress simpleLookup on this interpreter activation,
   // or NULL when no lookup is active.
@@ -206,6 +222,7 @@ class interpreter: public abstract_interpreter {
   int32 num_pics() { return _num_pics; }
   void  attach_pics();  // look up or create PICs in the persistent table
   void  maybe_tier_up();  // SIC-compile this method once it is hot enough
+  void  maybe_tier_up_block_home(struct InterpreterPICData* pd);
 
   void interpret_method();
 
