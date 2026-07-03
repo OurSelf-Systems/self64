@@ -333,10 +333,10 @@ void frame::patch_compiled_self_frame(returnTrapHandlerFn new_fn) {
          "ret addr not in zone, already patched?");
 
   trace_patch(new_fn);
-  
+
   // must be before we set currentPC so following code can test it
   save_outgoing_arguments();
-  
+
   set_currentPC(ret);
   set_real_return_addr(first_inst_addr((void*)new_fn));
 }
@@ -683,13 +683,22 @@ void HandleReturnTrap(oop result, char* sp_of_patched_frame,
 
   // Remember, patched_self_frame is frame that would have been RETURNED INTO
   // had not the patching happened. -- dmu 1/03
-  frame* patched_self_frame = currentFrame()->get_patched_self_frame(sp_of_patched_frame);
+  frame* stub_record = currentFrame();  // the trap stub's hand-built record
+  frame* patched_self_frame = stub_record->get_patched_self_frame(sp_of_patched_frame);
 
   // get_patched_self_frame may have disambiguated the trap stub's sp-16
-  // guess upward by one word (see PrimCallReturnTrap); everything downstream
+  // guess upward by one word or downward by a whole dead callee frame (see
+  // PrimCallReturnTrap and get_patched_self_frame); everything downstream
   // (the conversion's sp, the resume's fp load) must use the real frame.
   // -- rca
   sp_of_patched_frame = (char*)patched_self_frame;
+
+  // The trap stub linked its record ([fp+0]) to the same sp-derived guess.
+  // Every stack walk below (last_self_frame in the unpatch, conversion)
+  // follows that link, so correct it in place before any walk runs; when
+  // the guess was right this is a no-op.
+  if (stub_record->sender() != patched_self_frame)
+    *(frame**)stub_record = patched_self_frame;
 
   char* selfPC;
   frame* convertFrame;
