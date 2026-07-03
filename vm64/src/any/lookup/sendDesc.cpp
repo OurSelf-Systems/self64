@@ -567,15 +567,29 @@ static nmethod* SendMessage_cont( compilingLookup* L) {
     // runs at compiled-code frequency.  Bridging it to the interpreter every
     // time dominates steady state (data-slot accessors never tier up --
     // there is no method activation to count), so compile the callee exactly
-    // as eager mode does below -- EXCEPT block value sends: a standalone
-    // block nmethod embeds constants resolved through the compile-time home
-    // RECEIVER but is keyed only on the block map, which every home flavor
-    // shares, so reuse runs one receiver's constants against another's
-    // objects (this corrupted world building).  Bridge those instead.
+    // as eager mode does below -- EXCEPT block value sends whose home is not
+    // a compiled frame.  A standalone block nmethod is keyed on the block
+    // map and resolves implicit-self sends through the home receiver, which
+    // is only sound when that map pins down one home flavor: blocks cloned
+    // by COMPILED code carry a per-clone-site map from a receiver-customized
+    // nmethod (sound -- this is exactly eager mode), while INTERPRETER-
+    // cloned blocks share the method literal's map across every receiver
+    // flavor (one flavor's embedded constants would run against another's
+    // objects; this shape corrupted world building).  Interpreter-cloned
+    // blocks always have interpreted homes -- there is no OSR -- so the
+    // home's frame kind is the exact discriminator.  Blocks whose value
+    // sends stay hot enough to matter live in compiled homes anyway (their
+    // homes tiered up); bridging the rest is the cheap safe default.
     if (L->receiverMap()->is_block()) {
-      L->perform_full_lookup();
-      L->remove_all_deps();
-      return NULL;
+      frame* snd = L->sendingVFrame
+        ? L->sendingVFrame->fr
+        : currentProcess->last_self_frame(false);
+      abstract_vframe* home = blockOop(L->receiver)->parentVFrame(snd, true);
+      if (home == NULL || home->is_interpreted()) {
+        L->perform_full_lookup();
+        L->remove_all_deps();
+        return NULL;
+      }
     }
   }
   nmethod* nm = L->send_desc()->lookup_compile_and_backpatch(L);
