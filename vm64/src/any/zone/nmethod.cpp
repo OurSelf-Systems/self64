@@ -1512,6 +1512,18 @@ Map* nmethod::blockMapFor(blockOop bl) {
     return key.receiverMap();
   }
   if (foundBlk) return foundBlk->map();
+  // The SIC's debug methods can still defer an unused block (BlockValueDesc):
+  // its compile-time prototype then lives only in the scopes' oop table,
+  // never in a code-referenced oop loc, so the scan above misses it.  (The
+  // NIC materialized every block, which is all the locs-only scan assumed.)
+  for (fint i = 0, n = scopes->oops_size(); i < n; i++) {
+    oop blk = scopes->oop_at(i);
+    if (blk->is_block() && blockOop(blk)->value() == valueMethod) {
+      assert(foundBlk == NULL || foundBlk == blk, "duplicate block found");
+      foundBlk = blockOop(blk);
+    }
+  }
+  if (foundBlk) return foundBlk->map();
   ShouldNotReachHere(); // didn't find block
   return NULL;
 }
