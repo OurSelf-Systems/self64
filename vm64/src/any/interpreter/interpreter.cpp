@@ -14,15 +14,24 @@ oop sneaky_method_argument_to_interpret;
 // traversed through assignable parent slots -- the same walk a compiled DI
 // prologue verifies (SICGenHelper::verifyParents).  False if more than
 // PIC_MAX_ADEPS constraints are needed.
-static bool collect_adeps(objectLookupTarget* t,
+// A ROOT holder that is the receiver itself is recorded as ADEPS_RECEIVER so
+// the hit re-reads the parent slot of the receiver AT HAND: the PIC entry is
+// keyed on the receiver map, and same-map receivers each carry their own
+// parent slot (treeNodes flip empty<->filled by parent assignment) -- pinning
+// the recorded object would validate the wrong node's parent and false-hit.
+// Deeper holders stay pinned: an earlier constraint has already verified the
+// chain reaches that exact object.  (That includes a receiver reappearing at
+// depth > 0 through a parent cycle -- substituting there would be unsound.)
+static bool collect_adeps(objectLookupTarget* t, oop rcv, bool is_root,
                           oop* h, int32* o, oop* v, int& n) {
   for (assignableSlotLink* l = t->links; l != NULL; l = l->next) {
     if (n == PIC_MAX_ADEPS) return false;
-    h[n] = t->obj;
+    h[n] = (is_root && t->obj == rcv) ? ADEPS_RECEIVER : t->obj;
     o[n] = smiOop(l->slot->data)->value();
     v[n] = l->target->obj;
     n++;
-    if (l->target->links != NULL && !collect_adeps(l->target, h, o, v, n))
+    if (l->target->links != NULL &&
+        !collect_adeps(l->target, rcv, false, h, o, v, n))
       return false;
   }
   return true;
@@ -940,9 +949,11 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
   // Parents-verified entries: re-check the recorded parent constraints
   // before trusting anything; a mismatch is a miss and the full lookup
   // re-decides (see InterpreterPIC).  holder NULL means "this activation's
-  // parent local" (offset < 0 encodes an arg slot).
+  // parent local" (offset < 0 encodes an arg slot); ADEPS_RECEIVER means
+  // "the hitting receiver" (a per-instance parent slot -- same map, own slot).
   for (int j = 0; j < pic.adepsCount[i]; j++) {
     oop holder = pic.adepsHolder[i][j];
+    if (holder == ADEPS_RECEIVER) holder = rcvToSend;
     int32 off  = pic.adepsOffset[i][j];
     oop cur = holder != NULL ? *oopsOop(holder)->oops(off)
             : off < 0       ? args[-(off + 1)]
@@ -1232,7 +1243,7 @@ void interpreter::fill_pic(simpleLookup& L,
     bool ok = rt >= 0;
     for (objectLookupTarget** t = adepsList.start();
          ok && t < adepsList.top; t++)
-      ok = collect_adeps(*t, a_holder, a_offset, a_value, a_n);
+      ok = collect_adeps(*t, rcvToSend, true, a_holder, a_offset, a_value, a_n);
     if (ok && a_n > 0) constrained = true;
     else rt = (ResultType)-1;
   }

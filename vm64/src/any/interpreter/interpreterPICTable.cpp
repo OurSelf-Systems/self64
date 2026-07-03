@@ -120,7 +120,7 @@ bool InterpreterPICTable::verify() {
           }
           for (int32 a = 0; a < pic.adepsCount[k]; a++) {
             oop h = pic.adepsHolder[k][a];
-            if (h != NULL && !h->is_mem()) {
+            if (h != NULL && h != ADEPS_RECEIVER && !h->is_mem()) {
               error1("interpreter PIC adeps holder bad %#lx", (unsigned long)h);
               flag = false;
             }

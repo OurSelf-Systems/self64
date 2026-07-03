@@ -47,6 +47,15 @@ struct PICEntry {
 // traversed more stay uncached.
 static const int PIC_MAX_ADEPS = 4;
 
+// Distinguished adepsHolder value: "the hitting receiver".  A constraint
+// whose holder was the receiver itself must re-bind to the receiver at hand
+// on every hit -- same-map receivers each carry their OWN parent slot (the
+// treeNode empty/filled flip), so pinning the recorded object would validate
+// the wrong node's parent.  Smi-tagged, so the GC walkers pass it through
+// untouched (scavenge/gc_mark no-op on non-mem oops).  NULL remains "the
+// hitting activation".
+#define ADEPS_RECEIVER ((oop)4)
+
 struct InterpreterPIC {
   PICEntry entries[PIC_SIZE];
   int8_t   count;
@@ -68,6 +77,7 @@ struct InterpreterPIC {
   // i is adepsHolder[i][j]->oops(adepsOffset[i][j]) and must still contain
   // adepsValue[i][j].  a NULL holder means "the hitting
   // activation's parent local" (offset < 0 encodes arg slot ~off);
+  // ADEPS_RECEIVER means "the hitting receiver" (per-instance parent slots);
   // adepsCount[i] is 0 for ordinary entries.
   oop      adepsHolder[PIC_SIZE][PIC_MAX_ADEPS];
   oop      adepsValue [PIC_SIZE][PIC_MAX_ADEPS];
