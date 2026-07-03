@@ -2060,6 +2060,15 @@ oop set_recompilation_prim(oop r, objVectorOop comps,
     newlimits[i] = roundTo(smiOop(lim)->value(), K);
     // for simplicity (Sparc sethi), round up values to next K
   }
+# if defined(SIC_COMPILER) && !defined(FAST_COMPILER)
+  // recompileLimits[0] doubles as the interpreter->SIC tier-up threshold
+  // (see recompile_init), which a one-compiler config's empty limits vector
+  // cannot express -- the loop above then writes nothing.  Carry the live
+  // value over rather than install an uninitialized slot: benchmarks'
+  // withCompiler: ['sic'] froze tiering at a garbage threshold for the rest
+  // of the session, so measurePerformance ran fully interpreted.
+  if (len == 1) newlimits[0] = recompileLimits[0];
+# endif
   // everything ok, install new values
   nstages = len;
   selfs_free(compilers); compilers = newcomps;
