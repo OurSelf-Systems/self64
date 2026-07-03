@@ -31,6 +31,11 @@ void FrameIterator::do_vm_frame() {
 
 
 void FrameIterator::do_incoming_arguments_of_vm_frame_called_from_self() {
+# if !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+  // Interpreter-only: no compiled frames exist, and the send-site
+  // classification below reads JIT-only nmethod state.
+  return;
+# else
   frame* s = f->sender();
   // Compiled senders only: an interpreted sender's return pc is VM code, not
   // a sendDesc, so send_desc()/outgoing_arg_count would read garbage -- and
@@ -55,6 +60,7 @@ void FrameIterator::do_incoming_arguments_of_vm_frame_called_from_self() {
   for (fint i = 0;  i < n + 1 /*rcvr*/;  ++i)
     oop_closure->do_oop(
       f->location_addr_of_incoming_argument(LocationOfSavedOutgoingArgInSendee(i-1), NULL));
+# endif // !FAST_COMPILER && !SIC_COMPILER
 }
 
 

@@ -431,6 +431,11 @@ fint frame::outgoing_arg_count(frame* sendee) {
   // May return -1 of there is not even a receiver.
   sendDesc* sd = send_desc();
   if (sd == NULL) return -1; // no JIT, no sendDesc
+# if !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+  // Interpreter-only: send_desc() above always answers NULL (there are no
+  // compiled sends), and the classification below uses JIT-only interfaces.
+  return -1;
+# else
   fint r;
   // A perform site's selector (and so its arg count) is dynamic -- registers
   // only; the walk cannot size its outgoing area.
@@ -457,6 +462,7 @@ fint frame::outgoing_arg_count(frame* sendee) {
   else
     r = sd->arg_count();
   return r;
+# endif // !FAST_COMPILER && !SIC_COMPILER
 }
 
 

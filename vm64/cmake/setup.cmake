@@ -28,7 +28,10 @@ endif()
 # handlePreemption completion, both guarded to !SIC_COMPILER). Default OFF keeps
 # the normal 64-bit JIT build.
 option(SELF_INTERP_ONLY "Build the interpreter-only VM (no SIC compiler) on 64-bit" OFF)
-if((TARGET_ARCH STREQUAL "AARCH64_ARCH" OR TARGET_ARCH STREQUAL "X86_64_ARCH") AND NOT SELF_INTERP_ONLY)
+# SIC by default on aarch64 only: the x86_64 SIC backend is headers-only (no
+# asm_amd64.cpp assembler, no node/genHelper codegen), so a SIC-enabled amd64
+# build cannot link.  amd64 builds tier 0 alone until that port exists.
+if(TARGET_ARCH STREQUAL "AARCH64_ARCH" AND NOT SELF_INTERP_ONLY)
   list(APPEND _defines
     SIC_COMPILER
   )
