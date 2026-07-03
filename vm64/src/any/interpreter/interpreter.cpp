@@ -300,8 +300,11 @@ void interpreter::maybe_tier_up() {
   nmethod* nm = L.lookupNMethod();
   if (active) active->pop_lookup_in_progress();
   if (nm == NULL) {
-    // Compile failed; retry once the count doubles from here, giving up when
-    // the trigger would no longer fit the int32 counter.
+    // Compile failed; unlink the lookup's dependency nodes (no nmethod will
+    // ever own them -- left in the maps' dependent lists they dangle and
+    // break later invalidation walks), then retry once the count doubles
+    // from here, giving up when the trigger no longer fits the counter.
+    L.remove_all_deps();
     fint c = pd->invocation_count;
     pd->tier_up_at = c <= (1 << 29) ? int32(c * 2) : -1;
   } else {
@@ -380,6 +383,7 @@ bool interpreter::maybe_tier_up_block_home(InterpreterPICData* pd) {
                                      // mixed-mode block; the backoff retries
   if (active) active->pop_lookup_in_progress();
   if (nm == NULL) {
+    L.remove_all_deps();             // see maybe_tier_up
     fint c = pd->invocation_count;
     pd->tier_up_at = c <= (1 << 29) ? int32(c * 2) : -1;
   } else {
