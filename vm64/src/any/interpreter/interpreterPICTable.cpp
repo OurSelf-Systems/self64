@@ -97,6 +97,41 @@ InterpreterPICData* InterpreterPICTable::lookup_or_create(
 }
 
 
+bool InterpreterPICTable::verify() {
+  bool flag = true;
+  for (int32 i = 0; i < TABLE_SIZE; i++) {
+    for (InterpreterPICData* d = buckets[i]; d; d = d->next) {
+      for (int32 j = 0; j < d->num_pics; j++) {
+        InterpreterPIC& pic = d->pics[j];
+        for (int32 k = 0; k < pic.count; k++) {
+          oop m = pic.entries[k].cachedMap;
+          if (m == NULL || !m->is_mem() || !m->is_map()) {
+            error2("interpreter PIC entry has non-map cachedMap %#lx (method %#lx): stale?",
+                   (unsigned long)m, (unsigned long)d->method);
+            flag = false;
+          }
+          if (pic.resultType[k] == 0 /*methodResult*/) {
+            oop mo = pic.entries[k].cachedMethod;
+            if (mo == NULL || !mo->is_mem() || !mo->is_method_like()) {
+              error2("interpreter PIC methodResult entry has non-method %#lx (method %#lx): stale?",
+                     (unsigned long)mo, (unsigned long)d->method);
+              flag = false;
+            }
+          }
+          for (int32 a = 0; a < pic.adepsCount[k]; a++) {
+            oop h = pic.adepsHolder[k][a];
+            if (h != NULL && !h->is_mem()) {
+              error1("interpreter PIC adeps holder bad %#lx", (unsigned long)h);
+              flag = false;
+            }
+          }
+        }
+      }
+    }
+  }
+  return flag;
+}
+
 void InterpreterPICTable::invalidate_all() {
   for (int32 i = 0; i < TABLE_SIZE; i++) {
     for (InterpreterPICData* d = buckets[i]; d; d = d->next) {

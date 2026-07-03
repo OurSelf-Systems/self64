@@ -972,6 +972,12 @@ bool nmethod::verify() {
     lprintf("\tof zoneLink of nmethod 0x%lx\n", this);
     r = false;
   }
+  { oop k = oop(key.receiverMapOop());
+    if (k != NULL && k != badOop && (!k->is_mem() || !k->is_map())) {
+      error2("nmethod %#lx key.receiverMapOop %#lx is not a map: stale?",
+             (unsigned long)this, (unsigned long)k);
+      r = false;
+    } }
   { FOR_MY_CODETABLE_ENTRIES(e)
       if (e->nm != this) {
         error1("bad code table link for nmethod %#lx\n", this);

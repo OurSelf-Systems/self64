@@ -54,6 +54,7 @@ class InterpreterPICTable : public CHeapObj {
                                        u_char* codes);
 
   void invalidate_all();
+  bool verify();
   // Drop just the entries whose cached result is `method` (used after a
   // tier-up compile so those sites re-look-up and route to the new nmethod,
   // leaving every other method's type feedback intact).
