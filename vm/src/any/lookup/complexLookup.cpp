@@ -19,12 +19,15 @@ vframeLookup::vframeLookup( LookupType l,
 
   sendingVFrame= f;
 
-  if (f == NULL) return;
-
   if (!isResendLookupType(lookupType())) {
+    // Resolve MH_TBD even without a sending vframe (a routed EnterSelf-glue
+    // caller hands NULL): a non-resend lookup's method holder is statically
+    // MH_NOT_A_RESEND, and leaving MH_TBD trips the full-lookup assert.
     key.set_methodHolder_or_map( MH_NOT_A_RESEND);
     return;
   }
+
+  if (f == NULL) return;
   oop vfmh= sendingVFrame->methodHolder_or_map();
   if (!vfmh->is_map()) {
     key.set_methodHolder_or_map( vfmh);
