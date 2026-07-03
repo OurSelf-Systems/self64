@@ -485,8 +485,16 @@ returnTrapHandlerFn frame::return_addr_for_patching( bool forceSelfFrame,
   if (!sendee_arg)
     sendee_arg = sendee();
   assert( sendee_arg->sender() == this, "incorrect sendee_arg");
-  assert( !sendee_arg->is_interpreted_self_frame(), "XXX not implemented yet");
 
+  // An INTERPRETED sendee is handled like the C/prim case: the interpreted
+  // callee returns into this compiled frame through the mixed-mode bridge
+  // (interpretSendForCompiledSender -> ReturnResult/ReturnNLR), a plain C
+  // return through the trapdoor-call record -- the same shape as a prim
+  // call's return.  PrimCallReturnTrap additionally disambiguates the
+  // {sp-16, sp-8} entry geometries by content, so a mismatch between this
+  // classification and the actual returner is tolerated (see the stub).
+  // This path was an unimplemented assert; post-bootstrap convert() reaches
+  // it whenever a compiled frame's callee is interpreted (tiered mode).
   return sendee_arg->is_compiled_self_frame()
     ?  (void (*)(...))         ReturnTrap
     :  (void (*)(...)) PrimCallReturnTrap;
