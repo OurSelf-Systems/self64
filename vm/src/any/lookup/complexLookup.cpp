@@ -97,14 +97,21 @@ nmethod* compilingLookup::lookupNMethod() {
 
   // mixed-mode: a block whose home frame is interpreted cannot be compiled
   // (SBlockScope needs a compiled home vframe -- see SICompiler::initTopScope);
-  // returning NULL makes the caller interpret the send instead.
+  // returning NULL makes the caller interpret the send instead.  The lookup
+  // above spliced dependency nodes into the touched maps' dependent lists;
+  // with no nmethod to migrate them into they would dangle there, and a
+  // later define()'s invalidation walk over a corrupted list SKIPS the real
+  // dependents (stale nmethods survived redefinition during world building).
   if (receiverMap()->is_block()) {
     blockOop block = (blockOop)receiver;
     frame* sender = sendingVFrame
       ? sendingVFrame->fr
       : currentProcess->last_self_frame(false);
     abstract_vframe* home = block->parentVFrame(sender, true);
-    if (home != NULL && home->is_interpreted()) return NULL;
+    if (home != NULL && home->is_interpreted()) {
+      remove_all_deps();
+      return NULL;
+    }
   }
 
   chooseCompiler();
@@ -560,8 +567,10 @@ void baseCompileTimeLookup::perform_lookup() {
 # ifdef SIC_COMPILER
 
 SICLookup::SICLookup( LookupType l, oop rcvr, oop sel, oop dgt,
-                      dependencyList* dps, SCodeScope* sc )
-  : baseCompileTimeLookup(l, rcvr, sel, dgt, sc->methodHolder_or_map(), dps) {
+                      dependencyList* dps, assignableDependencyList* adps,
+                      SCodeScope* sc )
+  : baseCompileTimeLookup(l, rcvr, sel, dgt, sc->methodHolder_or_map(),
+                          dps, adps) {
   scope = sc;
 }
 

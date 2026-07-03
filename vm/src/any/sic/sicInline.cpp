@@ -439,6 +439,12 @@
     // nmln* depsTop = theSIC->L->deps->top;
     assert(rcvr->hasMap(), "should have a map");
     
+    // Pass the compile's assignableDependencyList too: without it, an
+    // inlined send's traversal of an ASSIGNABLE parent went unrecorded, so
+    // the prologue never verified the parent value the inlined result
+    // depends on -- an nmethod keyed only on the receiver map then served
+    // one parent-era's bindings to receivers with different parent values
+    // (bootstrap rewires parents constantly; this corrupted world building).
     SICLookup* L = new SICLookup(info->l,
                                  rcvr->isConstantSExpr()
                                    ? rcvr->asConstantSExpr()->constant()
@@ -446,6 +452,7 @@
                                  info->sel,
                                  info->del,
                                  theSIC->L->deps,
+                                 theSIC->L->adeps,
                                  this );
 
     L->perform_lookup();
