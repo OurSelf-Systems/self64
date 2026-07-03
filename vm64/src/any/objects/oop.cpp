@@ -529,8 +529,14 @@ oop oopClass::define_prim(oop contents, void *FH) {
   }
   if (bootstrapping || result->is_mark()) {
     // can't call convert() while creating lobby!
-    // (and don't bother incrementing timestamp, either)
-    // not worth calling it on failure, either
+    // not worth calling it on failure, either.
+    // The timestamp bump, though, must happen even while bootstrapping:
+    // it is what invalidates the interpreter's persistent PICs, which
+    // cache lookup results (constants, holders, slot offsets) that this
+    // define may have changed.  Skipping it let old-map receivers keep
+    // hitting pre-define resolutions, corrupting world building.
+    if (!result->is_mark())
+      Memory->increment_programming_timestamp();
   } else {
     processes->convert();
     Memory->increment_programming_timestamp(); 
