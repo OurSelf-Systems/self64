@@ -44,8 +44,14 @@ void recompile_init() {
 # if defined(SIC_COMPILER) && !defined(FAST_COMPILER)
   // The interpreter is tier 0; recompileLimits[0] is the interpreter->SIC
   // promotion threshold, read by the interpreter's invocation counter.
+  // 500, not the classic 10*K: that number tuned NIC->SIC recompilation
+  // counters (compiled-code invocations, 1990s SPARCs); interpreted calls
+  // cost far more each, and code called at UI-tick rates took minutes of
+  // wall clock to cross 10240 (the desktop idled at 11-14% for its first
+  // minutes).  500 converges benchmarks and the desktop floor identically
+  // (long-standing soak point) while cutting warmup ~20x.
   recompileLimits= NEW_C_HEAP_ARRAY(fint, 1);
-  recompileLimits[0] = 10 * K;   // interpreter->SIC promotion threshold
+  recompileLimits[0] = 500;      // interpreter->SIC promotion threshold
   // Env override for experiments and aggressive-tiering soak runs; 0
   // disables tier-up entirely (there is no _RecompileLimits setter prim, and
   // the getter exposes nstages-1 == 0 limits in this configuration).
