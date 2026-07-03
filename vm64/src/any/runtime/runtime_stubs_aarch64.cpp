@@ -6,7 +6,16 @@
    Modeled after runtime_stubs_x86_64.cpp */
 
 # include "config.hh"
+# include <cstdint>   // uintptr_t (gcc does not provide it transitively)
 # if TARGET_ARCH == AARCH64_ARCH
+
+// Mach-O prepends '_' to C symbols at the object level; ELF does not.
+// Asm references to C functions must spell the object-level name.
+# ifdef __APPLE__
+#   define C_SYM(name) "_" name
+# else
+#   define C_SYM(name) name
+# endif
 
 # include "_runtime_aarch64.cpp.incl"
 
@@ -345,7 +354,7 @@ extern "C" __attribute__((naked)) void ReturnTrap() {
     "mov   x4, x2\n\t"             // arg4: nlrHomeID (before x2 is clobbered)
     "mov   x1, x10\n\t"            // arg1: sp_of_patched_frame = F
     "mov   x2, #1\n\t"             // arg2: nlr = true
-    "bl    _HandleReturnTrap\n\t"  // arg0 (x0) already = result
+    "bl    " C_SYM("HandleReturnTrap") "\n\t"  // arg0 (x0) already = result
     "1:\n\t"
     "brk   #0x4e\n\t"              // HandleReturnTrap must not return
     "3:\n\t"                       // ---- normal-return entry ----
@@ -364,7 +373,7 @@ extern "C" __attribute__((naked)) void ReturnTrap() {
     "mov   x2, #0\n\t"            // arg2: nlr = false
     "mov   x3, #0\n\t"            // arg3: nlrHome = NULL
     "mov   x4, #0\n\t"            // arg4: nlrHomeID = 0
-    "bl    _HandleReturnTrap\n\t" // arg0 (x0) already = result
+    "bl    " C_SYM("HandleReturnTrap") "\n\t" // arg0 (x0) already = result
     "2:\n\t"
     "brk   #0x4e\n\t"             // HandleReturnTrap must not return
   );
@@ -448,7 +457,7 @@ extern "C" __attribute__((naked)) void PrimCallReturnTrap() {
     "mov   x4, x2\n\t"             // arg4: nlrHomeID
     "mov   x1, x10\n\t"            // arg1: sp_of_patched_frame = F
     "mov   x2, #1\n\t"             // arg2: nlr = true
-    "bl    _HandleReturnTrap\n\t"
+    "bl    " C_SYM("HandleReturnTrap") "\n\t"
     "1:\n\t"
     "brk   #0x4f\n\t"
     "3:\n\t"                       // ---- normal entry ----
@@ -478,7 +487,7 @@ extern "C" __attribute__((naked)) void PrimCallReturnTrap() {
     "mov   x2, #0\n\t"
     "mov   x3, #0\n\t"
     "mov   x4, #0\n\t"
-    "bl    _HandleReturnTrap\n\t"
+    "bl    " C_SYM("HandleReturnTrap") "\n\t"
     "2:\n\t"
     "brk   #0x4f\n\t"
   );
