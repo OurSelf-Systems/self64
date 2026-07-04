@@ -89,7 +89,10 @@ compilingLookup::compilingLookup(oop rcvr,
 
 // Compile an nmethod
 nmethod* compilingLookup::lookupNMethod() {
+# if TARGET_IS_64BIT
+  // W^X JIT pages exist only on the 64-bit ports (see vm64 os.hh)
   JITWriteScope jit_write_scope;  // compilation writes the code zone throughout
+# endif
   if (result() == NULL)                                       
     perform_full_lookup();
 
@@ -212,7 +215,11 @@ nmethod* compilingLookup::doCompile(nmln* diLink) {
 #   ifdef SIC_COMPILER
   } else if (compiler == SIC) {
       SICompiler* sc= new SICompiler(this, sd, diLink);
+# if TARGET_IS_64BIT
+      // Only vm64's SIC generates debug (conversion-target) methods; the
+      // 32-bit SIC has no such field -- its conversions use the NIC.
       sc->generateDebugCode= needDebug || currentProcess->isSingleStepping();
+# endif
       activeCompiler= sc;
 #   endif
 
