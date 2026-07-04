@@ -28,10 +28,16 @@ endif()
 # handlePreemption completion, both guarded to !SIC_COMPILER). Default OFF keeps
 # the normal 64-bit JIT build.
 option(SELF_INTERP_ONLY "Build the interpreter-only VM (no SIC compiler) on 64-bit" OFF)
-# SIC by default on aarch64 only: the x86_64 SIC backend is headers-only (no
-# asm_amd64.cpp assembler, no node/genHelper codegen), so a SIC-enabled amd64
-# build cannot link.  amd64 builds tier 0 alone until that port exists.
-if(TARGET_ARCH STREQUAL "AARCH64_ARCH" AND NOT SELF_INTERP_ONLY)
+# SIC by default on macOS/aarch64 only.  The x86_64 SIC backend is
+# headers-only (no asm_amd64.cpp assembler, no node/genHelper codegen), so a
+# SIC-enabled amd64 build cannot link.  aarch64 Linux/gcc builds and runs but
+# the mixed-mode return-trap machinery still miscomputes gcc's frame-record
+# geometry one layer past PrimCallReturnTrap (see runtime_stubs_aarch64.cpp);
+# interpreter-only there until that campaign lands.  Force with
+# -DSELF_FORCE_SIC=ON to work on the port.
+option(SELF_FORCE_SIC "Enable the SIC on platforms where it is not yet the default" OFF)
+if(TARGET_ARCH STREQUAL "AARCH64_ARCH" AND NOT SELF_INTERP_ONLY
+   AND (APPLE OR SELF_FORCE_SIC))
   list(APPEND _defines
     SIC_COMPILER
   )
