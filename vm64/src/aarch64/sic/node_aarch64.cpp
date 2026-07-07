@@ -70,9 +70,10 @@ static void gen_SPLimit_test();
 
   void PrologueNode::clearStackLocations() {
     theAssembler->Comment("clear stack locations");
-    // do not have to clear outgoing args; locations covered by the 32-bit
-    // register mask need no clearing either (cf. i386)
-    for ( fint i = sizeof(RegisterString) * BitsPerByte;  i < theSIC->number_of_memory_locals();  ++i) {
+    // do not have to clear outgoing args; we used to skip locals covered by
+    // the register mask too, but *all* locals must be cleared or GC sees
+    // stale bits and crashes (cf. the same fix in i386)
+    for ( fint i = 0;  i < theSIC->number_of_memory_locals();  ++i) {
       Location r;  int32 d;  OperandType t;
       reg_disp_type_of_loc(&r, &d, &t, StackLocation_for_index(i));
       theAssembler->str_zero(r, d);
