@@ -40,7 +40,7 @@
     // e.g. a level-2 sig with first branch = 1 and 2nd branch = 3 --> "AB"
     fint l = level();
     buf[l--] = 0;
-    smi sig = smi(this) >> 4;
+    smi sig = tagBits(this) >> 4;
     while (l >= 0) {
       buf[l--] = 'A' + (sig & 0xf);
       sig = sig >> 4;

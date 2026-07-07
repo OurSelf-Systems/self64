@@ -50,31 +50,31 @@ class markOopClass: public oopClass {
   Map* map() { return Memory->mark_map; }
 
   // accessors
-    bool     is_objectMarked()        { return          smi(this) &  object_is_marked_mask_in_place ; }
-    markOop  with_objectIsMarked()    { return markOop( smi(this) |  object_is_marked_mask_in_place); }
-    markOop  without_objectIsMarked() { return markOop( smi(this) & ~object_is_marked_mask_in_place); }
+    bool     is_objectMarked()        { return          tagBits(this) &  object_is_marked_mask_in_place ; }
+    markOop  with_objectIsMarked()    { return markOop( tagBits(this) |  object_is_marked_mask_in_place); }
+    markOop  without_objectIsMarked() { return markOop( tagBits(this) & ~object_is_marked_mask_in_place); }
 
     // TODO:  2012-04-24 topa, do something about the friend here
 # define VALUE_ACCESSOR(name, setAction, setAssert)                           \
                                                                               \
     smi name() {                                                              \
-      return maskBits(smi(this), CONC(name,_mask_in_place))                   \
+      return maskBits(tagBits(this), CONC(name,_mask_in_place))               \
              >> CONC(name,_shift); }                                          \
                                                                               \
     markOop CONC(set_,name)(smi v) {                                          \
       setAction;                                                              \
-      markOop val = markOop((smi(this) & ~CONC(name,_mask_in_place)) |        \
+      markOop val = markOop((tagBits(this) & ~CONC(name,_mask_in_place)) |    \
              ((v & CONC(name,_mask)) << CONC(name,_shift)));                  \
       setAssert;                                                              \
       return val; }                                                           \
                                                                               \
     smi CONC(name,_in_place)() {                                              \
-      return maskBits(smi(this), CONC(name,_mask_in_place)); }                \
+      return maskBits(tagBits(this), CONC(name,_mask_in_place)); }            \
                                                                               \
     markOop CONC3(set_,name,_in_place)(smi v) {                               \
       assert((v & ~CONC(name,_mask_in_place)) == 0,                           \
              "shouldn't overflow field");                                     \
-      return markOop((smi(this) & ~CONC(name,_mask_in_place)) | v); }         \
+      return markOop((tagBits(this) & ~CONC(name,_mask_in_place)) | v); }     \
                                                                               \
     markOop CONC(incr_,name)() {                                              \
       smi n = CONC(name,_in_place)();                                         \
