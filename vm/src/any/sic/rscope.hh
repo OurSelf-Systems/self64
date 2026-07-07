@@ -162,7 +162,47 @@
     void printTree(fint bci, fint level);
     void print_short();
   };
-  
+
+
+# if TARGET_IS_64BIT
+  // Interpreter type feedback (tier-0 -> SIC promotion): rscopes built from
+  // the interpreter's persistent PIC table instead of a recompilee nmethod,
+  // so a method promoted from the interpreter compiles with receiver-type
+  // feedback even though no compiled code for it exists yet.  The root
+  // represents the method being compiled; each child represents one cached
+  // receiver case of one send site (one interpreter PIC entry), carrying the
+  // receiver map and the entry's hit count.  extend() follows a method-valued
+  // case into the callee's own PIC data -- the table is keyed by method oop,
+  // so nested feedback is a table lookup away.
+
+  struct InterpreterPICData;
+
+  class RInterpreterScope : public RAbstractSelfScope {
+   public:
+    oop  _method;   // interpreted method, or NULL for a non-method receiver
+                    // case (data/constant/assignment slot): those are
+                    // receiver-type evidence for picPredict only and never
+                    // pair with an inlined scope
+    fint level;     // extension depth from the root
+    bool extended;  // subScopes populated from the PIC table?
+
+    RInterpreterScope(RAbstractSelfScope* sender, fint bci,
+                      oop m, mapOop rcvrMap, fint count, fint lev);
+    oop  method() { return _method; }
+    bool equivalent_scope(SScope* s) { Unused(s); return false; }
+    bool equivalent_lookup(simpleLookup* l);
+    bool isUncommonAt(fint bci, bool primCall);
+    void extend();
+    void populate(InterpreterPICData* pd);
+    void print();
+    void print_short();
+  };
+
+  // Root rscope for an interpreted method, from the interpreter PIC table;
+  // NULL when the table has no data for it.
+  RAbstractSelfScope* constructInterpreterRScope(oop method, mapOop rcvrMap);
+# endif // TARGET_IS_64BIT
+
 
   class RUncommonBranch : public ResourceObj {
     // represents a taken uncommon branch

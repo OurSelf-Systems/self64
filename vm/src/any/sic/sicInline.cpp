@@ -439,6 +439,12 @@
     // nmln* depsTop = theSIC->L->deps->top;
     assert(rcvr->hasMap(), "should have a map");
     
+    // Pass the compile's assignableDependencyList too: without it, an
+    // inlined send's traversal of an ASSIGNABLE parent went unrecorded, so
+    // the prologue never verified the parent value the inlined result
+    // depends on -- an nmethod keyed only on the receiver map then served
+    // one parent-era's bindings to receivers with different parent values
+    // (bootstrap rewires parents constantly; this corrupted world building).
     SICLookup* L = new SICLookup(info->l,
                                  rcvr->isConstantSExpr()
                                    ? rcvr->asConstantSExpr()->constant()
@@ -446,6 +452,7 @@
                                  info->sel,
                                  info->del,
                                  theSIC->L->deps,
+                                 theSIC->L->adeps,
                                  this );
 
     L->perform_lookup();
@@ -543,22 +550,16 @@
       assert(!parentScope->isVFrameScope(), "shouldn't be a vf scope");
       assert(parentScope->isCodeScope(), "shouldn't be access");
     }
-    else if ( L->result()->as_real()->holder->is_map() 
-         &&   L->result()->as_real()->holder->map() == theSIC->L->receiverMap()) {
-      // block is in same clone family as receiver block; therefore,
-      // must have same parent scope as receiver block
-      // example: value:With: sends value:
-      assert_block(theSIC->L->receiver, "expecting a block literal");
-      blockOop block = (blockOop) theSIC->L->receiver;
-      compiled_vframe* vf = block->parentVFrame(NULL)->as_compiled();
-      parentScope = new_SVFrameScope(vf);
-    }
+    // A clone-family branch used to inline via the LIVE receiver block's
+    // parentVFrame (SVFrameScope on the compile-time home frame).  That is
+    // unsound for a reusable nmethod: the inlined body resolves implicit-
+    // self sends through THAT home's receiver and layout, but the nmethod
+    // is keyed only on the block map, which every home activation (and
+    // every home-receiver flavor) shares.  Poisoned world building.  Such
+    // sends now stay real sends.
     else {
-      // can't find nmethod for this block
-      assert(! (L->result()->as_real()->holder->is_map() &&
-                L->result()->as_real()->holder->map()->equal(
-                    theSIC->L->receiverMap())),
-             "block map cloning got us again");
+      // can't soundly inline this block (including clone-family sends,
+      // see comment above)
       return notify(info->sel, "unknown block");
     }
     //    fix rs here

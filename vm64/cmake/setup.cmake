@@ -21,10 +21,29 @@ endif()
 
 # 64-bit JIT: the SIC is the only compiler; the interpreter is tier 0.
 # (No FAST_COMPILER/NIC tier on 64-bit — see docs and the new-sic branch plan.)
-if(TARGET_ARCH STREQUAL "AARCH64_ARCH" OR TARGET_ARCH STREQUAL "X86_64_ARCH")
+#
+# SELF_INTERP_ONLY builds tier 0 alone, with no SIC compiler defined — the
+# AVP-port / headless-iOS interpreter-only configuration. Use it to compile and
+# exercise the interpreter-only kill path (the send() safepoint and its
+# handlePreemption completion, both guarded to !SIC_COMPILER). Default OFF keeps
+# the normal 64-bit JIT build.
+option(SELF_INTERP_ONLY "Build the interpreter-only VM (no SIC compiler) on 64-bit" OFF)
+# SIC by default on macOS/aarch64 only.  The x86_64 SIC backend is
+# headers-only (no asm_amd64.cpp assembler, no node/genHelper codegen), so a
+# SIC-enabled amd64 build cannot link.  aarch64 Linux/gcc builds and runs but
+# the mixed-mode return-trap machinery still miscomputes gcc's frame-record
+# geometry one layer past PrimCallReturnTrap (see runtime_stubs_aarch64.cpp);
+# interpreter-only there until that campaign lands.  Force with
+# -DSELF_FORCE_SIC=ON to work on the port.
+option(SELF_FORCE_SIC "Enable the SIC on platforms where it is not yet the default" OFF)
+if(TARGET_ARCH STREQUAL "AARCH64_ARCH" AND NOT SELF_INTERP_ONLY
+   AND (APPLE OR SELF_FORCE_SIC))
   list(APPEND _defines
     SIC_COMPILER
   )
+endif()
+if(SELF_INTERP_ONLY)
+  message(STATUS "SELF_INTERP_ONLY: building tier-0 interpreter only (no SIC_COMPILER).")
 endif()
 
 list(APPEND _defines

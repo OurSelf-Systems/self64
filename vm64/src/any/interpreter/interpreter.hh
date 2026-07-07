@@ -25,13 +25,36 @@ extern "C" {
 enum ReturnPatchReason { not_patched, patched_for_profiling, patched };
 
 
-static const int PIC_SIZE = 4;
+// 16, not 4: morphic send sites commonly cycle through a dozen receiver
+// types (every morph kind through one draw/layout site); at 4 the round-robin
+// evicted entries before reuse and half of all desktop sends missed forever.
+static const int PIC_SIZE = 16;
+
+class nmethod;
 
 struct PICEntry {
   mapOop  cachedMap;
   oop     cachedMethod;
   oop     cachedHolder;   // NULL means "use current receiver" on PIC hit
+  // Routing (RouteToCompiled): a compiled method to enter on a PIC hit instead
+  // of interpreting.  NULL = interpret.  Validated against codeFlushGeneration
+  // so a flushed nmethod is never entered (the stamp won't match after a flush).
+  nmethod* cachedNMethod;
+  uint32   cachedNMethodGen;
 };
+
+// Max assignable-parent constraints recorded per PIC entry; lookups that
+// traversed more stay uncached.
+static const int PIC_MAX_ADEPS = 4;
+
+// Distinguished adepsHolder value: "the hitting receiver".  A constraint
+// whose holder was the receiver itself must re-bind to the receiver at hand
+// on every hit -- same-map receivers each carry their OWN parent slot (the
+// treeNode empty/filled flip), so pinning the recorded object would validate
+// the wrong node's parent.  Smi-tagged, so the GC walkers pass it through
+// untouched (scavenge/gc_mark no-op on non-mem oops).  NULL remains "the
+// hitting activation".
+#define ADEPS_RECEIVER ((oop)4)
 
 struct InterpreterPIC {
   PICEntry entries[PIC_SIZE];
@@ -45,6 +68,21 @@ struct InterpreterPIC {
   // without full lookup or interpret() call.
   // Values: 0=methodResult, 1=constantResult, 2=dataResult, 3=assignmentResult
   int8_t   resultType[PIC_SIZE];
+  // Parents-verified entries (dynamic inheritance): a result found through
+  // ASSIGNABLE parents cannot be cached on the receiver map alone, since
+  // same-map receivers can differ in parents.  Such entries record the
+  // traversed parent slots and their values here, and a hit first re-verifies
+  // them -- the same check a compiled DI prologue performs; parent
+  // reassignment self-invalidates by value mismatch.  Parent slot j of entry
+  // i is adepsHolder[i][j]->oops(adepsOffset[i][j]) and must still contain
+  // adepsValue[i][j].  a NULL holder means "the hitting
+  // activation's parent local" (offset < 0 encodes arg slot ~off);
+  // ADEPS_RECEIVER means "the hitting receiver" (per-instance parent slots);
+  // adepsCount[i] is 0 for ordinary entries.
+  oop      adepsHolder[PIC_SIZE][PIC_MAX_ADEPS];
+  oop      adepsValue [PIC_SIZE][PIC_MAX_ADEPS];
+  int32    adepsOffset[PIC_SIZE][PIC_MAX_ADEPS];
+  int8_t   adepsCount [PIC_SIZE];
   int32    slotOffset[PIC_SIZE]; // obj_slot offset for data/assignment results
 };
 
@@ -109,6 +147,22 @@ class interpreter: public abstract_interpreter {
   InterpreterPIC* _pics;       // points into InterpreterPICTable (heap) or NULL
   int32           _num_pics;
   int16_t*        _pc_to_pic;  // points into InterpreterPICTable (heap) or NULL
+  int32*          _invocation_count; // -> pd->invocation_count (heap) or NULL
+
+  // A loop back edge counts toward the tier-up threshold just like an
+  // activation, so a method that loops inside few activations still promotes.
+  // (Promotion happens at the NEXT activation entry -- maybe_tier_up -- since
+  // there is no on-stack replacement.)  Capped so a long-lived loop can't
+  // overflow the int32 counter.  Self loops are _Restart-shaped (see
+  // interpret_method's retry loop); branch bytecodes are counted too for
+  // worlds that use them.
+  void count_loop_back_edge() {
+    if (_invocation_count != NULL && *_invocation_count < (1 << 30))
+      ++*_invocation_count;
+  }
+  void count_back_edge(int32 target_PC) {
+    if (target_PC <= pc) count_loop_back_edge();
+  }
 
   // Pointer to the in-progress simpleLookup on this interpreter activation,
   // or NULL when no lookup is active.
@@ -142,18 +196,19 @@ class interpreter: public abstract_interpreter {
   // -- dmu & claude, 5/26
   class simpleLookup* lookup_in_progress;
 
-  // Setter that asserts the no-re-entrancy invariant: each interpreter
-  // activation has at most one lookup in progress at a time. Nested sends
-  // create new interpreter activations (each with its own
-  // lookup_in_progress), so re-entrancy on the same interp would indicate
-  // a structural change we'd need to handle (e.g. switching to a chain).
+  // Registration is a CHAIN (intrusive, through simpleLookup::
+  // next_in_progress), not a single slot: nested sends create new
+  // interpreter activations with their own lookup_in_progress, but a
+  // ROUTED compiled callee runs beneath this activation without creating
+  // one, and a lookup it starts (unwind_protect_prim, a compile-through
+  // miss that re-enters the VM, ...) registers on this interpreter while
+  // this activation's own lookup is still in progress.  Push/pop are
+  // strictly LIFO through the C stack.  Defined out of line: simpleLookup
+  // is incomplete here.
   //
-  // -- dmu & claude, 5/26
-  inline void set_lookup_in_progress(class simpleLookup* L) {
-    assert(lookup_in_progress == NULL,
-           "re-entrant lookup — previous one should have been cleared");
-    lookup_in_progress = L;
-  }
+  // -- dmu & claude, 5/26; chained 7/26
+  void push_lookup_in_progress(class simpleLookup* L);
+  void pop_lookup_in_progress();
 
 # if TARGET_IS_64BIT
   // On x86_64 interpreter-only builds, ContinueNLRFromC and c_entry_point()
@@ -198,6 +253,11 @@ class interpreter: public abstract_interpreter {
 
   int32 num_pics() { return _num_pics; }
   void  attach_pics();  // look up or create PICs in the persistent table
+  void  fill_pic(class simpleLookup& L,
+                 class assignableDependencyList& adepsList,
+                 nmethod* routedNM, bool from_activation);
+  void  maybe_tier_up();  // SIC-compile this method once it is hot enough
+  bool  maybe_tier_up_block_home(struct InterpreterPICData* pd);
 
   void interpret_method();
 
@@ -373,12 +433,16 @@ class InterpreterIterator: public StackObj {
     p =       &(interp)->rcvToSend;  oop_closure->do_oop(p);
     p = (oop*)&(interp)->selToSend;  oop_closure->do_oop(p);
 
-    // If a lookup is in progress on this interpreter activation, walk its
+    // If lookups are in progress on this interpreter activation, walk their
     // captured oops too so a scavenge / mark / etc. updates them in place.
+    // A chain, not a single slot: a routed compiled callee running beneath
+    // this activation can start its own lookup (e.g. unwind_protect_prim)
+    // while this activation's lookup is still registered.
     // See interpreter::lookup_in_progress for why.
     // -- dmu & claude, 5/26
-    if ((interp)->lookup_in_progress)
-      (interp)->lookup_in_progress->oops_do(oop_closure);
+    for (class simpleLookup* l = (interp)->lookup_in_progress;
+         l != NULL;  l = l->next_in_progress)
+      l->oops_do(oop_closure);
   }
 };
     

@@ -161,6 +161,7 @@ oop universe::scavenge(oop p) {
     
     SCAVENGE_TEMPLATE(&p);
     APPLY_TO_VM_OOPS(SCAVENGE_TEMPLATE);
+    SCAVENGE_TEMPLATE(&NLRResultFromC);   // see universe.hh: not snapshotted
     APPLY_TO_VM_MAPS(MAP_SCAVENGE_TEMPLATE);
     VMStrings_scavenge_contents();
     string_table->scavenge_contents();
@@ -256,6 +257,7 @@ oop universe::garbage_collect(oop p) {
   // mark roots
   MARK_TEMPLATE(&p);
   APPLY_TO_VM_OOPS(MARK_TEMPLATE);
+  MARK_TEMPLATE(&NLRResultFromC);       // see universe.hh: not snapshotted
   APPLY_TO_VM_MAPS(MAP_MARK_TEMPLATE);
   
        code->gc_mark_contents();
@@ -275,6 +277,13 @@ oop universe::garbage_collect(oop p) {
   processes->gc_mark_remaining_processes();
 
   object_table->gc_mark_rest();
+
+# if TARGET_IS_64BIT
+  // Weak-key finalization for the interpreter PIC cache: park entries whose
+  // method is now known to be unreachable from any real root (freed later by
+  // drain_pending_free).  Must run after the full strong closure above.
+  interpreter_pic_table->gc_weak_finalize();
+# endif
 
   // finalize unreachable objects - must be after all other gc_mark routines!
   string_table->gc_mark_contents();
@@ -320,6 +329,7 @@ oop universe::garbage_collect(oop p) {
   
   UNMARK_TEMPLATE(&p);
   APPLY_TO_VM_OOPS(UNMARK_TEMPLATE);
+  UNMARK_TEMPLATE(&NLRResultFromC);     // see universe.hh: not snapshotted
   APPLY_TO_VM_MAPS(MAP_UNMARK_TEMPLATE);
   
        code->gc_unmark_contents();

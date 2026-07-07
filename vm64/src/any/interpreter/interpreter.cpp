@@ -9,7 +9,54 @@
 
 oop sneaky_method_argument_to_interpret;
 
+
+// Collect the (holder, slot offset, expected parent) constraints a lookup
+// traversed through assignable parent slots -- the same walk a compiled DI
+// prologue verifies (SICGenHelper::verifyParents).  False if more than
+// PIC_MAX_ADEPS constraints are needed.
+// A ROOT holder that is the receiver itself is recorded as ADEPS_RECEIVER so
+// the hit re-reads the parent slot of the receiver AT HAND: the PIC entry is
+// keyed on the receiver map, and same-map receivers each carry their own
+// parent slot (treeNodes flip empty<->filled by parent assignment) -- pinning
+// the recorded object would validate the wrong node's parent and false-hit.
+// Deeper holders stay pinned: an earlier constraint has already verified the
+// chain reaches that exact object.  (That includes a receiver reappearing at
+// depth > 0 through a parent cycle -- substituting there would be unsound.)
+static bool collect_adeps(objectLookupTarget* t, oop rcv, bool is_root,
+                          oop* h, int32* o, oop* v, int& n) {
+  for (assignableSlotLink* l = t->links; l != NULL; l = l->next) {
+    if (n == PIC_MAX_ADEPS) return false;
+    h[n] = (is_root && t->obj == rcv) ? ADEPS_RECEIVER : t->obj;
+    o[n] = smiOop(l->slot->data)->value();
+    v[n] = l->target->obj;
+    n++;
+    if (l->target->links != NULL &&
+        !collect_adeps(l->target, rcv, false, h, o, v, n))
+      return false;
+  }
+  return true;
+}
+
 interpreter* interpreter::_active_interp_list = NULL;
+
+# if TARGET_IS_64BIT
+// Last-resort lookup used when neither currentProcess nor stackFor() owns the
+// frame -- e.g. the debugger primitives (_ActivationStack, _ActivationAt:)
+// walking a suspended process's stack from the shell. Matching by _my_frame
+// identity is authoritative: distinct stacks occupy distinct memory, so a
+// frame address can belong to at most one live interpreter.
+// -- claude & dmu 6/2026
+static frame*       interp_search_frame;
+static interpreter* interp_search_result;
+static void find_interp_in_process(Process* p) {
+  if (interp_search_result != NULL)  return;
+  for (interpreter* i = p->active_interp_list; i != NULL; i = i->_prev_interp)
+    if (i->_my_frame == interp_search_frame) {
+      interp_search_result = i;
+      return;
+    }
+}
+# endif
 
 interpreter* interpreter::find_interpreter_for_frame(frame* f) {
 # if TARGET_IS_64BIT
@@ -19,6 +66,13 @@ interpreter* interpreter::find_interpreter_for_frame(frame* f) {
     if (i->_my_frame == f)
       return i;
   }
+  // A frame on the current process's own stack that the scan above missed is
+  // definitely not an interpreted frame (a stack belongs to exactly one
+  // process, whose interpreters are all on its list).  Answer without the
+  // global fallback: trap-time stack walks classify every C frame through
+  // here, and scanning every process's interpreter list for each of them
+  // made routed startup quadratically slow.
+  if (currentProcess->contains(f)) return NULL;
   // Frame not found in current process — find its owning process
   Stack* stk = processes->stackFor(f);
   if (stk && stk->process != currentProcess) {
@@ -27,7 +81,15 @@ interpreter* interpreter::find_interpreter_for_frame(frame* f) {
         return i;
     }
   }
-  return NULL;
+  // Fall back to scanning every process's list. Covers callers that walk a
+  // foreign stack whose owner stackFor() misidentifies (the console and ui
+  // debuggers' activation primitives); unlike the bare stackFor() path it
+  // can't return a spurious NULL for a live interpreted frame.
+  // -- claude & dmu 6/2026
+  interp_search_frame  = f;
+  interp_search_result = NULL;
+  processes->processesDo(find_interp_in_process, true);
+  return interp_search_result;
 # else
   for (interpreter* i = _active_interp_list; i != NULL; i = i->_prev_interp) {
     if (i->_my_frame == f)
@@ -51,6 +113,10 @@ void interpreter_longjmp_for_NLR() {
   longjmp(interp->nlr_jmpbuf(), 1);
 }
 # endif
+
+// Bumped in nmethod::flush(); routing PICs stamp cached nmethods with it so a
+// flushed (possibly reused) nmethod is never entered on a stale PIC hit.
+extern uint32 codeFlushGeneration;
 
 void invalidate_all_interpreter_pics() {
 # if TARGET_IS_64BIT
@@ -113,6 +179,7 @@ inline interpreter::interpreter( oop rcv,
   rcvToSend= rcv;
   selToSend= VMString[VALUE]; // just a placeholder
   return_patch_reason= not_patched;
+  restartSend = false; // was uninitialized; only ever set true by recompilation / uncommon traps
   current_primDesc = NULL;
   _my_frame = NULL;
   _prev_interp = NULL;
@@ -152,6 +219,7 @@ inline interpreter::interpreter( oop rcv,
   _pics = NULL;
   _num_pics = 0;
   _pc_to_pic = NULL;
+  _invocation_count = NULL;
 }
 
 
@@ -159,6 +227,10 @@ void interpreter::attach_pics() {
 # if TARGET_IS_64BIT
   if (!PIC) return;
   if (!interpreter_pic_table) return;
+  // Safe point to reclaim entries parked by the GC's weak-key finalization:
+  // every interpreter currently on the stack has a live (marked) method, so its
+  // entry was never parked — nothing references a parked entry's raw arrays.
+  interpreter_pic_table->drain_pending_free();
   InterpreterPICData* pd = interpreter_pic_table->lookup_or_create(
       method_object, mi.length_codes, mi.codes);
   if (pd) {
@@ -166,7 +238,179 @@ void interpreter::attach_pics() {
     _pics       = pd->pics;
     _num_pics   = pd->num_pics;
     _pc_to_pic  = pd->pc_to_pic;
+    _invocation_count = &pd->invocation_count; // for count_back_edge
   }
+# endif
+}
+
+
+// Register/unregister a lookup for GC walking (see lookup_in_progress in
+// interpreter.hh: a chain, since routed compiled callees beneath this
+// activation can start lookups while one is already registered).
+void interpreter::push_lookup_in_progress(simpleLookup* L) {
+  L->next_in_progress = lookup_in_progress;
+  lookup_in_progress = L;
+}
+
+void interpreter::pop_lookup_in_progress() {
+  assert(lookup_in_progress != NULL, "pop with no lookup registered");
+  lookup_in_progress = lookup_in_progress->next_in_progress;
+}
+
+
+// Tier-0 -> SIC promotion.  Called once per activation, after this interpreter
+// is registered on active_interp_list (so a GC during the compile sees its
+// oops) and before the method body runs.  When this method's interpreted
+// invocation count reaches the promotion threshold (recompileLimits[0]) we
+// SIC-compile it, modelled on the _Perform path in oopClass: a synthetic
+// first_sendDesc() and a vframe for the current Self frame, then lookupNMethod.
+// The resulting nmethod just enters the code table; routing to it (the
+// interpreter checking the code table on send) is a separate step, so this
+// alone does not yet change which code runs.
+void interpreter::maybe_tier_up() {
+# if TARGET_IS_64BIT && defined(SIC_COMPILER)
+  if (!interpreter_pic_table) return;
+  extern fint interpreterTierUpThreshold();
+  fint threshold = interpreterTierUpThreshold();
+  if (threshold <= 0) return;                       // tiering disabled
+  InterpreterPICData* pd = interpreter_pic_table->lookup(method_object);
+  if (pd == NULL) return;
+  if (pd->tier_up_at < 0) return;   // compiled, block, or gave up
+  // Back edges bump invocation_count mid-activation (count_back_edge), so
+  // the counter can pass any exact value between activation entries; compare
+  // >= and record the outcome in tier_up_at instead of firing on a crossing.
+  // tier_up_at is 0 until a compile fails; a failure moves the trigger to 2x
+  // the current count so failing methods retry with doubling backoff.
+  fint trigger = pd->tier_up_at > 0 ? pd->tier_up_at : threshold;
+  if (pd->invocation_count < trigger) return;
+  // A hot block method is never compiled standalone (see
+  // maybe_tier_up_block_home for why); promote the block's HOME method
+  // instead -- Self-93's recompilee selection climbed from a hot block to
+  // its home the same way.  Once the home is compiled, fresh activations
+  // inline their block literals.
+  if (method_object->kind() == BlockMethodType
+      && !maybe_tier_up_block_home(pd))
+    return;
+
+  abstract_vframe* vf = new_vframe(currentProcess->last_self_frame(false));
+  if (vf == NULL) return;   // no vframe this time; retry next activation
+  cacheProbingLookup L(receiver, selector, delegatee, MH_TBD, vf,
+                       sendDesc::first_sendDesc(), NULL, false);
+  // Skip if this receiver map's version already exists.  nmethods are keyed
+  // canonically (NormalLookupType, MH_NOT_A_RESEND); the lookup's own key
+  // carries resolved-holder bits that never EQ-match it, so probeCache alone
+  // misses and would recompile a fresh duplicate every activation.
+  { MethodLookupKey ck(NormalLookupType, MH_NOT_A_RESEND, L.receiverMapOop(),
+                       L.selector(), L.delegatee());
+    if (Memory->code->lookup(ck) != NULL) { pd->tier_up_at = 0; return; } }
+  interpreter* active = currentProcess->active_interp_list;
+  if (active) active->push_lookup_in_progress(&L);  // GC-protect L's oops during compile
+  fint compiles_before = SICCompilationCount;
+  nmethod* nm = L.lookupNMethod();
+  if (active) active->pop_lookup_in_progress();
+  if (nm == NULL) {
+    // Compile failed; unlink the lookup's dependency nodes (no nmethod will
+    // ever own them -- left in the maps' dependent lists they dangle and
+    // break later invalidation walks), then retry once the count doubles
+    // from here, giving up when the trigger no longer fits the counter.
+    L.remove_all_deps();
+    fint c = pd->invocation_count;
+    pd->tier_up_at = c <= (1 << 29) ? int32(c * 2) : -1;
+  } else {
+    // Success -- but nmethods are customized per receiver map, so LEAVE the
+    // trigger armed: a different receiver map arriving later compiles its own
+    // version, while already-compiled maps exit via the cheap probeCache hit.
+    pd->tier_up_at = 0;
+    if (RouteToCompiled && SICCompilationCount != compiles_before)
+      // Fresh compile: drop only the PIC entries that cached this method as
+      // "interpret"; the next send at those sites re-looks-up and caches the
+      // new nmethod, so routing enters it -- without wiping every other
+      // method's type feedback (which the SIC now reads on tier-up).
+      interpreter_pic_table->invalidate_entries_caching(method_object);
+  }
+  if ((PrintCompilation || PrintRecompilation)
+      && (nm == NULL || SICCompilationCount != compiles_before))
+    lprintf("*tier-up: SIC-compiled %s after %ld interp calls -> nm=%p\n",
+            selector->is_string()
+              ? stringOop(selector)->copy_null_terminated() : "?",
+            (long)pd->invocation_count, (void*)nm);
+# endif
+}
+
+
+// Promotion target for a hot block: its OUTERMOST home method, compiled with
+// the home activation's own receiver and selector (customized on the home
+// receiver map, so the home's block literals -- including the hot one -- get
+// compiled homes on fresh activations).  pd is the BLOCK method's table
+// entry; it carries the retry state for the whole redirect.  Returns true
+// when the caller should run the normal tier-up path on the block itself
+// (currently never -- standalone block nmethods are unsound, see below).
+bool interpreter::maybe_tier_up_block_home(InterpreterPICData* pd) {
+# if TARGET_IS_64BIT && defined(SIC_COMPILER)
+  abstract_vframe* home =
+    blockOop(receiver)->parentVFrame(currentProcess->last_self_frame(false),
+                                     true);
+  if (home == NULL) {
+    // home is dead (non-LIFO block); nothing to promote
+    pd->tier_up_at = -1;
+    return false;
+  }
+  // Climb to the OUTERMOST home: an intermediate home can itself be a block
+  // method (hot loop bodies nest), which is just as uncompilable standalone
+  // as this one -- only the outer method anchors the compiled-home chain.
+  home = home->home();
+  if (!home->is_interpreted()) {
+    // Home is compiled; the block COULD compile standalone, but such an
+    // nmethod is unsound to reuse: its implicit-self sends resolve through
+    // the compile-time home RECEIVER (constants like a set's emptyMarker
+    // get embedded), while the nmethod is keyed only on the block map,
+    // which every home receiver flavor shares.  Poisoned world building
+    // (module-cache sets probed with another flavor's markers).  Leave hot
+    // blocks to inline into their homes; standalone they stay interpreted.
+    pd->tier_up_at = -1;
+    return false;
+  }
+  interpreter* hin = ((interpreted_vframe*)home)->interp();
+  if (hin == NULL) { pd->tier_up_at = -1; return false; }
+  cacheProbingLookup L(hin->receiver, hin->selector, hin->delegatee, MH_TBD,
+                       home, sendDesc::first_sendDesc(), NULL, false);
+  // Home METHOD already compiled for this receiver map (canonical key -- see
+  // maybe_tier_up), but this block instance still lives in an interpreted
+  // home activation.  A fresh activation of the home will run compiled and
+  // its blocks fall through to standalone compilation, so back off and
+  // re-check rather than giving up.
+  { MethodLookupKey ck(NormalLookupType, MH_NOT_A_RESEND, L.receiverMapOop(),
+                       L.selector(), L.delegatee());
+    if (Memory->code->lookup(ck) != NULL) {
+      fint c = pd->invocation_count;
+      pd->tier_up_at = c <= (1 << 29) ? int32(c * 2) : -1;
+      return false;
+    } }
+  interpreter* active = currentProcess->active_interp_list;
+  if (active) active->push_lookup_in_progress(&L);  // GC-protect L's oops
+  nmethod* nm = L.lookupNMethod();   // NULL when the home is itself a
+                                     // mixed-mode block; the backoff retries
+  if (active) active->pop_lookup_in_progress();
+  if (nm == NULL) {
+    L.remove_all_deps();             // see maybe_tier_up
+    fint c = pd->invocation_count;
+    pd->tier_up_at = c <= (1 << 29) ? int32(c * 2) : -1;
+  } else {
+    pd->tier_up_at = -1;
+    InterpreterPICData* hpd = interpreter_pic_table->lookup(hin->method_object);
+    if (hpd != NULL) hpd->tier_up_at = -1;
+    if (RouteToCompiled)
+      interpreter_pic_table->invalidate_entries_caching(hin->method_object);
+  }
+  if (PrintCompilation || PrintRecompilation)
+    lprintf("*tier-up: SIC-compiled home %s of hot block -> nm=%p\n",
+            hin->selector->is_string()
+              ? stringOop(hin->selector)->copy_null_terminated() : "?",
+            (void*)nm);
+  return false;
+# else
+  Unused(pd);
+  return false;
 # endif
 }
 
@@ -239,6 +483,9 @@ oop interpret( oop rcv,
   interp._prev_interp = interpreter::_active_interp_list;
   interpreter::_active_interp_list = &interp;
 # endif
+
+  // Promote this method to compiled code if it has become hot (tier-0 -> SIC).
+  interp.maybe_tier_up();
 
   ((interpreter*)save1Arg(&interp))->interpret_method();
 
@@ -366,7 +613,13 @@ void interpreter::interpret_method() {
     }
     pc = mi.firstBCI();
     abstract_interpreter::interpret_method();
-  } while ( pc == restart_pc() + 1); // interpret_method incremented it
+    if (pc != restart_pc() + 1)  // interpret_method incremented it
+      break;
+    // _Restart is the interpreter's loop back edge (Self loops restart the
+    // activation -- traits block loop -- rather than branching backward);
+    // count it toward this method's tier-up trigger.
+    count_loop_back_edge();
+  } while (true);
 
   // zap blocks
   for ( oop* cb = cloned_blocks;
@@ -409,6 +662,7 @@ void interpreter::do_branch_code( int32 target_PC, oop target_oop ) {
     if ( stack[--sp] != target_oop )
       return;
   }
+  count_back_edge(target_PC);
   pc = target_PC;
 }
 
@@ -426,7 +680,9 @@ void interpreter::do_BRANCH_INDEXED_CODE() {
     return;
   
   oop npco= v->obj_at(index);
-  pc = smiOop(v->obj_at(smiOop(npco)->value()))->value();
+  int32 target_PC = smiOop(v->obj_at(smiOop(npco)->value()))->value();
+  count_back_edge(target_PC);
+  pc = target_PC;
 }
  
  
@@ -639,7 +895,25 @@ void interpreter::send(LookupType type, oop delOrNameToSend, fint arg_count ) {
     if (!restartSend)
       break;
 #if TARGET_IS_64BIT && !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
-    fatal("sends only restart for uncommon traps or recompilation");
+    // Kill/retry on the interpreter-only build.  `restartSend` means "re-dispatch
+    // this send", and on this build it is set only by the kill convert (no
+    // recompilation).  Re-dispatch happens by simply looping back to re-run
+    // lookup_and_send below: rcvToSend/selToSend/arg_count and the expression-
+    // stack operands are all intact (sp is not adjusted until after this loop)
+    // and this C frame survives the green-thread suspend, so no bytecode is
+    // replayed -- no is.index/selector rebuild needed.
+    //
+    // But first mirror the compiled VM's per-send stack-limit safepoint: the
+    // kill armed preemption, so service it here, BEFORE re-running the send.
+    // interruptCheck -> handlePreemption is the completion that resets the
+    // killing flag and transfers control back to the killer process, leaving
+    // this process parked at this send.  A later `continue` resumes here and
+    // the loop re-runs lookup_and_send (re-lookup picks up an edited method).
+    // This sits past `if (!restartSend) break`, so normal sends never reach it
+    // -- zero cost off the kill path.  -- claude & dmu 6/2026
+    restartSend = false;
+    if (fastPreemptionCheck())
+      SaveNonVolRegsAndCall0(interruptCheck);
 #endif
   }
   stack[resSP] = res;
@@ -672,6 +946,21 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
                                  oop delToSend, fint arg_count, int32 resSP ) {
   if (pic.entries[i].cachedMap != rMap)
     return badOop;
+  // Parents-verified entries: re-check the recorded parent constraints
+  // before trusting anything; a mismatch is a miss and the full lookup
+  // re-decides (see InterpreterPIC).  holder NULL means "this activation's
+  // parent local" (offset < 0 encodes an arg slot); ADEPS_RECEIVER means
+  // "the hitting receiver" (a per-instance parent slot -- same map, own slot).
+  for (int j = 0; j < pic.adepsCount[i]; j++) {
+    oop holder = pic.adepsHolder[i][j];
+    if (holder == ADEPS_RECEIVER) holder = rcvToSend;
+    int32 off  = pic.adepsOffset[i][j];
+    oop cur = holder != NULL ? *oopsOop(holder)->oops(off)
+            : off < 0       ? args[-(off + 1)]
+                            : locals[off];
+    if (cur != pic.adepsValue[i][j])
+      return badOop;
+  }
   switch (pic.resultType[i]) {
     default: fatal1("unknown resultType %d", pic.resultType[i]);
     case constantResult:
@@ -695,6 +984,48 @@ oop interpreter::try_pic_entry( InterpreterPIC& pic, int i, mapOop rMap,
     case methodResult: {
       oop holder = pic.entries[i].cachedHolder;
       if (holder == NULL) holder = rcvToSend;
+#   if TARGET_IS_64BIT && defined(SIC_COMPILER)
+      // Routing: enter the cached compiled method instead of interpreting,
+      // unless it has since been flushed (generation stamp mismatch).
+      nmethod* nm = pic.entries[i].cachedNMethod;
+      if (nm != NULL && pic.entries[i].cachedNMethodGen != codeFlushGeneration) {
+        pic.entries[i].cachedNMethod = NULL;  // flushed; may be freed memory
+        nm = NULL;
+      }
+      if (nm != NULL && nm->isInvalid()) {
+        // Invalidated (programming change): the code still exists but its
+        // inlined offsets/constants are stale.  Compiled callers get
+        // unlinked by invalidate(); this cached route is our equivalent --
+        // drop it and let the re-probe below find a recompiled version.
+        pic.entries[i].cachedNMethod = NULL;
+        nm = NULL;
+      }
+      // An entry filled before its callee tiered up cached NULL here, and a
+      // stable site never misses, so it would interpret the callee forever.
+      // Re-probe the code cache every 64th hit so routing spreads through
+      // already-warm entries as tier-up proceeds (same canonical key as
+      // route_to_nmethod; arg cap matches EnterSelfN's outgoing area).
+      if (RouteToCompiled && nm == NULL && arg_count <= 14
+          && (pic.hitCount[i] & 63) == 63) {
+        MethodLookupKey ck(NormalLookupType, MH_NOT_A_RESEND, rMap,
+                           selToSend, delToSend);
+        nm = Memory->code->lookup(ck);
+        pic.entries[i].cachedNMethod    = nm;
+        pic.entries[i].cachedNMethodGen = codeFlushGeneration;
+        if (nm && (PrintCompilation || PrintRecompilation))
+          lprintf("interpreter late-routing PIC entry to nmethod %#lx\n",
+                  (long)nm);
+      }
+      if (RouteToCompiled && nm != NULL) {
+        oop* args = &stack[sp - arg_count];
+        oop res = arg_count > 1
+                ? EnterSelfN(rcvToSend, nm->insts(), args, arg_count)
+                : EnterSelf (rcvToSend, nm->insts(),
+                             arg_count == 0 ? badOop : args[0]);
+        oop res_after_trap = handle_return_trap_after_send_if_needed(res);
+        return res_after_trap == badOop ? res : res_after_trap;
+      }
+#   endif
       oop res = ::interpret( rcvToSend,
                          selToSend,
                          delToSend,
@@ -827,13 +1158,167 @@ oop interpreter::try_perform_prim( bool hasFailBlock,
 }
 
 
+// Routing (tier-up stages a/b): if RouteToCompiled is on and a compiled
+// nmethod exists for this resolved send, return it so evaluateResult enters
+// compiled code instead of interpreting.  Returns NULL (interpret) otherwise.
+// The arg cap matches EnterSelfN's fixed outgoing area (EnterSelfMaxArgs in
+// stubs_amd64.cpp); larger sends fall back to interpretation.
+static nmethod* route_to_nmethod(simpleLookup& L, int32 arg_count) {
+# if defined(SIC_COMPILER) || defined(FAST_COMPILER)
+  // Only normal sends are routed (resends/delegated key differently).
+  // Block receivers are excluded: a standalone block nmethod (eager-made,
+  // or predating the ban in maybe_tier_up_block_home) may embed constants
+  // resolved through a compile-time home receiver that this block's home
+  // does not share (the key is only the block map).
+  if (RouteToCompiled && arg_count <= 14 && L.result() != NULL
+      && baseLookupType(L.key.lookupType) == NormalBaseLookupType
+      && !L.receiverMap()->is_block()) {
+    // nmethods are keyed by a CANONICAL key: NormalLookupType (no implicit-self
+    // or receiver-static bits) and MH_NOT_A_RESEND (no resolved holder), keyed
+    // on the receiver map -- mirror that here, else the resolved send key (with
+    // those bits + a holder) never EQ-matches the compiled method.
+    MethodLookupKey ck(NormalLookupType, MH_NOT_A_RESEND, L.receiverMapOop(),
+                       L.selector(), L.delegatee());
+    nmethod* rnm = Memory->code->lookup(ck);
+    // DI nmethods (assignable-parent prologue checks) are routable: on a
+    // parent mismatch the trap ends up in DIDesc::sendMessage, which handles
+    // an EnterSelf-glue caller explicitly (the glue's return point is the
+    // firstSelfFrame sendDesc and its outgoing area has send-site shape).
+    if (rnm && (PrintCompilation || PrintRecompilation))
+      lprintf("interpreter routing %ld-arg send to compiled nmethod %#lx\n",
+              (long)arg_count, (long)rnm);
+    return rnm;
+  }
+# endif
+  (void)L; (void)arg_count;
+  return NULL;
+}
+
+// Cache the completed lookup L at this send site.  from_activation means L
+// was a vframeLookup that consulted the sending ACTIVATION (an implicit or
+// resend lookup from a method with a parent local slot); such a result is
+// cacheable only when every activation-dependent input is re-checked on each
+// hit, so this method's parent local slots are recorded as constraints
+// (holder NULL = "the hitting activation"; offset < 0 encodes arg slot
+// ~(off)) alongside the regular assignable-parent constraints.  Bails when an
+// enclosing lexical activation could contribute a dynamic parent or the
+// result itself lives in an activation.
+void interpreter::fill_pic(simpleLookup& L,
+                           assignableDependencyList& adepsList,
+                           nmethod* routedNM, bool from_activation) {
+  ResultType rt = L.resultType();
+  bool constrained = false;
+  oop   a_holder[PIC_MAX_ADEPS];
+  oop   a_value [PIC_MAX_ADEPS];
+  int32 a_offset[PIC_MAX_ADEPS];
+  int   a_n = 0;
+  if (from_activation) {
+    for (interpreter* pi = parentI; pi != NULL; pi = pi->parentI)
+      if (pi->hasParentLocalSlot) return;
+    if (L.result() == NULL || !L.result()->is_real()) return;
+    FOR_EACH_SLOTDESC(mi.map(), sd) {
+      if (sd->is_vm_slot() || !sd->is_parent()) continue;
+      if (!sd->is_obj_slot() && !sd->is_arg_slot()) continue; // map-constant parent: static
+      if (a_n == PIC_MAX_ADEPS) return;
+      int32 off = smiOop(sd->data)->value();
+      a_holder[a_n] = NULL;
+      if (sd->is_arg_slot()) {
+        a_offset[a_n] = -(off + 1);
+        a_value [a_n] = args[off];
+      } else {
+        a_offset[a_n] = off - minOffset;
+        a_value [a_n] = locals[off - minOffset];
+      }
+      a_n++;
+    }
+    constrained = a_n > 0;
+  }
+  // A lookup that traversed assignable parent slots cannot be cached on
+  // the receiver map alone — same-map receivers can differ in parents.
+  // Record the traversed parent slots and their values instead and
+  // re-verify them on every hit (what a compiled DI prologue does);
+  // these sends are dynamic inheritance's (morphic's) bread and butter.
+  // Lookups traversing more than PIC_MAX_ADEPS parents stay uncached.
+  if (adepsList.nonEmpty()) {
+    bool ok = rt >= 0;
+    for (objectLookupTarget** t = adepsList.start();
+         ok && t < adepsList.top; t++)
+      ok = collect_adeps(*t, rcvToSend, true, a_holder, a_offset, a_value, a_n);
+    if (ok && a_n > 0) constrained = true;
+    else rt = (ResultType)-1;
+  }
+  // Don't cache parent-slot assignments — they require PIC invalidation
+  // that only happens in realSlotRef::set_contents().
+  if (rt == assignmentResult && L.result()->is_real()
+      && L.result()->as_real()->desc->is_parent())
+    rt = (ResultType)-1; // sentinel: don't cache
+  int pic_idx = _pc_to_pic[pc];
+  if (pic_idx >= 0 && rt >= 0) {
+    InterpreterPIC& pic = _pics[pic_idx];
+    int slot = (pic.count < PIC_SIZE) ? pic.count++ : pic.next;
+    pic.hitCount[slot] = 0; // fresh entry (slot may be round-robin reused)
+    pic.entries[slot].cachedMap = L.receiverMapOop();
+    pic.resultType[slot] = (int8_t)rt;
+    pic.adepsCount[slot] = 0;
+    if (constrained) {
+      for (int j = 0; j < a_n; j++) {
+        pic.adepsHolder[slot][j] = a_holder[j];
+        pic.adepsOffset[slot][j] = a_offset[j];
+        pic.adepsValue [slot][j] = a_value [j];
+      }
+      pic.adepsCount[slot] = (int8_t)a_n;
+    }
+    switch (rt) {
+      case methodResult: {
+        oop resultMH = L.result()->methodHolder_or_map(rcvToSend);
+        pic.entries[slot].cachedMethod = L.result()->contents();
+        // NULL holder signals "use rcvToSend" on PIC hit
+        pic.entries[slot].cachedHolder = (resultMH == rcvToSend) ? NULL : resultMH;
+#     if defined(SIC_COMPILER)
+        // Enter compiled code on future hits when routing found an nmethod.
+        // Routing state is SIC-only; the interpreter-only build never enters
+        // compiled code, so it neither caches an nmethod nor stamps it.
+        pic.entries[slot].cachedNMethod    = routedNM;
+        pic.entries[slot].cachedNMethodGen = codeFlushGeneration;
+#     endif
+        break;
+      }
+      case constantResult:
+        pic.entries[slot].cachedMethod = L.result()->contents();
+        pic.entries[slot].cachedHolder = NULL;
+        break;
+      case dataResult:
+      case assignmentResult: {
+        oop resultMH = L.result()->methodHolder_or_map(rcvToSend);
+        pic.entries[slot].cachedMethod = NULL;
+        // NULL holder signals "use rcvToSend" on PIC hit
+        pic.entries[slot].cachedHolder = (resultMH == rcvToSend) ? NULL : resultMH;
+        pic.slotOffset[slot] = smiOop(L.result()->as_real()->desc->data)->value();
+        break;
+      }
+      default: break;
+    }
+    pic.next = (slot + 1) % PIC_SIZE;
+  }
+}
+
+
 oop interpreter::lookup_and_send( LookupType type,
                                          oop mh,
                                          oop delOrNameToSend ) {
   ResourceMark rm; // for sub-objects of L and vf
   // since we come here from perform, selToSend may not be a string!
 
-  if (UseLocalAccessBytecodes && !hasParentLocalSlot) {
+  // The vframe branch below exists for lookups that may consult the sending
+  // ACTIVATION (implicit-self and resend lookups from methods with a parent
+  // local slot -- dynamic scoping).  An EXPLICIT-receiver normal send never
+  // touches the activation, so it can use the simple branch -- and its PIC
+  // caching -- no matter what the sending method declares.  Morphic methods
+  // all carry parent local slots; routing every send they make through the
+  // uncached vframe branch made the desktop lookup-bound.
+  bool explicit_normal = baseLookupType(type) == NormalBaseLookupType
+                      && (type & ImplicitSelfBit) == 0;
+  if (UseLocalAccessBytecodes && (!hasParentLocalSlot || explicit_normal)) {
     bool canCache = _pics && baseLookupType(type) == NormalBaseLookupType
                     && !isPerformLookupType(type);
     assignableDependencyList adepsList;
@@ -846,10 +1331,10 @@ oop interpreter::lookup_and_send( LookupType type,
                     canCache ? &adepsList : NULL ); // track assignable parent dependencies only when cacheable
 
     // Register L so a scavenge fired during the lookup updates L's
-    // captured oops in place. Asserts no other lookup is in progress on
-    // this interpreter (re-entrancy invariant).
+    // captured oops in place. A chain link: routed compiled callees
+    // beneath this send may register further lookups on this interp.
     // -- claude & dmu  5/26
-    set_lookup_in_progress(&L);
+    push_lookup_in_progress(&L);
 
     // XXXXXX check code table, use compiled method, get compiler to call me
 
@@ -860,7 +1345,9 @@ oop interpreter::lookup_and_send( LookupType type,
     if (NLRSupport::have_NLR_through_C()) { // recursive lookup error
       // Clear before the function returns. After the return, L's C-stack
       // storage is gone; a still-set lookup_in_progress would dangle and
-      // the next scavenge that walks this interp would deref it.
+      // the next scavenge that walks this interp would deref it.  NULL
+      // (not pop): &L is this activation's bottom chain link, and any
+      // links above it live in C frames this NLR abandons.
       // -- claude & dmu  5/26
       oop nlr_res = NLRSupport::NLR_result_from_C();
       lookup_in_progress = NULL;
@@ -876,66 +1363,31 @@ oop interpreter::lookup_and_send( LookupType type,
     // L.evaluateResult below, before returning.
     // -- claude & dmu  5/26
     
+    // Resolve a routed nmethod once: cached in the PIC (so future hits enter
+    // compiled code) and passed to evaluateResult (so this send does too).
+    // NULL when routing is off or no nmethod exists.
+    nmethod* routedNM = route_to_nmethod(L, arg_count);
+
     // Exclude performs — their selector varies at runtime, so caching
     // the result at this bytecode PC would be incorrect.
-    if ( canCache && L.result() != NULL ) {
-      ResultType rt = L.resultType();
-      // Don't cache when lookup traversed assignable parent slots —
-      // different receivers with the same map may have different parents,
-      // making map-keyed caching incorrect.
-      if (adepsList.nonEmpty())
-        rt = (ResultType)-1;
-      // Don't cache parent-slot assignments — they require PIC invalidation
-      // that only happens in realSlotRef::set_contents().
-      if (rt == assignmentResult && L.result()->is_real()
-          && L.result()->as_real()->desc->is_parent())
-        rt = (ResultType)-1; // sentinel: don't cache
-      int pic_idx = _pc_to_pic[pc];
-      if (pic_idx >= 0 && rt >= 0) {
-        InterpreterPIC& pic = _pics[pic_idx];
-        int slot = (pic.count < PIC_SIZE) ? pic.count++ : pic.next;
-        pic.hitCount[slot] = 0; // fresh entry (slot may be round-robin reused)
-        pic.entries[slot].cachedMap = L.receiverMapOop();
-        pic.resultType[slot] = (int8_t)rt;
-        switch (rt) {
-          case methodResult: {
-            oop resultMH = L.result()->methodHolder_or_map(rcvToSend);
-            pic.entries[slot].cachedMethod = L.result()->contents();
-            // NULL holder signals "use rcvToSend" on PIC hit
-            pic.entries[slot].cachedHolder = (resultMH == rcvToSend) ? NULL : resultMH;
-            break;
-          }
-          case constantResult:
-            pic.entries[slot].cachedMethod = L.result()->contents();
-            pic.entries[slot].cachedHolder = NULL;
-            break;
-          case dataResult:
-          case assignmentResult: {
-            oop resultMH = L.result()->methodHolder_or_map(rcvToSend);
-            pic.entries[slot].cachedMethod = NULL;
-            // NULL holder signals "use rcvToSend" on PIC hit
-            pic.entries[slot].cachedHolder = (resultMH == rcvToSend) ? NULL : resultMH;
-            pic.slotOffset[slot] = smiOop(L.result()->as_real()->desc->data)->value();
-            break;
-          }
-          default: break;
-        }
-        pic.next = (slot + 1) % PIC_SIZE;
-      }
-    }
+    if ( canCache && L.result() != NULL )
+      fill_pic(L, adepsList, routedNM, false);
 
     // Compute result FIRST (evaluateResult uses L's fields and may
     // allocate), then clear lookup_in_progress, then return. The clear
     // must happen before the function returns so the field doesn't
     // outlive L's C-stack storage.
     // -- claude & dmu  5/26
-    oop res = L.evaluateResult(&stack[sp - arg_count], arg_count, NULL);
+    oop res = L.evaluateResult(&stack[sp - arg_count], arg_count, routedNM);
     lookup_in_progress = NULL;
     return res;
   }
   else {
     FlushRegisterWindows();
     interpreted_vframe ivf(currentProcess->last_self_frame(true));
+    bool canCache = _pics && baseLookupType(type) == NormalBaseLookupType
+                    && !isPerformLookupType(type);
+    assignableDependencyList adepsList;
     vframeLookup L( type,
                     rcvToSend,
                     selToSend,
@@ -943,13 +1395,13 @@ oop interpreter::lookup_and_send( LookupType type,
                     mh,
                     &ivf,
                     NULL,
-                    NULL);
+                    canCache ? &adepsList : NULL);
 
     // Register L (a vframeLookup IS-A simpleLookup) so a scavenge fired
     // during the lookup updates L's captured oops in place.
     // -- claude & dmu  5/26
 
-    set_lookup_in_progress(&L);
+    push_lookup_in_progress(&L);
 
     // XXXXXX check code table, use compiled method, get compiler to call me
 
@@ -972,10 +1424,18 @@ oop interpreter::lookup_and_send( LookupType type,
       return nlr_res;
     }
 
+    nmethod* routedNM = route_to_nmethod(L, arg_count);
+
+    // Cache with activation-local constraints: the lookup consulted the
+    // sending activation, so the entry records this method's parent local
+    // values (re-checked against the hitting activation) -- see fill_pic.
+    if (canCache && L.result() != NULL)
+      fill_pic(L, adepsList, routedNM, true);
+
     // Compute result first (evaluateResult uses L's fields and may
     // allocate), then clear lookup_in_progress, then return.
     //  -- dmu 5/26
-    oop res = L.evaluateResult(&stack[sp - arg_count], arg_count, NULL);
+    oop res = L.evaluateResult(&stack[sp - arg_count], arg_count, routedNM);
     lookup_in_progress = NULL;
     return res;
   }

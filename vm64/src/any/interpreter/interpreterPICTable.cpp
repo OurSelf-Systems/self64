@@ -14,6 +14,7 @@ InterpreterPICTable* interpreter_pic_table = NULL;
 InterpreterPICTable::InterpreterPICTable() {
   memset(buckets, 0, sizeof(buckets));
   _count = 0;
+  pending_free = NULL;
 }
 
 
@@ -62,6 +63,7 @@ InterpreterPICData* InterpreterPICTable::lookup_or_create(
   d->method   = method;
   d->num_pics = num_sends;
   d->invocation_count = 0;
+  d->tier_up_at = 0;
   d->map_len  = num_codes;
 
   d->pc_to_pic = (int16_t*)malloc(num_codes * sizeof(int16_t));
@@ -95,12 +97,80 @@ InterpreterPICData* InterpreterPICTable::lookup_or_create(
 }
 
 
+bool InterpreterPICTable::verify() {
+  bool flag = true;
+  for (int32 i = 0; i < TABLE_SIZE; i++) {
+    for (InterpreterPICData* d = buckets[i]; d; d = d->next) {
+      for (int32 j = 0; j < d->num_pics; j++) {
+        InterpreterPIC& pic = d->pics[j];
+        for (int32 k = 0; k < pic.count; k++) {
+          oop m = pic.entries[k].cachedMap;
+          if (m == NULL || !m->is_mem() || !m->is_map()) {
+            error2("interpreter PIC entry has non-map cachedMap %#lx (method %#lx): stale?",
+                   (unsigned long)m, (unsigned long)d->method);
+            flag = false;
+          }
+          if (pic.resultType[k] == 0 /*methodResult*/) {
+            oop mo = pic.entries[k].cachedMethod;
+            if (mo == NULL || !mo->is_mem() || !mo->is_method_like()) {
+              error2("interpreter PIC methodResult entry has non-method %#lx (method %#lx): stale?",
+                     (unsigned long)mo, (unsigned long)d->method);
+              flag = false;
+            }
+          }
+          for (int32 a = 0; a < pic.adepsCount[k]; a++) {
+            oop h = pic.adepsHolder[k][a];
+            if (h != NULL && h != ADEPS_RECEIVER && !h->is_mem()) {
+              error1("interpreter PIC adeps holder bad %#lx", (unsigned long)h);
+              flag = false;
+            }
+          }
+        }
+      }
+    }
+  }
+  return flag;
+}
+
 void InterpreterPICTable::invalidate_all() {
   for (int32 i = 0; i < TABLE_SIZE; i++) {
     for (InterpreterPICData* d = buckets[i]; d; d = d->next) {
       for (int32 j = 0; j < d->num_pics; j++) {
         d->pics[j].count = 0;
         memset(d->pics[j].hitCount, 0, sizeof(d->pics[j].hitCount));
+      }
+    }
+  }
+}
+
+
+void InterpreterPICTable::invalidate_entries_caching(oop method) {
+  for (int32 i = 0; i < TABLE_SIZE; i++) {
+    for (InterpreterPICData* d = buckets[i]; d; d = d->next) {
+      for (int32 j = 0; j < d->num_pics; j++) {
+        InterpreterPIC& pic = d->pics[j];
+        // compact the entries, dropping those whose cached result is `method`
+        int32 dst = 0;
+        for (int32 k = 0; k < pic.count; k++) {
+          if (pic.entries[k].cachedMethod == method) continue;
+          if (dst != k) {
+            pic.entries[dst]    = pic.entries[k];
+            pic.hitCount[dst]   = pic.hitCount[k];
+            pic.resultType[dst] = pic.resultType[k];
+            pic.slotOffset[dst] = pic.slotOffset[k];
+            pic.adepsCount[dst] = pic.adepsCount[k];
+            for (int32 a = 0; a < pic.adepsCount[k]; a++) {
+              pic.adepsHolder[dst][a] = pic.adepsHolder[k][a];
+              pic.adepsOffset[dst][a] = pic.adepsOffset[k][a];
+              pic.adepsValue [dst][a] = pic.adepsValue [k][a];
+            }
+          }
+          dst++;
+        }
+        if (dst != pic.count) {
+          pic.count = (int8_t)dst;
+          pic.next  = 0;  // only read once the PIC refills to PIC_SIZE
+        }
       }
     }
   }
@@ -120,6 +190,7 @@ void InterpreterPICTable::flush_all() {
     buckets[i] = NULL;
   }
   _count = 0;
+  drain_pending_free();
 }
 
 
@@ -168,6 +239,11 @@ void InterpreterPICTable::scavenge_contents() {
           if (pic.entries[k].cachedHolder)
             pic.entries[k].cachedHolder =
                 pic.entries[k].cachedHolder->scavenge();
+          for (int32 a = 0; a < pic.adepsCount[k]; a++) {
+            if (pic.adepsHolder[k][a] != NULL)  // NULL = activation sentinel
+              pic.adepsHolder[k][a] = pic.adepsHolder[k][a]->scavenge();
+            pic.adepsValue [k][a] = pic.adepsValue [k][a]->scavenge();
+          }
         }
       }
     }
@@ -177,16 +253,17 @@ void InterpreterPICTable::scavenge_contents() {
 }
 
 
-// Mark all oop pointers during mark-sweep GC
+// Mark oop pointers during mark-sweep GC.
+//
+// d->method is a WEAK key — deliberately NOT marked here, so the PIC cache
+// cannot keep an otherwise-dead method (and all its literals) alive.  Entries
+// whose method is unreachable from a real root are dropped in gc_weak_finalize()
+// after the full strong closure.  The cached send-site data (maps/methods/
+// holders) IS strong-marked: those oops are non-leaf and need transitive marking
+// during the strong phase, and surviving entries need them to stay valid.
 void InterpreterPICTable::gc_mark_contents() {
-  bool need_rehash = false;
   for (int32 i = 0; i < TABLE_SIZE; i++) {
     for (InterpreterPICData* d = buckets[i]; d; d = d->next) {
-      oop old_method = d->method;
-      d->method = d->method->gc_mark();
-      if (d->method != old_method)
-        need_rehash = true;
-
       for (int32 j = 0; j < d->num_pics; j++) {
         InterpreterPIC& pic = d->pics[j];
         for (int32 k = 0; k < pic.count; k++) {
@@ -198,12 +275,66 @@ void InterpreterPICTable::gc_mark_contents() {
           if (pic.entries[k].cachedHolder)
             pic.entries[k].cachedHolder =
                 pic.entries[k].cachedHolder->gc_mark();
+          for (int32 a = 0; a < pic.adepsCount[k]; a++) {
+            if (pic.adepsHolder[k][a] != NULL)  // NULL = activation sentinel
+              pic.adepsHolder[k][a] = pic.adepsHolder[k][a]->gc_mark();
+            pic.adepsValue [k][a] = pic.adepsValue [k][a]->gc_mark();
+          }
         }
+      }
+    }
+  }
+}
+
+
+// Weak-key finalization — must run AFTER the full strong-mark closure
+// (universe::garbage_collect calls this right after object_table->gc_mark_rest).
+// An entry whose method was not marked by a real root is unreachable except
+// through this cache.  We UNLINK it from the buckets and park it on pending_free
+// (freed later by drain_pending_free) — freeing here is unsafe (an interpreter
+// may hold raw _pics/_pc_to_pic pointers into the entry, and freeing during GC
+// risks the heap).  A running method has an active interpreter whose
+// method_object is marked by processes->gc_mark_contents(), so it is never
+// evicted while live.  Surviving entries' method pointers are forwarded.
+void InterpreterPICTable::gc_weak_finalize() {
+  bool need_rehash = false;
+  for (int32 i = 0; i < TABLE_SIZE; i++) {
+    InterpreterPICData** pp = &buckets[i];
+    while (*pp) {
+      InterpreterPICData* d = *pp;
+      if (!memOop(d->method)->is_gc_marked()) {
+        // method is dead — unlink and park for later free (do NOT free now)
+        *pp = d->next;
+        d->next = pending_free;
+        pending_free = d;
+        _count--;
+      } else {
+        oop old_method = d->method;
+        d->method = d->method->gc_mark();   // already marked; just forwards addr
+        if (d->method != old_method)
+          need_rehash = true;
+        pp = &d->next;
       }
     }
   }
   if (need_rehash)
     rebuild_hash();
+}
+
+
+// Free entries parked by gc_weak_finalize().  Called from a non-GC point (the
+// top of interpreter::attach_pics): any interpreter currently on the stack has a
+// live (marked) method, so its entry was never parked — nothing references a
+// parked entry's raw _pics/_pc_to_pic arrays.  d->method here is a dangling oop
+// (its method was swept) but we never dereference it.
+void InterpreterPICTable::drain_pending_free() {
+  while (pending_free) {
+    InterpreterPICData* d = pending_free;
+    pending_free = d->next;
+    free(d->pc_to_pic);
+    free(d->pics);
+    free(d);
+  }
 }
 
 
@@ -228,6 +359,11 @@ void InterpreterPICTable::gc_unmark_contents() {
           if (pic.entries[k].cachedHolder)
             pic.entries[k].cachedHolder =
                 pic.entries[k].cachedHolder->gc_unmark();
+          for (int32 a = 0; a < pic.adepsCount[k]; a++) {
+            if (pic.adepsHolder[k][a] != NULL)  // NULL = activation sentinel
+              pic.adepsHolder[k][a] = pic.adepsHolder[k][a]->gc_unmark();
+            pic.adepsValue [k][a] = pic.adepsValue [k][a]->gc_unmark();
+          }
         }
       }
     }
@@ -255,6 +391,11 @@ void InterpreterPICTable::switch_pointers(oop from, oop to) {
             pic.entries[k].cachedMethod = to;
           if (pic.entries[k].cachedHolder && pic.entries[k].cachedHolder == from)
             pic.entries[k].cachedHolder = to;
+          for (int32 a = 0; a < pic.adepsCount[k]; a++) {
+            if (pic.adepsHolder[k][a] != NULL
+                && pic.adepsHolder[k][a] == from) pic.adepsHolder[k][a] = to;
+            if (pic.adepsValue [k][a] == from) pic.adepsValue [k][a] = to;
+          }
         }
       }
     }

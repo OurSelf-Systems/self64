@@ -25,6 +25,19 @@ extern "C" {  oop ReturnResult_stub(...) { fatal("unimp intel");  return NULL; }
 oop ReturnResult_stub_result;
 
 
+# if TARGET_ARCH == AARCH64_ARCH && !defined(SIC_COMPILER)
+// Interpreter-only build (SELF_INTERP_ONLY): the SIC compiler and its generated
+// trapdoor stubs are absent, but shared runtime code still takes the address of
+// the send-message stubs as markers (sendDesc::lookupRoutine, nlrSupport's
+// fix_current_return_address, frame asserts). No compiled code is ever entered
+// in this build, so these addresses are never jumped to; return a stable,
+// unique, non-null sentinel that can never alias a real nmethod entry.
+// -- interpreter-only build
+static char aarch64_interp_only_send_stub[2] = { 0, 0 };
+char* aarch64_SendMessage_stub()   { return &aarch64_interp_only_send_stub[0]; }
+char* aarch64_SendDIMessage_stub() { return &aarch64_interp_only_send_stub[1]; }
+# endif
+
 # if TARGET_ARCH == AARCH64_ARCH && defined(SIC_COMPILER)
 
 extern "C" oop capture_NLR_parameters_from_registers(oop result,
@@ -59,8 +72,17 @@ char* ReturnNLR_entry    = NULL;
 // normal return (the result is already in x0).
 
 oop (*EnterSelf_generated)(oop recv, char* entryPoint, oop arg1) = NULL;
+oop (*EnterSelfN_generated)(oop recv, char* entryPoint, oop* args, int32 nargs) = NULL;
 static char* SendMessage_stub_generated   = NULL;
 static char* SendDIMessage_stub_generated = NULL;
+
+// Most args EnterSelfN marshals into its fixed outgoing area: the area is
+// (EnterSelfMaxArgs + 2) words (lr hole + receiver + args).  Routing
+// (route_to_nmethod in interpreter.cpp) must not enter compiled code for a
+// send with more arguments than this -- keep that cap in sync.
+extern const fint EnterSelfMaxArgs = 14; // extern: consts are internal by
+                                         // default, and the debug build's
+                                         // assert in EnterSelfN references it
 
 // the trapdoor-resident lookup stub that empty/missed inline caches call
 char* aarch64_SendMessage_stub() {
@@ -143,26 +165,68 @@ int32 generate_runtime_stubs_into(char* dst, int32 avail) {
   Assembler* saved = theAssembler;
   Assembler* a = theAssembler = new Assembler(1024, 64, false, true);
 
-  // C prologue: frame record, then save x19..x28
+  // EnterSelf and EnterSelfN are two C entry points that converge on ONE
+  // call+return-PC+epilogue, so frame walking keeps a single bottom-of-Self
+  // sentinel (firstSelfFrame_returnPC).  Both build their own C frame and
+  // reserve the SAME fixed-size Self outgoing area (lr hole + receiver + up to
+  // EnterSelfMaxArgs args, 16-byte aligned); the shared epilogue drops that
+  // one size.  EnterSelf marshals the 0/1-arg case (its legacy C signature);
+  // EnterSelfN marshals nargs args from a C array.
+  const fint kOutWords = EnterSelfMaxArgs + 2;            // lr hole + rcvr + args
+  const fint kOutBytes = (kOutWords + (kOutWords & 1)) * oopSize;   // 16-aligned
+  Label common(a->printing);
+  Label done(a->printing);
+  Label nlr_through(a->printing);
+
+  // ---- EnterSelf(recv=x0, entryPoint=x1, arg1=x2): the 0/1-arg entry ----
+  fint enterSelf_offset = a->offset();                   // == 0; EnterSelf_generated
   a->sub(SP, SP, 16);
   a->stp(fp, lr, SP, 0);
   a->mov(fp, SP);
   a->sub(SP, SP, 80);
   for (fint i = 0; i < 5; i++)
     a->stp(Location(x19 + 2*i), Location(x20 + 2*i), SP, 16*i);
+  a->sub(SP, SP, kOutBytes);
+  a->str(x0, SP, 1 * oopSize);       // receiver
+  a->str(x2, SP, 2 * oopSize);       // the single argument (pad word for 0-arg)
+  a->b(&common);
 
-  // Self outgoing area: [sp+0] lr hole, [sp+1] receiver, [sp+2] arg, pad
-  a->sub(SP, SP, 32);
-  a->str(x0, SP, 1 * oopSize);
-  a->str(x2, SP, 2 * oopSize);
+  // ---- EnterSelfN(recv=x0, entryPoint=x1, args=x2, nargs=x3): N-arg entry ----
+  fint enterSelfN_offset = a->offset();
+  a->sub(SP, SP, 16);
+  a->stp(fp, lr, SP, 0);
+  a->mov(fp, SP);
+  a->sub(SP, SP, 80);
+  for (fint i = 0; i < 5; i++)
+    a->stp(Location(x19 + 2*i), Location(x20 + 2*i), SP, 16*i);
+  a->sub(SP, SP, kOutBytes);
+  a->mov(x14, SP);                   // GP copy of the outgoing-area base (SP can't
+                                     //   be an add's source register directly)
+  a->str(x0, x14, 1 * oopSize);      // receiver
+  // marshal args[0..nargs-1] -> outgoing [base + (2+i) words]
+  a->mov(x11, x3);                   // remaining count
+  a->mov_imm(x9, 0);                 // running byte offset (i * oopSize)
+  Label mloop(a->printing);
+  Label mdone(a->printing);
+  mloop.define();
+  a->cbz(x11, &mdone);
+  a->add(x12, x2, x9);               // &args[i]
+  a->ldr(x10, x12, 0);
+  a->add(x13, x14, x9);              // &base[i]
+  a->str(x10, x13, 2 * oopSize);     // -> base + i*oopSize + 2 words
+  a->add(x9, x9, oopSize);
+  a->sub(x11, x11, 1);
+  a->b(&mloop);
+  mdone.define();
+  // fall through to the shared call
 
+  // ---- shared call + return point + sendDesc + epilogue ----
+  common.define();
   // the return PC after blr must be 8-aligned (it is the sendDesc address)
   if (((a->offset() + 4) & 7) != 0) a->nop();
   a->blr(x1);
 
   fint retPC_offset = a->offset();
-  Label done(a->printing);
-  Label nlr_through(a->printing);
   a->b(&done);                       // @0  branch around desc; normal return
   a->Data((int32)0, false);          // @4  mask
   a->b(&nlr_through);                // @8  NLR entry
@@ -176,7 +240,7 @@ int32 generate_runtime_stubs_into(char* dst, int32 avail) {
   done.define();
 
   // epilogue: drop outgoing area, restore registers, return (result in x0)
-  a->add(SP, SP, 32);
+  a->add(SP, SP, kOutBytes);
   for (fint i = 0; i < 5; i++)
     a->ldp(Location(x19 + 2*i), Location(x20 + 2*i), SP, 16*i);
   a->add(SP, SP, 80);
@@ -242,7 +306,8 @@ int32 generate_runtime_stubs_into(char* dst, int32 avail) {
   ReturnResult_entry        = dst + returnResult_offset;
   ReturnNLR_entry           = dst + returnNLR_offset;
   SendDIMessage_stub_generated = dst + sendDIMessage_offset;
-  EnterSelf_generated = (oop (*)(oop, char*, oop))dst;
+  EnterSelf_generated  = (oop (*)(oop, char*, oop))(dst + enterSelf_offset);
+  EnterSelfN_generated = (oop (*)(oop, char*, oop*, int32))(dst + enterSelfN_offset);
   SendMessage_stub_generated = dst + sendMessage_offset;
 
   // finish the first sendDesc so it behaves like any virgin inline cache:

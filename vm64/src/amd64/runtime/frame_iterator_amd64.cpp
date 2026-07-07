@@ -16,20 +16,51 @@ void FrameIterator::do_vm_frame() {
 # endif
   if (!SaveOutgoingArgumentsOfPatchedFrames)
     return;
+  // KNOWN GAP (aarch64, flag off): while a compiled send is in the VM doing
+  // its lookup, the in-flight receiver and arguments live in the sender's
+  // outgoing area with no GC coverage -- the callee frame that would cover
+  // them via do_incoming_arguments does not exist yet, so a scavenge during
+  // the lookup hands the interpreted callee stale oops at birth (richards'
+  // results-check failure).  An attempt to walk them here regardless of the
+  // flag fixed that but crashed on other in-flight shapes (non-send VM
+  // calls, layouts outgoing_arg_count misjudges) even with the sendDesc-
+  // relocation validation below; enabling this safely needs the compiler to
+  // record in-flight send geometry rather than heuristics over parked pcs.
   do_incoming_arguments_of_vm_frame_called_from_self();
 }
 
 
 void FrameIterator::do_incoming_arguments_of_vm_frame_called_from_self() {
+# if !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+  // Interpreter-only: no compiled frames exist, and the send-site
+  // classification below reads JIT-only nmethod state.
+  return;
+# else
   frame* s = f->sender();
-  if (s == NULL  ||  !s->is_self_frame())
+  // Compiled senders only: an interpreted sender's return pc is VM code, not
+  // a sendDesc, so send_desc()/outgoing_arg_count would read garbage -- and
+  // its in-flight send values live in walked interpreter state anyway.
+  if (s == NULL  ||  !s->is_compiled_self_frame())
     return;
+  // Trust only genuine send sites: compiled code also calls the VM from
+  // non-send positions (allocation, stack checks), where interpreting the
+  // return pc as a sendDesc reads garbage.  The nmethod registers each real
+  // sendDesc as a relocation entry; require the parked pc to be one of them.
+  { nmethod* nm = s->code();
+    if (nm == NULL) return;
+    sendDesc* sd = s->send_desc();
+    bool genuine = false;
+    for (addrDesc* l = nm->locs(), *lend = nm->locsEnd(); l < lend; l++)
+      if (l->isSendDesc() && l->asSendDesc(nm) == sd) { genuine = true; break; }
+    if (!genuine) return;
+  }
   // hit the outgoing args of the self frame in case it is later patched
   // (when a frame is patched we grab its outgoing args)
   fint n = s->outgoing_arg_count(f);
   for (fint i = 0;  i < n + 1 /*rcvr*/;  ++i)
     oop_closure->do_oop(
       f->location_addr_of_incoming_argument(LocationOfSavedOutgoingArgInSendee(i-1), NULL));
+# endif // !FAST_COMPILER && !SIC_COMPILER
 }
 
 

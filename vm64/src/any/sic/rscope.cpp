@@ -209,6 +209,91 @@
     return new RScopeBList(1);
   }
 
+# if TARGET_IS_64BIT
+
+  // Interpreter type feedback -- see rscope.hh.
+
+  RInterpreterScope::RInterpreterScope(RAbstractSelfScope* sender, fint bci,
+                                       oop m, mapOop rcvrMap,
+                                       fint count, fint lev)
+    : RAbstractSelfScope(sender, bci, NULL, rcvrMap) {
+    _method  = m;
+    level    = lev;
+    extended = false;
+    nsends   = count;
+    if (m != NULL) {
+      // the base constructor sized _subScopes for a NULL ScopeDesc (1 slot);
+      // resize to the interpreted method's bytecodes so send-site bcis fit
+      methodMap* mm = (methodMap*)m->map();
+      ncodes = mm->length_codes();
+      _subScopes = NEW_RESOURCE_ARRAY(RScopeBList*, ncodes);
+      for (fint i = 0; i < ncodes; i++) _subScopes[i] = NULL;
+    }
+  }
+
+  void RInterpreterScope::populate(InterpreterPICData* pd) {
+    // one child per PIC entry: receiver map + hit count, plus the callee
+    // method when the interpreter resolved this receiver case to a method
+    for (fint pc = 0; pc < (fint)pd->map_len && pc < ncodes; pc++) {
+      int32 idx = pd->pc_to_pic[pc];
+      if (idx < 0 || idx >= pd->num_pics) continue;
+      InterpreterPIC& pic = pd->pics[idx];
+      for (fint k = 0; k < pic.count; k++) {
+        oop callee = pic.resultType[k] == methodResult
+                       ? pic.entries[k].cachedMethod : NULL;
+        // the constructor links the child into _subScopes[pc]
+        new RInterpreterScope(this, pc, callee, pic.entries[k].cachedMap,
+                              pic.hitCount[k], level + 1);
+      }
+    }
+  }
+
+  void RInterpreterScope::extend() {
+    // follow a method-valued receiver case into the callee's own PIC data
+    if (extended) return;
+    extended = true;
+    if (_method == NULL || interpreter_pic_table == NULL) return;
+    InterpreterPICData* pd = interpreter_pic_table->lookup(_method);
+    if (pd != NULL) populate(pd);
+  }
+
+  bool RInterpreterScope::equivalent_lookup(simpleLookup* l) {
+    // pair a method-valued case with the compiler's lookup only when both the
+    // receiver map and the freshly-looked-up method match; a stale entry
+    // (method since redefined) then simply contributes no callee feedback
+    return _method != NULL
+        && l->result() != NULL
+        && l->receiverMapOop() == _receiverMapOop
+        && l->result()->contents() == _method;
+  }
+
+  bool RInterpreterScope::isUncommonAt(fint bci, bool primCall) {
+    // a full PIC may be megamorphic (round-robin keeps only the last PIC_SIZE
+    // receivers), so unseen maps are likely -- never compile them to a trap
+    if (_subScopes[bci] != NULL && _subScopes[bci]->length() >= PIC_SIZE)
+      return false;
+    return RAbstractSelfScope::isUncommonAt(bci, primCall);
+  }
+
+  RAbstractSelfScope* constructInterpreterRScope(oop method, mapOop rcvrMap) {
+    // Escape hatch for bisecting miscompiles: compile without interpreter
+    // type feedback when SELF_NO_INTERP_FEEDBACK is set.
+    { static int no_fb = -1;
+      if (no_fb < 0) no_fb = getenv("SELF_NO_INTERP_FEEDBACK") != NULL;
+      if (no_fb) return NULL; }
+    if (interpreter_pic_table == NULL) return NULL;
+    InterpreterPICData* pd = interpreter_pic_table->lookup(method);
+    if (pd == NULL) return NULL;
+    RInterpreterScope* root =
+      new RInterpreterScope(NULL, 0, method, rcvrMap,
+                            pd->invocation_count, 0);
+    root->extended = true;  // root is populated now; children extend lazily
+    root->populate(pd);
+    return root;
+  }
+
+# endif // TARGET_IS_64BIT
+
   static int compare_pcDescs(const void* p1,  const void* p2) {
     PcDesc** r1 = (PcDesc**) p1;
     PcDesc** r2 = (PcDesc**) p2;
@@ -464,6 +549,20 @@
   void RNullScope::print_short() {
     lprintf("p *(RNullScope*)%#lx\n", this); 
   }
+
+# if TARGET_IS_64BIT
+  void RInterpreterScope::print_short() {
+    lprintf("p *(RInterpreterScope*)%#lx %s #%ld",
+           this, _method ? "method" : "leaf", (void*)nsends);
+  }
+
+  void RInterpreterScope::print() {
+    print_short();
+    lprintf(": method %#lx; subScopes: ", _method);
+    printSubScopes();
+    RScope::print();
+  }
+# endif // TARGET_IS_64BIT
 
   void RUncommonBranch::print() {
     lprintf("p *(RUncommonScope*)%#lx : %#lx@%ld\n", this, scope, (void*)bci());

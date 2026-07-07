@@ -19,12 +19,15 @@ vframeLookup::vframeLookup( LookupType l,
 
   sendingVFrame= f;
 
-  if (f == NULL) return;
-
   if (!isResendLookupType(lookupType())) {
+    // Resolve MH_TBD even without a sending vframe (a routed EnterSelf-glue
+    // caller hands NULL): a non-resend lookup's method holder is statically
+    // MH_NOT_A_RESEND, and leaving MH_TBD trips the full-lookup assert.
     key.set_methodHolder_or_map( MH_NOT_A_RESEND);
     return;
   }
+
+  if (f == NULL) return;
   oop vfmh= sendingVFrame->methodHolder_or_map();
   if (!vfmh->is_map()) {
     key.set_methodHolder_or_map( vfmh);
@@ -86,7 +89,10 @@ compilingLookup::compilingLookup(oop rcvr,
 
 // Compile an nmethod
 nmethod* compilingLookup::lookupNMethod() {
+# if TARGET_IS_64BIT
+  // W^X JIT pages exist only on the 64-bit ports (see vm64 os.hh)
   JITWriteScope jit_write_scope;  // compilation writes the code zone throughout
+# endif
   if (result() == NULL)                                       
     perform_full_lookup();
 
@@ -97,14 +103,21 @@ nmethod* compilingLookup::lookupNMethod() {
 
   // mixed-mode: a block whose home frame is interpreted cannot be compiled
   // (SBlockScope needs a compiled home vframe -- see SICompiler::initTopScope);
-  // returning NULL makes the caller interpret the send instead.
+  // returning NULL makes the caller interpret the send instead.  The lookup
+  // above spliced dependency nodes into the touched maps' dependent lists;
+  // with no nmethod to migrate them into they would dangle there, and a
+  // later define()'s invalidation walk over a corrupted list SKIPS the real
+  // dependents (stale nmethods survived redefinition during world building).
   if (receiverMap()->is_block()) {
     blockOop block = (blockOop)receiver;
     frame* sender = sendingVFrame
       ? sendingVFrame->fr
       : currentProcess->last_self_frame(false);
     abstract_vframe* home = block->parentVFrame(sender, true);
-    if (home != NULL && home->is_interpreted()) return NULL;
+    if (home != NULL && home->is_interpreted()) {
+      remove_all_deps();
+      return NULL;
+    }
   }
 
   chooseCompiler();
@@ -202,7 +215,11 @@ nmethod* compilingLookup::doCompile(nmln* diLink) {
 #   ifdef SIC_COMPILER
   } else if (compiler == SIC) {
       SICompiler* sc= new SICompiler(this, sd, diLink);
+# if TARGET_IS_64BIT
+      // Only vm64's SIC generates debug (conversion-target) methods; the
+      // 32-bit SIC has no such field -- its conversions use the NIC.
       sc->generateDebugCode= needDebug || currentProcess->isSingleStepping();
+# endif
       activeCompiler= sc;
 #   endif
 
@@ -560,8 +577,10 @@ void baseCompileTimeLookup::perform_lookup() {
 # ifdef SIC_COMPILER
 
 SICLookup::SICLookup( LookupType l, oop rcvr, oop sel, oop dgt,
-                      dependencyList* dps, SCodeScope* sc )
-  : baseCompileTimeLookup(l, rcvr, sel, dgt, sc->methodHolder_or_map(), dps) {
+                      dependencyList* dps, assignableDependencyList* adps,
+                      SCodeScope* sc )
+  : baseCompileTimeLookup(l, rcvr, sel, dgt, sc->methodHolder_or_map(),
+                          dps, adps) {
   scope = sc;
 }
 

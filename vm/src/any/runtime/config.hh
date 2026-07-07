@@ -43,6 +43,10 @@
 # define  M68K_ARCH 2 /* No longer supported */
 # define   PPC_ARCH 3 /* No longer supported, but may bring back sometime */
 # define  I386_ARCH 4
+/* 64-bit arch numbers matching vm64's config.hh, so files shared between
+   the trees can test TARGET_ARCH against them (never the target here). */
+# define X86_64_ARCH 5
+# define AARCH64_ARCH 6
 
 # define  UNIX_FAMILY 1
 # define MACOS_FAMILY 2 /* No longer supported */

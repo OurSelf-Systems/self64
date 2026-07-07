@@ -120,8 +120,9 @@ class baseCompileTimeLookup: public simpleLookup {
                         oop sel,
                         oop dgt,
                         oop mh_or_map,
-                        dependencyList* dps)
-    : simpleLookup(l, rcvr, sel, dgt, mh_or_map, dps) {}
+                        dependencyList* dps,
+                        assignableDependencyList* adps)
+    : simpleLookup(l, rcvr, sel, dgt, mh_or_map, dps, adps) {}
   
  public:
   void perform_lookup();
@@ -153,6 +154,7 @@ class SICLookup: public baseCompileTimeLookup {
               oop sel,
               oop dgt,
               dependencyList* dps,
+              assignableDependencyList* adps,
               SCodeScope* sc );
 
   protected:

@@ -31,14 +31,21 @@
 # undef  uname 
 
 // this kludge is required because SparcWorks 3.0.1 under SunOS
-// includes malloc.h in stdlib.h, and misdeclares free() to take a char*, 
+// includes malloc.h in stdlib.h, and misdeclares free() to take a char*,
 // and malloc() and memalign() to return char*
+// glibc declares these with exception specifications that the bare
+// redeclarations mismatch (clang rejects that), and needs no kludge --
+// but memalign then comes from malloc.h, which stdlib.h does not pull in.
+# ifdef __GLIBC__
+# include <malloc.h>
+# else
 # define __malloc_h
-extern "C" { 
+extern "C" {
   extern void free(void *);
   extern void *malloc(size_t);
   extern void *memalign(size_t, size_t);
 }
+# endif
 
 # include <stdlib.h>
 #if TARGET_OS_VERSION != MACOSX_VERSION		\

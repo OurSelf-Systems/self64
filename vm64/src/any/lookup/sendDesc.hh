@@ -209,6 +209,11 @@ extern "C" {
                     oop arg1);
 }
 
+// mixed-mode interpret bridge for a compiled (or routed EnterSelf) sender;
+// defined in sendDesc.cpp, also used by DIDesc::sendMessage
+class compilingLookup;
+char* interpretSendForCompiledSender(class compilingLookup* L, frame* lookupFrame);
+
 # else // defined(FAST_COMPILER) || defined(SIC_COMPILER)
 
 // Minimal sendDesc stub for interpreter-only builds.
@@ -234,5 +239,6 @@ class sendDesc {
   bool verify()                 { return true; }
   void print()                  {}
 };
+
 
 # endif // defined(FAST_COMPILER) || defined(SIC_COMPILER)

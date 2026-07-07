@@ -52,6 +52,7 @@ nmethod* nmethod::new_nmethod(AbstractCompiler* c, bool generateDebugCode) {
   
   nmethod* nm = new nmethod(c, generateDebugCode);
   Memory->code->used_per_compiler[c->nmName()] += nm->size();
+  { extern int g_pendingDeps; g_pendingDeps = 0; } // deps migrated into nm
   return nm;
 }
 
@@ -476,7 +477,14 @@ void nmethod::makeZombie(bool unlnk) {
   }
 }
 
+// Bumped every time an nmethod is flushed.  The interpreter's routing PICs
+// stamp each cached nmethod with the current value and only enter a cached
+// nmethod when the stamp still matches, so a flushed (possibly reused) nmethod
+// is never entered.  -- routing (RouteToCompiled)
+uint32 codeFlushGeneration = 0;
+
 void nmethod::flush() {
+  codeFlushGeneration++;
   JITWriteScope jit_write_scope;  // mutates nmethod state in the code zone
   BlockProfilerTicks bpt(exclude_nmethod_flush);
   CSect cs(profilerSemaphore);          // for profiler
@@ -964,6 +972,12 @@ bool nmethod::verify() {
     lprintf("\tof zoneLink of nmethod 0x%lx\n", this);
     r = false;
   }
+  { oop k = oop(key.receiverMapOop());
+    if (k != NULL && k != badOop && (!k->is_mem() || !k->is_map())) {
+      error2("nmethod %#lx key.receiverMapOop %#lx is not a map: stale?",
+             (unsigned long)this, (unsigned long)k);
+      r = false;
+    } }
   { FOR_MY_CODETABLE_ENTRIES(e)
       if (e->nm != this) {
         error1("bad code table link for nmethod %#lx\n", this);
@@ -1496,6 +1510,18 @@ Map* nmethod::blockMapFor(blockOop bl) {
     assert(foundBlk == NULL || foundBlk->map() == key.receiverMap(),
            "can't handle duplicate blocks");
     return key.receiverMap();
+  }
+  if (foundBlk) return foundBlk->map();
+  // The SIC's debug methods can still defer an unused block (BlockValueDesc):
+  // its compile-time prototype then lives only in the scopes' oop table,
+  // never in a code-referenced oop loc, so the scan above misses it.  (The
+  // NIC materialized every block, which is all the locs-only scan assumed.)
+  for (fint i = 0, n = scopes->oops_size(); i < n; i++) {
+    oop blk = scopes->oop_at(i);
+    if (blk->is_block() && blockOop(blk)->value() == valueMethod) {
+      assert(foundBlk == NULL || foundBlk == blk, "duplicate block found");
+      foundBlk = blockOop(blk);
+    }
   }
   if (foundBlk) return foundBlk->map();
   ShouldNotReachHere(); // didn't find block

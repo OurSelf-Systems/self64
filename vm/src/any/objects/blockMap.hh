@@ -35,7 +35,14 @@ private:
   smiOop desc()                 { return _desc; }
   void setDesc(smiOop d)        { _desc= d; }
   blockMap *clone_and_set_desc(smiOop d) {
-    blockMap* new_map = (blockMap*) copy();
+    // Maps must be immortal: the scavenger dispatches *through* an object's
+    // map (memOop::scavenge -> map()->scavenge) but never relocates the map
+    // nor updates objects' mark->mapOop back-references. Allocate the cloned
+    // block-prototype map in the original map's (old) generation to preserve
+    // that invariant. A plain copy() puts it in eden, where a scavenge fired
+    // from routed compiled code relocates it, leaving interpreter-held block
+    // clones with a stale map ("No value slot" crash). -- claude & dmu
+    blockMap* new_map = (blockMap*) copy(true, enclosing_mapOop());
     mapOop new_moop = new_map->enclosing_mapOop();
     new_moop->init_mark();
     new_map->setDesc(d);

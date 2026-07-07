@@ -503,9 +503,15 @@
   }
   
   void SICompiler::initTopScope() {
+    // On a tier-0 promotion there is no recompilee nmethod, but the
+    // interpreter's persistent PICs hold receiver types and counts for this
+    // method's send sites -- compile with them when available.
     recompileeScope =
       recompilee ? (RScope*)constructRScopes(recompilee) 
-                 : (RScope*)new RNullScope(NULL);
+                 : (RScope*)constructInterpreterRScope(method(),
+                                                       L->receiverMapOop());
+    if (recompileeScope == NULL)
+      recompileeScope = new RNullScope(NULL);
     if (PrintPICScopes) recompileeScope->printTree(0, 0);
 
     nodeGen->haveStackFrame = true;

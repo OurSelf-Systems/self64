@@ -487,7 +487,12 @@ void compiled_vframe::copyValueTo( NameDesc* n,  oop p ) {
   // methods routinely carry non-location descs here, unlike the NIC.
   LOG_EVENT2("compiled_vframe::copyValue %s %#lx",
              n->hasLocation() ? locationName(n->location()) : "(non-location)", p);
-  assert(get_contents(n) == p, "contents not set correctly");
+  // A BlockValueDesc target has no store: get_contents answers the desc's
+  // own deferred prototype, not the conversion's canonical clone p (they
+  // share a value method -- set_contents asserted that).  The old frame
+  // deferred the same block, so nothing observable held p anyway.
+  assert(n->isBlockValue() || get_contents(n) == p,
+         "contents not set correctly");
 }
 
 

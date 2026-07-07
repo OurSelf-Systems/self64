@@ -41,7 +41,25 @@ void recompile_init() {
   
   compilers=       NEW_C_HEAP_ARRAY(fint, nstages);
   compileCounts=   NEW_C_HEAP_ARRAY( smi, nstages);
+# if defined(SIC_COMPILER) && !defined(FAST_COMPILER)
+  // The interpreter is tier 0; recompileLimits[0] is the interpreter->SIC
+  // promotion threshold, read by the interpreter's invocation counter.
+  // 500, not the classic 10*K: that number tuned NIC->SIC recompilation
+  // counters (compiled-code invocations, 1990s SPARCs); interpreted calls
+  // cost far more each, and code called at UI-tick rates took minutes of
+  // wall clock to cross 10240 (the desktop idled at 11-14% for its first
+  // minutes).  500 converges benchmarks and the desktop floor identically
+  // (long-standing soak point) while cutting warmup ~20x.
+  recompileLimits= NEW_C_HEAP_ARRAY(fint, 1);
+  recompileLimits[0] = 500;      // interpreter->SIC promotion threshold
+  // Env override for experiments and aggressive-tiering soak runs; 0
+  // disables tier-up entirely (there is no _RecompileLimits setter prim, and
+  // the getter exposes nstages-1 == 0 limits in this configuration).
+  { const char* e = getenv("SELF_TIER_UP_THRESHOLD");
+    if (e != NULL) recompileLimits[0] = atoi(e); }
+# else
   recompileLimits= NEW_C_HEAP_ARRAY(fint, max(fint(0), nstages - 1));
+# endif
   
   switch (nstages) {
    case 0:  break;
@@ -62,7 +80,20 @@ void recompile_init() {
   for (fint i= 0; i < nstages; i++)
     compileCounts[i]= 0;
   compileAvg = new SlidingAverage(TicksPerSec);
-  IntervalTimer::CPU_timer()->enroll_async(TicksPerSec, compileAvgTracker); 
+  IntervalTimer::CPU_timer()->enroll_async(TicksPerSec, compileAvgTracker);
+}
+
+// Interpreter->SIC promotion threshold: # of interpreted invocations of a
+// method before it is SIC-compiled.  Reuses recompileLimits[0] (the tier-0
+// recompile limit) rather than introducing a separate knob, so it is tuned
+// through the same _RecompileLimits surface.  Returns 0 (disabled) outside
+// the SIC-only / interpreter-tier-0 configuration.
+fint interpreterTierUpThreshold() {
+# if defined(SIC_COMPILER) && !defined(FAST_COMPILER)
+  return recompileLimits[0];
+# else
+  return 0;
+# endif
 }
 
 
@@ -2035,6 +2066,15 @@ oop set_recompilation_prim(oop r, objVectorOop comps,
     newlimits[i] = roundTo(smiOop(lim)->value(), K);
     // for simplicity (Sparc sethi), round up values to next K
   }
+# if defined(SIC_COMPILER) && !defined(FAST_COMPILER)
+  // recompileLimits[0] doubles as the interpreter->SIC tier-up threshold
+  // (see recompile_init), which a one-compiler config's empty limits vector
+  // cannot express -- the loop above then writes nothing.  Carry the live
+  // value over rather than install an uninitialized slot: benchmarks'
+  // withCompiler: ['sic'] froze tiering at a garbage threshold for the rest
+  // of the session, so measurePerformance ran fully interpreted.
+  if (len == 1) newlimits[0] = recompileLimits[0];
+# endif
   // everything ok, install new values
   nstages = len;
   selfs_free(compilers); compilers = newcomps;

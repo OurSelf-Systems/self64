@@ -6,7 +6,16 @@
    Modeled after runtime_stubs_x86_64.cpp */
 
 # include "config.hh"
+# include <cstdint>   // uintptr_t (gcc does not provide it transitively)
 # if TARGET_ARCH == AARCH64_ARCH
+
+// Mach-O prepends '_' to C symbols at the object level; ELF does not.
+// Asm references to C functions must spell the object-level name.
+# ifdef __APPLE__
+#   define C_SYM(name) "_" name
+# else
+#   define C_SYM(name) name
+# endif
 
 # include "_runtime_aarch64.cpp.incl"
 
@@ -271,6 +280,8 @@ void SetSPAndCall(char** callerSaveAddr, char** calleeSaveAddr,
 # ifdef SIC_COMPILER
 // implemented in stubs_aarch64.cpp
 extern oop (*EnterSelf_generated)(oop recv, char* entryPoint, oop arg1);
+extern oop (*EnterSelfN_generated)(oop recv, char* entryPoint, oop* args, int32 nargs);
+extern const fint EnterSelfMaxArgs;
 extern void generate_EnterSelf();
 # endif
 
@@ -343,7 +354,7 @@ extern "C" __attribute__((naked)) void ReturnTrap() {
     "mov   x4, x2\n\t"             // arg4: nlrHomeID (before x2 is clobbered)
     "mov   x1, x10\n\t"            // arg1: sp_of_patched_frame = F
     "mov   x2, #1\n\t"             // arg2: nlr = true
-    "bl    _HandleReturnTrap\n\t"  // arg0 (x0) already = result
+    "bl    " C_SYM("HandleReturnTrap") "\n\t"  // arg0 (x0) already = result
     "1:\n\t"
     "brk   #0x4e\n\t"              // HandleReturnTrap must not return
     "3:\n\t"                       // ---- normal-return entry ----
@@ -362,7 +373,7 @@ extern "C" __attribute__((naked)) void ReturnTrap() {
     "mov   x2, #0\n\t"            // arg2: nlr = false
     "mov   x3, #0\n\t"            // arg3: nlrHome = NULL
     "mov   x4, #0\n\t"            // arg4: nlrHomeID = 0
-    "bl    _HandleReturnTrap\n\t" // arg0 (x0) already = result
+    "bl    " C_SYM("HandleReturnTrap") "\n\t" // arg0 (x0) already = result
     "2:\n\t"
     "brk   #0x4e\n\t"             // HandleReturnTrap must not return
   );
@@ -416,43 +427,89 @@ extern "C" __attribute__((naked)) void PrimCallReturnTrap() {
   // and the resume's fp load (the resumed frame ran on a stale x29 and all
   // later walks disagreed with the canonical vframeOops by 8). -- rca
   // Shaped like ReturnTrap: normal entry +0, NLR entry +8.
+  //
+  // Finding F: the returner loaded its lr from the patched slot [F + 8],
+  // whose memory still holds this trap's entry address at this instant (the
+  // is_patched() invariant).  WHERE the returner's epilogue leaves sp
+  // relative to F is pure C-compiler geometry: clang keeps the frame record
+  // at the frame TOP (sp lands at F + 16, or F + 8 for the method-epilogue
+  // shape), but gcc builds the record at the frame BOTTOM and its epilogue
+  // (ldp x29,x30,[sp],#framesize) leaves sp an entire dead frame above F.
+  // So SCAN down from sp for the patched slot -- here in the stub, while
+  // the dead frame is still intact -- and then place our own frame BELOW
+  // the found record: the old fixed sub-32 reservation only protected the
+  // clang geometries, and once C code ran, its frames overwrote the true
+  // record, destroying the evidence every later walk needed.  Probe order
+  // keeps the old precedence: F = sp-16, then sp-8, then downward.
   __asm__ __volatile__(
+    "0:\n\t"
     "b     3f\n\t"                 // +0: normal (prim-call-return) entry
     "nop\n\t"                      // +4
     // +8: NLR entry -- x0 = result, x1 = NLRHomeReg, x2 = NLRHomeIDReg.
-    // F from the unrounded entry sp; own sp rounded down to 16 (see the
-    // ReturnTrap NLR entry comment: the patched record can be the 0 mod 16
-    // C-boundary alias, landing us 8-misaligned).
-    "sub   x10, sp, #8\n\t"        // epilogue geometry: F = sp - 8
-    "sub   x11, sp, #32\n\t"
-    "and   x11, x11, #0xfffffffffffffff0\n\t"
-    "mov   sp, x11\n\t"
-    "str   x10, [sp, #0]\n\t"
+    "adr   x13, 0b\n\t"            // this trap's entry (the patched value)
+    "bl    6f\n\t"                 // -> x10 = F (clobbers x11, x12, x14)
     "adr   x11, 1f\n\t"
-    "str   x11, [sp, #8]\n\t"
-    "mov   x29, sp\n\t"
+    "str   x11, [sp, #8]\n\t"      // [fp+8] = marker (not a Self frame)
     "mov   x3, x1\n\t"             // arg3: nlrHome
     "mov   x4, x2\n\t"             // arg4: nlrHomeID
     "mov   x1, x10\n\t"            // arg1: sp_of_patched_frame = F
     "mov   x2, #1\n\t"             // arg2: nlr = true
-    "bl    _HandleReturnTrap\n\t"
+    "bl    " C_SYM("HandleReturnTrap") "\n\t"
     "1:\n\t"
     "brk   #0x4f\n\t"
     "3:\n\t"                       // ---- normal entry ----
-    "sub   x10, sp, #16\n\t"       // F candidate; C side disambiguates
-                                   //   {sp-16, sp-8} via is_patched()
-    "sub   sp, sp, #32\n\t"
-    "str   x10, [sp, #0]\n\t"
+    "adr   x13, 0b\n\t"            // this trap's entry (the patched value)
+    "bl    6f\n\t"                 // -> x10 = F (clobbers x11, x12, x14)
     "adr   x11, 2f\n\t"
-    "str   x11, [sp, #8]\n\t"
-    "mov   x29, sp\n\t"
-    "mov   x1, x10\n\t"
-    "mov   x2, #0\n\t"
+    "str   x11, [sp, #8]\n\t"      // [fp+8] = marker (not a Self frame)
+    "mov   x1, x10\n\t"            // arg1: sp_of_patched_frame = F
+    "mov   x2, #0\n\t"             // arg2: nlr = false
     "mov   x3, #0\n\t"
     "mov   x4, #0\n\t"
-    "bl    _HandleReturnTrap\n\t"
+    "bl    " C_SYM("HandleReturnTrap") "\n\t"
     "2:\n\t"
     "brk   #0x4f\n\t"
+    // ---- shared: find F and build our frame record below it ----
+    // In:  x13 = trap entry address; x30 = caller (not preserved -- both
+    //      callers never return).  Out: x10 = F; sp/x29 = our record, with
+    //      [sp+0] = F linked for the stack walks ([sp+8] filled by caller).
+    "6:\n\t"
+    "ldur  x11, [sp, #-8]\n\t"     // [ (sp-16) + 8 ]: preferred geometry
+    "sub   x10, sp, #16\n\t"
+    "cmp   x11, x13\n\t"
+    "b.eq  7f\n\t"
+    "ldr   x11, [sp]\n\t"          // [ (sp-8) + 8 ]: method-epilogue shape
+    "sub   x10, sp, #8\n\t"
+    "cmp   x11, x13\n\t"
+    "b.eq  7f\n\t"
+    "sub   x11, sp, #16\n\t"       // gcc shapes: scan slots downward
+    "mov   x12, #128\n\t"          //   bounded by 128 words (1 KB)
+    "8:\n\t"
+    "ldr   x14, [x11]\n\t"
+    "cmp   x14, x13\n\t"
+    "b.eq  9f\n\t"
+    "sub   x11, x11, #8\n\t"
+    "subs  x12, x12, #1\n\t"
+    "b.ne  8b\n\t"
+    "brk   #0x50\n\t"              // no patched record: invariant broken
+    "9:\n\t"
+    // Found a gcc-shape record a whole dead frame below sp.  Relocate it to
+    // the clang-canonical spot (sp-16): every downstream consumer -- the
+    // resume's sp = F + 16 (must equal THIS entry sp: the Self caller's
+    // running sp), the walks, the unpatch -- was built for that geometry.
+    // The caller-fp-relative patch stashes (currentPC etc.) ride along via
+    // the copied saved-fp word.  The source is at least sp-24, so it cannot
+    // overlap the destination.
+    "ldp   x12, x14, [x11, #-8]\n\t" // {saved-fp, patched-lr} of the record
+    "sub   x10, sp, #16\n\t"       // F = sp - 16 (canonical)
+    "stp   x12, x14, [x10]\n\t"
+    "7:\n\t"
+    "sub   x11, x10, #16\n\t"      // our record goes BELOW F ...
+    "and   x11, x11, #0xfffffffffffffff0\n\t" // ... 16-aligned
+    "mov   sp, x11\n\t"
+    "str   x10, [sp, #0]\n\t"      // [fp+0] = F -> our sender() is F
+    "mov   x29, sp\n\t"
+    "ret\n\t"
   );
 }
 
@@ -556,6 +613,20 @@ extern "C" oop EnterSelf(oop recv, char* entryPoint, oop arg1) {
 # else
   Unused(recv); Unused(entryPoint); Unused(arg1);
   fatal("EnterSelf called without JIT");
+  return NULL;
+# endif
+}
+
+// Multi-argument C -> compiled entry: marshals nargs args from the C array
+// into a fresh Self outgoing area.  Shares EnterSelf's return point + epilogue.
+extern "C" oop EnterSelfN(oop recv, char* entryPoint, oop* args, int32 nargs) {
+# ifdef SIC_COMPILER
+  if (EnterSelfN_generated == NULL) generate_EnterSelf();
+  assert(nargs <= EnterSelfMaxArgs, "EnterSelfN arg count exceeds outgoing area");
+  return EnterSelfN_generated(recv, entryPoint, args, nargs);
+# else
+  Unused(recv); Unused(entryPoint); Unused(args); Unused(nargs);
+  fatal("EnterSelfN called without JIT");
   return NULL;
 # endif
 }

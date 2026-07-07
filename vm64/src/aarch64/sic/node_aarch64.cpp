@@ -261,7 +261,15 @@ static void gen_SPLimit_test();
   // materialize an arith operand value (possibly an immediate) in a register
   static Location arith_operand_reg(PReg* r, Location t) {
     if (r->isConstPReg() && r->loc == UnAllocated) {
-      theAssembler->mov_imm(t, smi(((ConstPReg*)r)->constant)); // tagged value
+      // loadImmediateOop, not mov_imm: arith operands are usually smis, but
+      // the inlined identity compares (Cmp) flow MEM OOPS through here (a
+      // marker, nil, true...).  A heap oop baked into mov/movk immediates
+      // is invisible to the GC -- no relocation entry -- so when the object
+      // moved, the compare went permanently stale (this corrupted world
+      // building, whose objects stay young and mobile for thousands of
+      // scavenges).  loadImmediateOop pools mem oops (GC-visible word) and
+      // mov_imm's only true immediates.
+      genHelper->loadImmediateOop(((ConstPReg*)r)->constant, t);
       return t;
     }
     return genHelper->moveToReg(r, t);

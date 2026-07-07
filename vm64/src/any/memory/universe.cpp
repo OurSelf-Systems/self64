@@ -326,6 +326,7 @@ void universe::switch_pointers(oop from, oop to) {
   assert(!from->is_old() || to->is_old(),
          "shouldn't be switching an old oop to a new oop");
   APPLY_TO_VM_OOPS(SWITCH_POINTERS_TEMPLATE);
+  SWITCH_POINTERS_TEMPLATE(&NLRResultFromC);  // see universe.hh: not snapshotted
   new_gen->switch_pointers(from, to);
   old_gen->switch_pointers(from, to);
   code->switch_pointers(from, to);
@@ -1009,7 +1010,12 @@ bool universe::verify(bool postScavenge) {
     r &= map_table->verify(); }
   if (is_verify_opt('i')) {
     lprintf("i "); 
-    r &= slotIterator_verify(); }
+    r &= slotIterator_verify();
+# if TARGET_IS_64BIT
+    { extern InterpreterPICTable* interpreter_pic_table;
+      if (interpreter_pic_table) r &= interpreter_pic_table->verify(); }
+# endif
+  }
     if (CheckAssertions) {
      lprintf("h "); 
      r &= malloc_verify();

@@ -21,6 +21,12 @@ public:
     if (dependentsArrayS == NULL)
       dependentsArrayS = (nmln*)
         AllocateHeap(DependentsArraySize * sizeof(nmln), "dependents buffer");
+    { extern int g_pendingDeps; extern nmln* g_lastDepTop;
+      if (g_pendingDeps != 0 && g_lastDepTop != NULL)
+        // Previous lookup abandoned its dependency nodes in map chains; unlink
+        // them before reusing the shared buffer (see deps.cpp comment).
+        for (nmln* d = dependentsArrayS; d < g_lastDepTop; d++) d->remove();
+      g_pendingDeps = 0; }
     top = dependentsArrayS; }
   
 # if GENERATE_DEBUGGING_AIDS
