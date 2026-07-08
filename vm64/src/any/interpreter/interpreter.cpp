@@ -126,6 +126,13 @@ void invalidate_all_interpreter_pics() {
 # endif
 }
 
+void reset_interpreter_tier_up_backoff() {
+# if TARGET_IS_64BIT
+  if (interpreter_pic_table)
+    interpreter_pic_table->reset_tier_up_backoff();
+# endif
+}
+
 inline frame* interpreter::block_scope_or_NLR_target() {
   if (_block_scope_or_NLR_target)
     return _block_scope_or_NLR_target;

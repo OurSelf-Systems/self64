@@ -9,6 +9,8 @@
 
 # if  defined(FAST_COMPILER) || defined(SIC_COMPILER)
 
+extern void reset_interpreter_tier_up_backoff();
+
 int32 zone::frame_chain_nesting = 0;
 
 
@@ -426,7 +428,11 @@ void zone::flush() {
 
   unchainFrames();
   LRUhand = NULL;
-  
+
+  // The interpreter's tier-up failure backoff was measured against the code
+  // just flushed; re-arm those triggers so hot methods re-tier promptly.
+  reset_interpreter_tier_up_backoff();
+
   if (PrintCodeReclamation) {
     lprintf("done: %ld ms.\n", long(tmr.time()));
   }

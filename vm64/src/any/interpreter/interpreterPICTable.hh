@@ -59,6 +59,13 @@ class InterpreterPICTable : public CHeapObj {
   // tier-up compile so those sites re-look-up and route to the new nmethod,
   // leaving every other method's type feedback intact).
   void invalidate_entries_caching(oop method);
+  // Re-arm every tier-up trigger: backoff (>0) and off (-1) alike memoize
+  // compile outcomes and home/promotion decisions made against code-cache
+  // contents, so a whole-cache flush invalidates their premise (a promoted
+  // home's -1 would otherwise pin it interpreted forever once its nmethod is
+  // gone).  Still-valid -1s get re-derived on the next hot crossing;
+  // invocation counts and type feedback survive.
+  void reset_tier_up_backoff();
   void flush_all();
 
   // GC integration

@@ -177,6 +177,13 @@ void InterpreterPICTable::invalidate_entries_caching(oop method) {
 }
 
 
+void InterpreterPICTable::reset_tier_up_backoff() {
+  for (int32 i = 0; i < TABLE_SIZE; i++)
+    for (InterpreterPICData* d = buckets[i]; d; d = d->next)
+      d->tier_up_at = 0;
+}
+
+
 void InterpreterPICTable::flush_all() {
   for (int32 i = 0; i < TABLE_SIZE; i++) {
     InterpreterPICData* d = buckets[i];

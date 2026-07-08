@@ -87,6 +87,7 @@ struct InterpreterPIC {
 };
 
 extern void invalidate_all_interpreter_pics();
+extern void reset_interpreter_tier_up_backoff();
 
 
 class interpreter: public abstract_interpreter {
