@@ -184,7 +184,7 @@
     ncodes = 0;
     rec = new ScopeDescRecorder(SICScopesSize, SICPCsSize);
 
-# if TARGET_ARCH == AARCH64_ARCH
+# if TARGET_ARCH == AARCH64_ARCH || TARGET_ARCH == X86_64_ARCH
     if (L->resultType() != methodResult) {
       // access kinds skip the method pipeline (see compileAccessMethod);
       // initTopScope would call kind() on a non-method slot
@@ -283,7 +283,7 @@
   }
   
   nmethod* SICompiler::compile() {
-# if TARGET_ARCH == AARCH64_ARCH
+# if TARGET_ARCH == AARCH64_ARCH || TARGET_ARCH == X86_64_ARCH
     // SIC-only configuration: access "methods" (slot reads, constants,
     // assignments) have no NIC to fall back to
     if (L->resultType() != methodResult) return compileAccessMethod();
@@ -391,7 +391,7 @@
     topScope->describe();    // must come before gen to set scopeInfo   
     genHelper = new SICGenHelper;
     bbIterator->gen();
-# if TARGET_ARCH == AARCH64_ARCH
+# if TARGET_ARCH == AARCH64_ARCH || TARGET_ARCH == X86_64_ARCH
     // lay down the oop/address literal pool before the buffer is copied
     // into the zone (the pool words carry this method's oop addrDescs)
     theAssembler->flushLiteralPool();

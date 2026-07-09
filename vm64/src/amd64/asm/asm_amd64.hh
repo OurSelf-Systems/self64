@@ -57,12 +57,16 @@ class Assembler: public BaseAssembler {
   void store_zero32  (Location base, fint disp);
   void storeByte_zero(Location base, fint disp);
   void add32_mem  (Location base, fint disp, fint imm);     // counter bump
+  void add_mem    (Location base, fint disp, fint imm);     // 64-bit (NLR retPC adjust)
   void lea        (Location rt, Location base, fint disp);
 
   // ---- constants ------------------------------------------------------
   void mov_imm(Location rd, smi value);          // minimal mov form, no addrDesc
   void loadOopLiteral(Location rd, oop p);       // pooled, records oop addrDesc
   void loadAddressLiteral(Location rd, void* a, OperandType t); // pooled VM address
+  void cmp_literal(Location rn, oop p);          // cmp rn, [pooled oop word]
+  void jmp_literal(void* target, OperandType t); // jmp [pooled address word]
+  void call_literal(void* target, OperandType t); // call [pooled address word]
   void flushLiteralPool();                       // call once, at end of method
   bool literalPoolIsEmpty() { return _nlits == 0; }
   void DataPtr(smi v);                           // raw 8-byte data word
@@ -77,7 +81,9 @@ class Assembler: public BaseAssembler {
   void cmp  (Location rn, Location rm);
   void andd (Location rd, smi bitmask);          // 'and' is a C++ keyword
   void andd (Location rd, Location rm);
+  void orr  (Location rd, smi bitmask);
   void orr  (Location rd, Location rm);
+  void xorr (Location rd, smi bitmask);
   void xorr (Location rd, Location rm);
   void tst  (Location rn, smi bitmask);
   void tst  (Location rn, Location rm);   // 'test' would hide BaseAssembler::test()
@@ -96,6 +102,7 @@ class Assembler: public BaseAssembler {
   void jmp  (Label* L);
   void jcc  (x64_cond cc, Label* L);
   void call (Label* L);
+  void lea_label(Location rd, Label* L);         // rip-relative label address (cf. adr)
   void call_reg(Location rn);
   void jmp_reg (Location rn);
   // call/jump through the 8-byte data word at dataWord (must lie in this
@@ -132,6 +139,7 @@ class Assembler: public BaseAssembler {
   LitEntry _lits[MaxLits];
   fint     _nlits;
 
+  void recordLiteral(smi value, OperandType t);  // registers instsEnd as the site
   void loadLiteral(Location rd, smi value, OperandType t);
 };
 

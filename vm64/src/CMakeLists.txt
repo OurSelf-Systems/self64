@@ -495,10 +495,15 @@ set(SRC_amd64
   amd64/runtime/uncommonBranch_amd64.cpp
   amd64/runtime/vframe_amd64.cpp
   amd64/sic/basicNode_amd64.hh
+  amd64/sic/deadBlockNode_amd64.cpp
   amd64/sic/deadBlockNode_amd64.hh
+  amd64/sic/genHelper_amd64.cpp
   amd64/sic/genHelper_amd64.hh
+  amd64/sic/longRegString_amd64.cpp
   amd64/sic/longRegString_amd64.hh
+  amd64/sic/node_amd64.cpp
   amd64/sic/prologueNode_amd64.hh
+  amd64/sic/sic_amd64.cpp
   amd64/sic/sic_amd64.hh
   amd64/zone/addrDesc_amd64.cpp
   amd64/zone/addrDesc_amd64.hh

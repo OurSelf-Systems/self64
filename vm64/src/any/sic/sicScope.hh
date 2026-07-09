@@ -281,6 +281,7 @@
       assert(0 <= bci && bci < ncodes, "bci invalid");
       // empty masks are normal on register-poor / stack-passing ports
       assert(nsends == 0  ||  allocs[bci]  ||  TARGET_ARCH == I386_ARCH
+                                           ||  TARGET_ARCH == X86_64_ARCH
                                            ||  TARGET_ARCH == AARCH64_ARCH, "should be nonempty");
       return allocs[bci];
     }

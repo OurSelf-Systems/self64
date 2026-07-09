@@ -97,6 +97,10 @@ int main() {
   CASE("test rcx, 3",                x64_test_r_imm(x64_rcx, 3));
   CASE("add dword ptr [rcx+8], 1",   x64_add32_m_imm(x64_rcx, 8, 1));
   CASE("add dword ptr [rbp-4], 0x200", x64_add32_m_imm(x64_rbp, -4, 0x200));
+  CASE("add qword ptr [rsp], 5",     x64_add64_m_imm(x64_rsp, 0, 5));
+  CASE("add qword ptr [rbp-8], 0x200", x64_add64_m_imm(x64_rbp, -8, 0x200));
+  CASE("cmp rax, [rip+0x30]",        x64_cmp_r_rip(x64_rax, 0x30));
+  CASE("cmp r9, [rip-0x10]",         x64_cmp_r_rip(x64_r9, -0x10));
 
   // multiply/divide/negate
   CASE("imul rcx, rdx",              x64_imul_r_r(x64_rcx, x64_rdx));
@@ -161,6 +165,7 @@ int main() {
     { "mov rip",  x64_mov_r_rip(x64_rax, 0), 3, 7 },
     { "mov rip9", x64_mov_r_rip(x64_r9, 0),  3, 7 },
     { "lea rip",  x64_lea_r_rip(x64_rcx, 0), 3, 7 },
+    { "cmp rip",  x64_cmp_r_rip(x64_rdx, 0), 3, 7 },
   };
   for (unsigned k = 0; k < sizeof pats / sizeof pats[0]; k++) {
     unsigned char* end = 0;

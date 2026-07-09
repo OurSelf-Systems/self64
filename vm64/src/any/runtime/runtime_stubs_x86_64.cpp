@@ -289,26 +289,121 @@ extern "C" oop MakeOld_stub(...) {
   return NULL;
 }
 
-extern "C" void ReturnTrap() {
-  fatal("ReturnTrap called without JIT");
+// ---------------------------------------------------------------------------
+// Return-trap glue (return-into-a-patched-compiled-frame).
+//
+// frame::patch_compiled_self_frame overwrites a compiled Self frame F's
+// saved return address with ReturnTrap and stashes F's real return PC in the
+// caller's reserved currentPC slot.  When F's epilogue runs (leave; ret) the
+// RET consumes the patched slot itself, so on entry here
+//     rax = result,  rsp = F + 16,  rbp = F's caller's fp
+// -- ALWAYS, for every returner and every C compiler (the aarch64 stub's
+// frame-record probing and gcc-geometry scanning have no x86 counterpart;
+// cf. the i386 original in runtime_asm_gcc_i386.S, where ReturnTrap and
+// PrimCallReturnTrap are the same label).  Re-pushing the trap address and
+// rbp re-forms F's record in place (same values the memory still holds), so
+// our record IS F and HandleReturnTrap's currentFrame()->sender() finds it.
+//
+// A non-local return through a patched frame diverts to the patched value +
+// sendDesc::non_local_return_offset (+5), so the stub mirrors a send site's
+// shape: normal entry at +0, NLR entry at +5 (the +0 jmp is emitted as an
+// explicit rel32 so the NLR entry lands exactly at +5).
+
+extern bool8 processSemaphore;   // process.hh
+
+extern "C" __attribute__((naked)) void ReturnTrap() {
+  __asm__ __volatile__(
+    ".byte 0xe9\n\t"                 // +0: jmp 3f -- normal entry, forced rel32
+    ".long 3f - 0f\n\t"
+    "0:\n\t"                         // == entry + 5: the NLR entry
+    // NLR: rax = result, rdx = NLRHomeReg, rcx = NLRHomeIDReg
+    "lea   ReturnTrap(%rip), %r10\n\t"
+    "pushq %r10\n\t"                // re-form the patched slot at [F+8]
+    "pushq %rbp\n\t"                // [F+0] = caller fp (value memory holds)
+    "movq  %rsp, %rbp\n\t"         // rbp = F; rsp = F (0 mod 16)
+    "movq  %rcx, %r8\n\t"          // arg4: nlrHomeID (before rcx clobbered)
+    "movq  %rdx, %rcx\n\t"         // arg3: nlrHome   (before rdx clobbered)
+    "movl  $1, %edx\n\t"            // arg2: nlr = true
+    "movq  %rbp, %rsi\n\t"         // arg1: sp_of_patched_frame = F
+    "movq  %rax, %rdi\n\t"         // arg0: result
+    "call  HandleReturnTrap\n\t"
+    "hlt\n\t"                        // HandleReturnTrap must not return
+    "3:\n\t"                         // ---- normal-return entry ----
+    "lea   ReturnTrap(%rip), %r10\n\t"
+    "pushq %r10\n\t"                // re-form the patched slot at [F+8]
+    "pushq %rbp\n\t"                // [F+0] = caller fp
+    "movq  %rsp, %rbp\n\t"         // rbp = F
+    "movq  %rax, %rdi\n\t"         // arg0: result
+    "movq  %rbp, %rsi\n\t"         // arg1: sp_of_patched_frame = F
+    "xorl  %edx, %edx\n\t"         // arg2: nlr = false
+    "xorl  %ecx, %ecx\n\t"         // arg3: nlrHome = NULL
+    "xorl  %r8d, %r8d\n\t"         // arg4: nlrHomeID = 0
+    "call  HandleReturnTrap\n\t"
+    "hlt\n\t"                        // HandleReturnTrap must not return
+  );
 }
 
 extern "C" void ReturnTrap2() {
-  fatal("ReturnTrap2 called without JIT");
+  fatal("ReturnTrap2 unused on x86_64");
 }
 
-extern "C" void PrimCallReturnTrap() {
-  fatal("PrimCallReturnTrap called without JIT");
+extern "C" __attribute__((naked)) void PrimCallReturnTrap() {
+  // On x86 the RET consumed the patched slot whatever the returner was, so
+  // the geometry is identical to ReturnTrap: alias both entries (the
+  // patcher still needs a distinct symbol to choose per sendee kind).
+  __asm__ __volatile__(
+    ".byte 0xe9\n\t"                 // +0 -> ReturnTrap+0 (normal entry)
+    ".long ReturnTrap - . - 4\n\t"
+    ".byte 0xe9\n\t"                 // +5 -> ReturnTrap+5 (NLR entry)
+    ".long ReturnTrap + 5 - . - 4\n\t"
+  );
 }
 
 extern "C" void ProfilerTrap() {
   fatal("ProfilerTrap called without JIT");
 }
 
+// Resume normal execution after a return trap: restore the caller's frame
+// pointer, put sp back at the trap-entry position (F + 16, always), and
+// jump to the continuation PC with the result in rax.
+extern "C" __attribute__((naked, noreturn))
+void ReturnTrap_resume(oop result, char* pc, char* sp_arg) {
+  // naked: rdi = result, rsi = pc, rdx = sp_arg = F
+  __asm__ __volatile__(
+    "movq  (%rdx), %rbp\n\t"       // caller fp = [F]
+    "leaq  16(%rdx), %rsp\n\t"     // resume sp = F + 16 (the trap entry sp)
+    "movq  %rdi, %rax\n\t"         // result
+    "jmpq  *%rsi\n\t"
+  );
+}
+
+extern "C" void volatile ContinueAfterReturnTrap(oop result, char* pc, char* sp) {
+  processSemaphore = false;
+  ReturnTrap_resume(result, pc, sp);
+}
+
+// Continue a non-local return after a return trap: like ReturnTrap_resume
+// but loading the NLR register triple; pc is the send site's NLR entry
+// (sendDesc + non_local_return_offset), exactly where F's unpatched NLR
+// epilogue would have gone.
+extern "C" __attribute__((naked, noreturn))
+void ReturnTrapNLR_resume(char* pc, char* sp_arg, oop result,
+                          frame* home, smi homeID) {
+  // naked: rdi = pc, rsi = F, rdx = result, rcx = home, r8 = homeID
+  __asm__ __volatile__(
+    "movq  (%rsi), %rbp\n\t"       // caller fp = [F]
+    "leaq  16(%rsi), %rsp\n\t"     // resume sp = F + 16
+    "movq  %rdx, %rax\n\t"         // NLRResultReg
+    "movq  %rcx, %rdx\n\t"         // NLRHomeReg
+    "movq  %r8,  %rcx\n\t"         // NLRHomeIDReg
+    "jmpq  *%rdi\n\t"
+  );
+}
+
 extern "C" void volatile ContinueNLRAfterReturnTrap(char* pc, char* sp, oop result,
                                                      frame* home, int32 homeID) {
-  Unused(pc); Unused(sp); Unused(result); Unused(home); Unused(homeID);
-  fatal("ContinueNLRAfterReturnTrap called without JIT");
+  processSemaphore = false;
+  ReturnTrapNLR_resume(pc, sp, result, home, homeID);
 }
 
 // data pointers on 64-bit (see runtime.hh); never set without a JIT
@@ -343,16 +438,103 @@ extern "C" oop CallPrimitiveFromInterpreter(void* entry_point, oop rcv,
   }
 }
 
+# ifdef SIC_COMPILER
+// implemented in stubs_amd64.cpp
+extern oop (*EnterSelf_generated)(oop recv, char* entryPoint, oop arg1);
+extern oop (*EnterSelfN_generated)(oop recv, char* entryPoint, oop* args, int32 nargs);
+extern const fint EnterSelfMaxArgs;
+extern void generate_EnterSelf();
+# endif
+
 extern "C" oop EnterSelf(oop recv, char* entryPoint, oop arg1) {
+# ifdef SIC_COMPILER
+  if (EnterSelf_generated == NULL) generate_EnterSelf();
+  return EnterSelf_generated(recv, entryPoint, arg1);
+# else
   Unused(recv); Unused(entryPoint); Unused(arg1);
   fatal("EnterSelf called without JIT");
   return NULL;
+# endif
+}
+
+// Multi-argument C -> compiled entry: marshals nargs args from the C array
+// into a fresh Self outgoing area.  Shares EnterSelf's return point + epilogue.
+extern "C" oop EnterSelfN(oop recv, char* entryPoint, oop* args, int32 nargs) {
+# ifdef SIC_COMPILER
+  if (EnterSelfN_generated == NULL) generate_EnterSelf();
+  assert(nargs <= EnterSelfMaxArgs, "EnterSelfN arg count exceeds outgoing area");
+  return EnterSelfN_generated(recv, entryPoint, args, nargs);
+# else
+  Unused(recv); Unused(entryPoint); Unused(args); Unused(nargs);
+  fatal("EnterSelfN called without JIT");
+  return NULL;
+# endif
+}
+
+extern "C" {
+  extern oop   NLRResultFromC;   // set by NLRSupport::save_NLR_results
+  extern smi   NLRHomeFromC;
+  extern int32 NLRHomeIDFromC;
+}
+
+// Unwind the C/VM frames and resume an NLR in compiled Self code.
+// addr is the send-site return PC that was live when Self called into the
+// VM, i.e. the return-address slot of the VM's entry record.  We walk our
+// own frame chain to that record -- SetSPAndCall keeps a walkable rbp
+// chain, so it spans the VM/process stack switch -- then restore the Self
+// frame's fp/sp and jump to the send site's NLR entry (return PC +
+// non_local_return_offset; see sendDesc_amd64.hh).
+//
+// Unlike aarch64 there is no landing-sp ambiguity: every record on x86 is
+// a pushed {rbp, retPC} pair, so the sp above the matched record is
+// uniformly record + 16 -- for JIT records, boundary records, and
+// gcc-compiled prims alike (this is the "one layer past
+// PrimCallReturnTrap" gcc geometry problem not existing here).
+
+// Final hop: install the computed fp/sp and jump to the NLR target with
+// the NLR register convention (rax/rdx/rcx) loaded.
+extern "C" __attribute__((naked, noreturn))
+void ContinueNLR_jump(oop result, smi home, int32 homeID,
+                      char* target, frame* new_fp, char* new_sp) {
+  // naked: rdi=result, rsi=home, rdx=homeID, rcx=target, r8=new_fp, r9=new_sp
+  __asm__ __volatile__(
+    "movq  %r8, %rbp\n\t"
+    "movq  %r9, %rsp\n\t"
+    "movq  %rcx, %r10\n\t"         // target (rcx is about to be loaded)
+    "movq  %rdi, %rax\n\t"         // NLRResultReg
+    "movq  %rdx, %rcx\n\t"         // NLRHomeIDReg (read rdx before writing)
+    "movq  %rsi, %rdx\n\t"         // NLRHomeReg
+    "jmpq  *%r10\n\t"
+  );
+}
+
+static void ContinueNLR_unwind_and_jump(oop result, smi home, int32 homeID,
+                                        char* match, char* target) {
+  Unused(result); Unused(home); Unused(homeID);
+  // Walk our own frame chain to the record whose saved retPC == match.
+  char** rec = (char**)__builtin_frame_address(0);
+  while (rec != NULL  &&  rec[1] != match)
+    rec = (char**)rec[0];
+  if (rec == NULL)
+    fatal1("ContinueNLR: return PC %#lx not on the frame chain", match);
+
+  // Pop the matched {rbp, retPC} pair: the Self caller's running sp is
+  // uniformly rec + 16 (see the comment above).
+  char* new_sp = (char*)rec + 2 * oopSize;
+  ContinueNLR_jump(NLRResultFromC, NLRHomeFromC, NLRHomeIDFromC,
+                   target, (frame*)rec[0], new_sp);
+  ShouldNotReachHere();
 }
 
 extern "C" oop volatile ContinueNLRFromC(char* addr, bool isInterpreted, bool isSelfIC) {
-  Unused(addr); Unused(isInterpreted); Unused(isSelfIC);
-  fatal("ContinueNLRFromC called without JIT");
-  return NULL;
+  Unused(isSelfIC);  // send and primitive descs both put NLR code at +5
+  if (isInterpreted)
+    fatal("interpreted NLR uses longjmp on 64-bit "
+          "(see continue_NLR_into_interpreted_Self)");
+  processSemaphore = false;
+  ContinueNLR_unwind_and_jump(NLRResultFromC, NLRHomeFromC, NLRHomeIDFromC,
+                              addr, addr + 5 /*non_local_return_offset*/);
+  return NULL; // not reached
 }
 
 // DiscardStack, check_saved_byte_map_base, set_flags_for_platform,
@@ -367,7 +549,10 @@ char* Recompile_stub_returnPC   = NULL;
 char* MakeOld_stub_returnPC     = NULL;
 char* SendMessage_stub_returnPC = NULL;
 
-// zone::frame_chain_nesting static member
+# if !defined(FAST_COMPILER) && !defined(SIC_COMPILER)
+// zone::frame_chain_nesting static member (defined in zone.cpp when the
+// real zone is compiled in)
 int32 zone::frame_chain_nesting = 0;
+# endif
 
 # endif // TARGET_ARCH == X86_64_ARCH

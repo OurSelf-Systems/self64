@@ -252,6 +252,22 @@ inline x64_insn x64_add32_m_imm(int base, int disp, int imm32) {
   if (is8) x64_put(&i, imm32 & 0xFF); else x64_put32(&i, imm32);
   return i;
 }
+// ADD qword [base + disp], imm  (e.g. NLR-adjusting the stacked return PC)
+inline x64_insn x64_add64_m_imm(int base, int disp, int imm32) {
+  x64_insn i = { 0, {} };
+  bool is8 = -128 <= imm32 && imm32 <= 127;
+  x64_rex(&i, 1, 0, base); x64_put(&i, is8 ? 0x83 : 0x81);
+  x64_modrm_mem(&i, 0, base, disp);
+  if (is8) x64_put(&i, imm32 & 0xFF); else x64_put32(&i, imm32);
+  return i;
+}
+// CMP r64, [rip + disp32] -- compare against a literal-pool word (the word
+// stays GC-updatable, so even moving oops can be compared without a scratch)
+inline x64_insn x64_cmp_r_rip(int rt, int disp32) {
+  x64_insn i = { 0, {} };
+  x64_rex(&i, 1, rt, 0); x64_put(&i, 0x3B); x64_modrm_rip(&i, rt, disp32);
+  return i;
+}
 
 // IMUL rd, rs
 inline x64_insn x64_imul_r_r(int rd, int rs) {
@@ -411,8 +427,8 @@ inline unsigned char* x64_patch_field(unsigned char* p, unsigned char** end) {
   if (*q == 0xFF && (q[1] == 0x15 || q[1] == 0x25)) { // call/jmp [rip+d]
     *end = q + 6;  return q + 2;
   }
-  if (q != p && (*q == 0x8B || *q == 0x8D) && (q[1] & 0xC7) == 0x05) {
-    *end = q + 6;  return q + 2;                   // REX mov/lea r,[rip+d]
+  if (q != p && (*q == 0x8B || *q == 0x8D || *q == 0x3B) && (q[1] & 0xC7) == 0x05) {
+    *end = q + 6;  return q + 2;                   // REX mov/lea/cmp r,[rip+d]
   }
   return 0;
 }

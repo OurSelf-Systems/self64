@@ -11,9 +11,9 @@
 
 sendDesc* sendDesc::first_sendDesc() {
   // assertion is in sendDes::init
-# if TARGET_ARCH == AARCH64_ARCH
+# if TARGET_ARCH == AARCH64_ARCH || TARGET_ARCH == X86_64_ARCH
   // the first sendDesc lives in the EnterSelf stub, which is generated
-  // into the zone on demand (see stubs_aarch64.cpp)
+  // into the zone on demand (see stubs_aarch64.cpp / stubs_amd64.cpp)
   extern void generate_EnterSelf();
   if (firstSelfFrame_returnPC == NULL) generate_EnterSelf();
 # endif
@@ -460,7 +460,7 @@ void sendDesc::init() {
   # if HOST_ARCH == PPC_ARCH && TARGET_ARCH == I386_ARCH
     if (true) return; // just testing asm
   # endif
-  # if TARGET_ARCH == AARCH64_ARCH
+  # if TARGET_ARCH == AARCH64_ARCH || TARGET_ARCH == X86_64_ARCH
     // EnterSelf (and the first sendDesc it carries) is generated into the
     // zone lazily by first_sendDesc(), because sendDesc::init runs before
     // the zone exists.  generate_EnterSelf() performs these same checks

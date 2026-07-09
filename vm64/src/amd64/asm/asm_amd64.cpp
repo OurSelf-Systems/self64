@@ -77,6 +77,9 @@ void Assembler::storeByte_zero(Location base, fint disp) {
 void Assembler::add32_mem(Location base, fint disp, fint imm) {
   emit(x64_add32_m_imm(base, disp32(disp), disp32(imm)));
 }
+void Assembler::add_mem(Location base, fint disp, fint imm) {
+  emit(x64_add64_m_imm(base, disp32(disp), disp32(imm)));
+}
 void Assembler::lea(Location rt, Location base, fint disp) {
   emit(x64_lea_r_m(rt, base, disp32(disp)));
 }
@@ -93,12 +96,16 @@ void Assembler::mov_imm(Location rd, smi value) {
     emit(x64_mov_r_imm64(rd, (unsigned long long)value));
 }
 
-void Assembler::loadLiteral(Location rd, smi value, OperandType t) {
+void Assembler::recordLiteral(smi value, OperandType t) {
   if (_nlits >= MaxLits) fatal("literal pool overflow; raise MaxLits");
   _lits[_nlits].value = value;
   _lits[_nlits].type  = t;
   _lits[_nlits].site  = instsEnd;
   _nlits++;
+}
+
+void Assembler::loadLiteral(Location rd, smi value, OperandType t) {
+  recordLiteral(value, t);
   emit(x64_mov_r_rip(rd, 0)); // patched by flushLiteralPool
 }
 
@@ -108,6 +115,21 @@ void Assembler::loadOopLiteral(Location rd, oop p) {
 
 void Assembler::loadAddressLiteral(Location rd, void* a, OperandType t) {
   loadLiteral(rd, smi(a), t);
+}
+
+void Assembler::cmp_literal(Location rn, oop p) {
+  recordLiteral(smi(p), OopOperand);
+  emit(x64_cmp_r_rip(rn, 0)); // patched by flushLiteralPool
+}
+
+void Assembler::jmp_literal(void* target, OperandType t) {
+  recordLiteral(smi(target), t);
+  emit(x64_jmp_rip(0));       // patched by flushLiteralPool
+}
+
+void Assembler::call_literal(void* target, OperandType t) {
+  recordLiteral(smi(target), t);
+  emit(x64_call_rip(0));      // patched by flushLiteralPool
 }
 
 void Assembler::flushLiteralPool() {
@@ -158,6 +180,14 @@ void Assembler::andd(Location rd, smi bitmask) {
   emit(x64_and_r_imm(rd, (int)bitmask));
 }
 void Assembler::andd(Location rd, Location rm) { emit(x64_and_r_r(rd, rm)); }
+void Assembler::orr(Location rd, smi bitmask) {
+  assert(bitmask == (smi)(int32)bitmask, "bitmask exceeds imm32 (sign-extended)");
+  emit(x64_or_r_imm(rd, (int)bitmask));
+}
+void Assembler::xorr(Location rd, smi bitmask) {
+  assert(bitmask == (smi)(int32)bitmask, "bitmask exceeds imm32 (sign-extended)");
+  emit(x64_xor_r_imm(rd, (int)bitmask));
+}
 void Assembler::orr (Location rd, Location rm) { emit(x64_or_r_r(rd, rm)); }
 void Assembler::xorr(Location rd, Location rm) { emit(x64_xor_r_r(rd, rm)); }
 void Assembler::tst(Location rn, smi bitmask) {
@@ -198,6 +228,10 @@ void Assembler::idiv(Location rm)              { emit(x64_idiv_r(rm)); }
 void Assembler::jmp (Label* L)              { EMIT_BRANCH(L, 5, x64_jmp_rel32(rel)); }
 void Assembler::jcc (x64_cond cc, Label* L) { EMIT_BRANCH(L, 6, x64_jcc_rel32(cc, rel)); }
 void Assembler::call(Label* L)              { EMIT_BRANCH(L, 5, x64_call_rel32(rel)); }
+
+void Assembler::lea_label(Location rd, Label* L) {
+  EMIT_BRANCH(L, 7, x64_lea_r_rip(rd, rel));
+}
 
 # undef EMIT_BRANCH
 

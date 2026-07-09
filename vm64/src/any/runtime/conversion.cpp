@@ -181,7 +181,7 @@ void Conversion::init() {
 
   // pop off the frame to be converted; use copiedFrame for the conversion
   // because the original frame will be overwritten
-# if TARGET_ARCH == AARCH64_ARCH
+# if TARGET_ARCH == AARCH64_ARCH || TARGET_ARCH == X86_64_ARCH
   // The pop must leave sp at the convertFrame's caller fp -- that is what the
   // rebuilt frames chain their saved-fp ([fp+0]) link to, and what
   // unchainFrames/selfSender later walks.  On aarch64 frame* == fp and a
