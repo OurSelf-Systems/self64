@@ -57,6 +57,12 @@
 
     normal_sendDesc_end_offset        = delegatee_offset,
 
+    // words from a lookup stub's frame record to the sender's outgoing
+    // receiver slot: {saved fp, retPC} -- the CALL-pushed return PC is the
+    // record's own pc word, so the receiver sits directly above (cf. the
+    // aarch64 value, which spans the record plus the bl lr-hole)
+    lookup_stub_record_to_rcvr_words  = 2,
+
     // since always have branch, send getPrimCallEndOffset to the branch
        abortable_prim_continue_offset = branch_around_desc_offset,
     nonabortable_prim_continue_offset = branch_around_desc_offset

@@ -81,7 +81,13 @@ pc_t DIDesc::sendMessage( frame* lookupFrame,
   // Walk the sender's outgoing receiver/argument slots across the lookup;
   // see sendDesc::sendMessage for why.
   fint out_n = selector->is_string() ? stringOop(selector)->arg_count() : 0;
+# if TARGET_IS_64BIT
+  // per-arch: the amd64 record has no lr-hole word (see sendDesc_<arch>.hh)
+  preservedArray p_out((oop*)lookupFrame + sendDesc::lookup_stub_record_to_rcvr_words,
+                       1 + out_n);
+# else
   preservedArray p_out((oop*)lookupFrame + 3, 1 + out_n);
+# endif
 # if TARGET_IS_64BIT
   // A routed (EnterSelf-glue) caller reaches this trap too: its outgoing
   // area has send-site shape and its return point is the firstSelfFrame

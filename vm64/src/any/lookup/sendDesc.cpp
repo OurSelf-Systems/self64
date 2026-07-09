@@ -531,12 +531,15 @@ extern oop   ReturnResult_stub_result;
 // DIDesc::sendMessage, whose own interpret bridge only handles data slots.
 char* interpretSendForCompiledSender(compilingLookup* L,
                                      frame* lookupFrame) {
-  oop* out = (oop*)lookupFrame + 2;   // [0] lr hole, [1] receiver, [2..] args
+  // rcvr[0] = receiver, rcvr[1..] = args (offset is per-arch: see
+  // lookup_stub_record_to_rcvr_words in sendDesc_<arch>.hh -- reading the
+  // aarch64 shape on amd64 delivered every bridged argument off by one)
+  oop* rcvr = (oop*)lookupFrame + sendDesc::lookup_stub_record_to_rcvr_words;
   fint nargs = L->selector()->is_string()
     ? stringOop(L->selector())->arg_count()
     : 0;
   oop res = L->result()->interpret(L->receiver, L->selector(), L->delegatee(),
-                                   &out[2], nargs);
+                                   &rcvr[1], nargs);
   if (NLRSupport::have_NLR_through_C()) {
     // the compiled caller's NLR code takes over from here (pure register
     // protocol), mirroring continue_NLR_into_compiled_Self
@@ -642,9 +645,11 @@ char* sendDesc::sendMessage( frame* lookupFrame,
   // them while the send is still in the VM -- the callee frame that would
   // cover them does not yet exist.  Anchored to this real send, this needs
   // none of the parked-pc heuristics that sank the gated do_vm_frame walk.
-  // Layout above lookupFrame: [2] lr hole, [3] receiver, [4..] args.
+  // Receiver + args sit lookup_stub_record_to_rcvr_words above lookupFrame
+  // (per-arch: the amd64 record has no lr-hole word).
   fint out_n = sel->is_string() ? stringOop(sel)->arg_count() : 0;
-  preservedArray p_out((oop*)lookupFrame + 3, 1 + out_n);
+  preservedArray p_out((oop*)lookupFrame + sendDesc::lookup_stub_record_to_rcvr_words,
+                       1 + out_n);
   cacheProbingLookup L( receiver,
                         sel,
                         del,
