@@ -4,7 +4,8 @@
    See the LICENSE file for license information. */
 
 # ifdef INTERFACE_PRAGMAS
-  # pragma interface
+  // no pragma interface: these inlines have no out-of-line home TU,
+  // and Linux Debug builds (-O0 + INTERFACE_PRAGMAS) would not emit them
 # endif
 
 
