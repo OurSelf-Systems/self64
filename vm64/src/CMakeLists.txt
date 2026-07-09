@@ -450,6 +450,7 @@ set(SRC_any
 list(APPEND SRC_src ${SRC_any})
 
 set(SRC_amd64
+  amd64/asm/asm_amd64.cpp
   amd64/asm/asm_amd64.hh
   amd64/asm/asm_inline_amd64.hh
   amd64/asm/disasm_amd64.hh
