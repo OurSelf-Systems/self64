@@ -335,6 +335,14 @@ __asm__(
   // NLR: rax = result, rdx = NLRHomeReg, rcx = NLRHomeIDReg
   "  subq  $32, %rsp\n"             // our record, below F's intact words
   "  leaq  16(%rsp), %r11\n"        // r11 = F (= entry rsp - 16)
+  // The NLR epilogue diverted here by ADDING non_local_return_offset to the
+  // patched slot IN MEMORY, so [F+8] now holds trap+5, which is_patched()
+  // does not recognize.  Put the base trap address back (i386's "put back
+  // return PC for VM" push did the same); the unpatcher reads the real
+  // return PC from currentPC, and is_patched accepts any of the trap
+  // symbols, so ReturnTrap covers a PrimCallReturnTrap patch too.
+  "  leaq  ReturnTrap(%rip), %r10\n"
+  "  movq  %r10, 8(%r11)\n"         // re-normalize the patched slot
   "  movq  %r11, (%rsp)\n"          // [fp+0] = F -> our sender() is F
   "  leaq  .Lrt_marker(%rip), %r10\n"
   "  movq  %r10, 8(%rsp)\n"         // [fp+8] = marker (not a Self frame)
