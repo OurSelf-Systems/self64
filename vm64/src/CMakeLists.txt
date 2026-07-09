@@ -463,9 +463,12 @@ set(SRC_amd64
   amd64/fast_compiler/fcompiler_amd64.hh
   amd64/fast_compiler/registerState_amd64.hh
   amd64/fast_compiler/registerString_amd64.hh
+  amd64/lookup/cacheStub_amd64.cpp
   amd64/lookup/cacheStub_amd64.hh
   amd64/lookup/cacheStub_inline_amd64.hh
+  amd64/lookup/diDesc_amd64.cpp
   amd64/lookup/diDesc_amd64.hh
+  amd64/lookup/sendDesc_amd64.cpp
   amd64/lookup/sendDesc_amd64.hh
   amd64/memory/search_amd64.cpp
   amd64/memory/search_amd64.hh
@@ -497,10 +500,15 @@ set(SRC_amd64
   amd64/sic/longRegString_amd64.hh
   amd64/sic/prologueNode_amd64.hh
   amd64/sic/sic_amd64.hh
+  amd64/zone/addrDesc_amd64.cpp
   amd64/zone/addrDesc_amd64.hh
+  amd64/zone/countPattern_amd64.cpp
   amd64/zone/countPattern_amd64.hh
+  amd64/zone/countStub_amd64.cpp
   amd64/zone/countStub_amd64.hh
+  amd64/zone/nmethod_amd64.cpp
   amd64/zone/nmethod_amd64.hh
+  amd64/zone/trapdoors_amd64.cpp
   amd64/zone/trapdoors_amd64.hh
 )
 

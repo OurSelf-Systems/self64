@@ -1,7 +1,6 @@
-# if defined(__i386__) || defined(__x86_64__)
-/* Sun-$Revision: 1.4 $ */
+# if defined(__x86_64__)
 
-/* Copyright 1992-2012 AUTHORS.
+/* Copyright 1992-2026 AUTHORS.
    See the LICENSE file for license information. */
 
 # ifdef INTERFACE_PRAGMAS
@@ -12,23 +11,27 @@
 
 # if  defined(FAST_COMPILER) || defined(SIC_COMPILER)
 
+  // Count stubs are not yet implemented on amd64 (see
+  // countPattern_amd64.cpp); these accessors trap if reached.
+  // The i386 versions patched 4-byte cells and would truncate pointers.
 
   inline void CountStub::set_count_addr(CountCodePattern* patt, int32 addr) {
-    int32* p = (int32*)(smi(insts()) + patt->countAddr_offset);
-    *p = addr;
+    Unused(patt); Unused(addr);
+    fatal("amd64 count stubs not yet implemented");
   }
 
   inline int32 CountStub::count_addr(CountCodePattern* patt) {
-    int32* p = (int32*)(smi(insts()) + patt->countAddr_offset);
-    return *p;
+    Unused(patt);
+    fatal("amd64 count stubs not yet implemented");
+    return 0;
   }
 
   inline void CountStub::set_callee(CountCodePattern* patt, int32 addr) {
-    int32* p = (int32*)(smi(insts()) + patt->nmAddr_offset);
-    *p = addr - smi(p) - sizeof(int32);
+    Unused(patt); Unused(addr);
+    fatal("amd64 count stubs not yet implemented");
   }
 
 
 
 # endif // defined(FAST_COMPILER) || defined(SIC_COMPILER)
-# endif // defined(__i386__) || defined(__x86_64__)
+# endif // defined(__x86_64__)
