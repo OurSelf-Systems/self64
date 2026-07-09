@@ -174,8 +174,17 @@
       (int32(constant) > maxImmediate || int32(constant) < -maxImmediate);
 # elif TARGET_ARCH == PPC_ARCH
     return SICCSEConstants && weight > 1 && !fits_within_si(int32(constant));
-# elif TARGET_ARCH == I386_ARCH
-    return false; // regs tight, use immediates
+# elif TARGET_ARCH == I386_ARCH || TARGET_ARCH == X86_64_ARCH \
+   ||  TARGET_ARCH == AARCH64_ARCH
+    // i386: regs tight, use immediates.  The 64-bit ports re-materialize
+    // constants (mov_imm / literal pool), so registers never pay off either.
+    // NB: with no arm here, control fell off the end (UB) -- gcc emitted an
+    // empty function falling through into the adjacent .text.unlikely stub,
+    // which surfaced as a bogus IntervalTimer fatal during the first amd64
+    // SIC compile.
+    return false;
+# else
+    # error needsRegister: which architecture?
 # endif
   }
 
