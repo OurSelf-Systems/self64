@@ -311,52 +311,75 @@ extern "C" oop MakeOld_stub(...) {
 
 extern bool8 processSemaphore;   // process.hh
 
-extern "C" __attribute__((naked)) void ReturnTrap() {
-  __asm__ __volatile__(
-    ".byte 0xe9\n\t"                 // +0: jmp 3f -- normal entry, forced rel32
-    ".long 3f - 0f\n\t"
-    "0:\n\t"                         // == entry + 5: the NLR entry
-    // NLR: rax = result, rdx = NLRHomeReg, rcx = NLRHomeIDReg
-    "lea   ReturnTrap(%rip), %r10\n\t"
-    "pushq %r10\n\t"                // re-form the patched slot at [F+8]
-    "pushq %rbp\n\t"                // [F+0] = caller fp (value memory holds)
-    "movq  %rsp, %rbp\n\t"         // rbp = F; rsp = F (0 mod 16)
-    "movq  %rcx, %r8\n\t"          // arg4: nlrHomeID (before rcx clobbered)
-    "movq  %rdx, %rcx\n\t"         // arg3: nlrHome   (before rdx clobbered)
-    "movl  $1, %edx\n\t"            // arg2: nlr = true
-    "movq  %rbp, %rsi\n\t"         // arg1: sp_of_patched_frame = F
-    "movq  %rax, %rdi\n\t"         // arg0: result
-    "call  HandleReturnTrap\n\t"
-    "hlt\n\t"                        // HandleReturnTrap must not return
-    "3:\n\t"                         // ---- normal-return entry ----
-    "lea   ReturnTrap(%rip), %r10\n\t"
-    "pushq %r10\n\t"                // re-form the patched slot at [F+8]
-    "pushq %rbp\n\t"                // [F+0] = caller fp
-    "movq  %rsp, %rbp\n\t"         // rbp = F
-    "movq  %rax, %rdi\n\t"         // arg0: result
-    "movq  %rbp, %rsi\n\t"         // arg1: sp_of_patched_frame = F
-    "xorl  %edx, %edx\n\t"         // arg2: nlr = false
-    "xorl  %ecx, %ecx\n\t"         // arg3: nlrHome = NULL
-    "xorl  %r8d, %r8d\n\t"         // arg4: nlrHomeID = 0
-    "call  HandleReturnTrap\n\t"
-    "hlt\n\t"                        // HandleReturnTrap must not return
-  );
-}
+// The stub builds its own marker record BELOW F (as on aarch64), never
+// re-forming F itself: HandleReturnTrap takes currentFrame()->the stub
+// record and relinks its [+0] to F -- if the record WERE F, that relink
+// writes [F+0] = F and the frame chain becomes a self-loop (this hung the
+// first world build in Stack::first_VM_frame).  F's own words at [F+0] /
+// [F+8] still hold the saved fp and the patched trap address (RET reads
+// memory without erasing it), which the unpatcher and walks rely on.
+// Defined in a top-level asm block, NOT as naked C functions: the compiler
+// prepends endbr64 (-fcf-protection) to every C-level function, which shifts
+// the entry layout -- the patched value is first_inst_addr(ReturnTrap) == the
+// symbol itself, and an NLR diverts to symbol+5, which must be the second
+// entry, not the middle of a rel32.  A top-level asm blob owns its first byte.
+__asm__(
+  "  .text\n"
+  "  .align 8\n"
+  "  .globl ReturnTrap\n"
+  "  .type ReturnTrap, @function\n"
+  "ReturnTrap:\n"
+  "  .byte 0xe9\n"                  // +0: jmp .Lrt_normal -- forced rel32
+  "  .long .Lrt_normal - . - 4\n"
+  // == ReturnTrap + 5: the NLR entry.
+  // NLR: rax = result, rdx = NLRHomeReg, rcx = NLRHomeIDReg
+  "  subq  $32, %rsp\n"             // our record, below F's intact words
+  "  leaq  16(%rsp), %r11\n"        // r11 = F (= entry rsp - 16)
+  "  movq  %r11, (%rsp)\n"          // [fp+0] = F -> our sender() is F
+  "  leaq  .Lrt_marker(%rip), %r10\n"
+  "  movq  %r10, 8(%rsp)\n"         // [fp+8] = marker (not a Self frame)
+  "  movq  %rsp, %rbp\n"            // rbp = our record (rsp = F-16, 0 mod 16)
+  "  movq  %rcx, %r8\n"             // arg4: nlrHomeID (before rcx clobbered)
+  "  movq  %rdx, %rcx\n"            // arg3: nlrHome   (before rdx clobbered)
+  "  movl  $1, %edx\n"              // arg2: nlr = true
+  "  movq  %r11, %rsi\n"            // arg1: sp_of_patched_frame = F
+  "  movq  %rax, %rdi\n"            // arg0: result
+  "  call  HandleReturnTrap\n"
+  ".Lrt_marker:\n"
+  "  hlt\n"                         // HandleReturnTrap must not return
+  ".Lrt_normal:\n"                  // ---- normal-return entry ----
+  "  subq  $32, %rsp\n"             // our record, below F's intact words
+  "  leaq  16(%rsp), %r11\n"        // r11 = F
+  "  movq  %r11, (%rsp)\n"          // [fp+0] = F -> our sender() is F
+  "  leaq  .Lrt_marker2(%rip), %r10\n"
+  "  movq  %r10, 8(%rsp)\n"         // [fp+8] = marker (not a Self frame)
+  "  movq  %rsp, %rbp\n"            // rbp = our record
+  "  movq  %rax, %rdi\n"            // arg0: result
+  "  movq  %r11, %rsi\n"            // arg1: sp_of_patched_frame = F
+  "  xorl  %edx, %edx\n"            // arg2: nlr = false
+  "  xorl  %ecx, %ecx\n"            // arg3: nlrHome = NULL
+  "  xorl  %r8d, %r8d\n"            // arg4: nlrHomeID = 0
+  "  call  HandleReturnTrap\n"
+  ".Lrt_marker2:\n"
+  "  hlt\n"                         // HandleReturnTrap must not return
+  "  .size ReturnTrap, . - ReturnTrap\n"
 
-extern "C" void ReturnTrap2() {
-  fatal("ReturnTrap2 unused on x86_64");
-}
-
-extern "C" __attribute__((naked)) void PrimCallReturnTrap() {
   // On x86 the RET consumed the patched slot whatever the returner was, so
   // the geometry is identical to ReturnTrap: alias both entries (the
   // patcher still needs a distinct symbol to choose per sendee kind).
-  __asm__ __volatile__(
-    ".byte 0xe9\n\t"                 // +0 -> ReturnTrap+0 (normal entry)
-    ".long ReturnTrap - . - 4\n\t"
-    ".byte 0xe9\n\t"                 // +5 -> ReturnTrap+5 (NLR entry)
-    ".long ReturnTrap + 5 - . - 4\n\t"
-  );
+  "  .align 8\n"
+  "  .globl PrimCallReturnTrap\n"
+  "  .type PrimCallReturnTrap, @function\n"
+  "PrimCallReturnTrap:\n"
+  "  .byte 0xe9\n"                  // +0 -> ReturnTrap+0 (normal entry)
+  "  .long ReturnTrap - . - 4\n"
+  "  .byte 0xe9\n"                  // +5 -> ReturnTrap+5 (NLR entry)
+  "  .long ReturnTrap + 5 - . - 4\n"
+  "  .size PrimCallReturnTrap, . - PrimCallReturnTrap\n"
+);
+
+extern "C" void ReturnTrap2() {
+  fatal("ReturnTrap2 unused on x86_64");
 }
 
 extern "C" void ProfilerTrap() {
