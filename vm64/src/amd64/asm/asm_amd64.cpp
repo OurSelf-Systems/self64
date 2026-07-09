@@ -164,7 +164,7 @@ void Assembler::tst(Location rn, smi bitmask) {
   assert(bitmask == (smi)(int32)bitmask, "bitmask exceeds imm32 (sign-extended)");
   emit(x64_test_r_imm(rn, (int)bitmask));
 }
-void Assembler::test(Location rn, Location rm) { emit(x64_test_r_r(rn, rm)); }
+void Assembler::tst(Location rn, Location rm) { emit(x64_test_r_r(rn, rm)); }
 void Assembler::neg (Location rd)              { emit(x64_neg_r(rd)); }
 
 void Assembler::shl(Location rd, fint sh) { emit(x64_shl_r_imm(rd, (int)sh)); }

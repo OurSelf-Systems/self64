@@ -1,7 +1,6 @@
-# if defined(__i386__) || defined(__x86_64__)
-/* Sun-$Revision: 1.4 $ */
+# if defined(__x86_64__)
 
-/* Copyright 1992-2012 AUTHORS.
+/* Copyright 1992-2026 AUTHORS.
    See the LICENSE file for license information. */
 
 # ifdef INTERFACE_PRAGMAS
@@ -12,14 +11,15 @@
 # if  defined(FAST_COMPILER) || defined(SIC_COMPILER)
 
 
-
 inline void CacheStub::jump(char* addr) {
-  // Was branch_to, but this caused problems because
-  // CacheStub::moveTo_inner does not relocate these. -- dmu 12/03
-  a->jmp((smi)addr, CodeAddressOperand);
+  // target is a pooled absolute word with a CodeAddressOperand loc, so
+  // the locs sequence matches getJumpLocsIndex and repatching is a store
+  // (cf. cacheStub_inline_aarch64.hh; Temp2 plays x17's jump-scratch role)
+  a->loadAddressLiteral(Temp2, (void*)addr, CodeAddressOperand);
+  a->jmp_reg(Temp2);
 }
 
 
 # endif  // defined(FAST_COMPILER) || defined(SIC_COMPILER)
 
-# endif // defined(__i386__) || defined(__x86_64__)
+# endif // defined(__x86_64__)

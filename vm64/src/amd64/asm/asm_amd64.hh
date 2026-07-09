@@ -80,7 +80,7 @@ class Assembler: public BaseAssembler {
   void orr  (Location rd, Location rm);
   void xorr (Location rd, Location rm);
   void tst  (Location rn, smi bitmask);
-  void test (Location rn, Location rm);
+  void tst  (Location rn, Location rm);   // 'test' would hide BaseAssembler::test()
   void neg  (Location rd);
   void shl  (Location rd, fint sh);
   void shr  (Location rd, fint sh);
