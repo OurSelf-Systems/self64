@@ -28,17 +28,19 @@ endif()
 # handlePreemption completion, both guarded to !SIC_COMPILER). Default OFF keeps
 # the normal 64-bit JIT build.
 option(SELF_INTERP_ONLY "Build the interpreter-only VM (no SIC compiler) on 64-bit" OFF)
-# SIC by default on macOS/aarch64 only.  The x86_64 SIC backend is under
-# construction: -DSELF_FORCE_SIC=ON builds it for port work, and the default
-# stays interpreter-only until the port passes world build + CI.  aarch64
-# Linux/gcc builds and runs but the mixed-mode return-trap machinery still
-# miscomputes gcc's frame-record geometry one layer past PrimCallReturnTrap
-# (see runtime_stubs_aarch64.cpp); interpreter-only there until that campaign
-# lands.  Force with -DSELF_FORCE_SIC=ON to work on either port.
+# SIC by default on macOS/aarch64 and on non-Apple x86_64 (the amd64 backend
+# passes the full tiered world build, snapshot round-trip, and CI suite on
+# Linux; x86 trap geometry is C-compiler-independent, so no gcc gate is
+# needed).  Apple x86_64 stays off: the runtime-stub asm uses plain ELF
+# symbol names.  aarch64 Linux/gcc builds and runs but the mixed-mode
+# return-trap machinery still miscomputes gcc's frame-record geometry one
+# layer past PrimCallReturnTrap (see runtime_stubs_aarch64.cpp);
+# interpreter-only there until that campaign lands.  Force with
+# -DSELF_FORCE_SIC=ON to work on a port.
 option(SELF_FORCE_SIC "Enable the SIC on platforms where it is not yet the default" OFF)
 if(NOT SELF_INTERP_ONLY
    AND ((TARGET_ARCH STREQUAL "AARCH64_ARCH" AND (APPLE OR SELF_FORCE_SIC))
-        OR (TARGET_ARCH STREQUAL "X86_64_ARCH" AND SELF_FORCE_SIC)))
+        OR (TARGET_ARCH STREQUAL "X86_64_ARCH" AND (NOT APPLE OR SELF_FORCE_SIC))))
   list(APPEND _defines
     SIC_COMPILER
   )
