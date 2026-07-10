@@ -68,7 +68,7 @@ void   NLRSupport::set_NLR_home_ID_from_C(int32 x) { NLRHomeIDFromC = x; }
 volatile void NLRSupport::continue_NLR_into_Self(bool remove_patches) {
   processSemaphore = true;
   frame* vmf = currentProcess->stack()->first_VM_frame();
-# if TARGET_ARCH == AARCH64_ARCH
+# if TARGET_ARCH == AARCH64_ARCH || TARGET_ARCH == X86_64_ARCH
   // Cannot also assert !vmf->is_self_frame(): a C record called directly
   // from compiled code (e.g. this function, from an interrupt check) holds
   // a zone return pc and so content-mimics a Self frame.

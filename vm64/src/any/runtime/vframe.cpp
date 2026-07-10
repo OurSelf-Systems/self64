@@ -74,7 +74,7 @@ bool compiled_vframe::is_uncommonTrap() {
 // first because of trouble with inlined functions
 void compiled_vframe::set_contents(NameDesc* n, oop p) {
   if (n->isLocation()) {
-#   if TARGET_ARCH == AARCH64_ARCH
+#   if TARGET_ARCH == AARCH64_ARCH || TARGET_ARCH == X86_64_ARCH
     // A register-located NameDesc (e.g. the expression-stack top at a
     // send-return: the in-flight result lives in ResultReg/x0) cannot be
     // stored through location_addr -- there is no stack slot, and the
@@ -177,7 +177,7 @@ oop compiled_vframe::get_contents(NameDesc* n,
   assert(verify_NameDesc_for_get_contents(n), "just checking");                                
   if (n->isLocation()) {
     Location loc = n->location();
-# if TARGET_ARCH == AARCH64_ARCH
+# if TARGET_ARCH == AARCH64_ARCH || TARGET_ARCH == X86_64_ARCH
     // register-located debug values are delivered by the resume, not
     // resident in the frame; there is no address to read from outside
     // (cf. set_contents).  Show nil rather than faulting in stack prints
@@ -238,7 +238,7 @@ bool compiled_vframe::verify_NameDesc_for_get_contents(NameDesc* n) {
                       // for last copiedFrame (sender sp may be < own sp)
   ||   isDummy() 
   ||   !n->hasLocation() 
-# if TARGET_ARCH == AARCH64_ARCH
+# if TARGET_ARCH == AARCH64_ARCH || TARGET_ARCH == X86_64_ARCH
   // register-located debug values are delivered by the resume, not resident
   // in the frame (cf. compiled_vframe::set_contents); there is no frame
   // address to liveness-check
@@ -366,7 +366,7 @@ void compiled_vframe::copyOutgoingArgs( compiled_vframe* vf,
  for ( fint argNo = startingArgNo;  e;   e= e->next(),  ++argNo) {
     int32 bci2 = e->data();
     NameDesc* nd = desc->exprStackElem(bci2);
-# if TARGET_ARCH == AARCH64_ARCH
+# if TARGET_ARCH == AARCH64_ARCH || TARGET_ARCH == X86_64_ARCH
     // A constant expr-stack element has no frame location in the new
     // (debug) nmethod; its send-setup code re-materializes the value, so
     // there is nothing to copy into.  Skip it -- but keep the _Perform

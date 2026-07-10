@@ -1,7 +1,6 @@
-# if defined(__i386__) || defined(__x86_64__)
-/* Sun-$Revision: 1.4 $ */
+# if defined(__x86_64__)
 
-/* Copyright 1992-2012 AUTHORS.
+/* Copyright 1992-2026 AUTHORS.
    See the LICENSE file for license information. */
 
 # ifdef INTERFACE_PRAGMAS
@@ -11,25 +10,19 @@
 // included in genHelper.hh
 
 public:
-  void moveToExactlyThisReg(PReg* pr, Location reg);                         
+  void moveToExactlyThisReg(PReg* pr, Location reg);
 
 private:
-
-  void verifyOneImmediateParent(assignableSlotLink* l, 
+  void verifyOneImmediateParent(assignableSlotLink* l,
                                 Location parentOopReg,
                                 Location scratchReg,
                                 fint count);
-
-  void verifyConstrainedOopOfParent(oop targetOop, 
-                                    Location parentOopReg, 
+  void verifyConstrainedOopOfParent(oop targetOop,
+                                    Location parentOopReg,
                                     Label* ok);
   void verifyMapOfParent(Map* targetMap,
-                         Location parentOopReg, 
-                         Location regForMap, 
+                         Location parentOopReg,
+                         Location regForMap,
                          Label* ok);
-                         
 
-  Location    leaf_rcvr_base;
-  int32       leaf_rcvr_disp;
-  OperandType leaf_rcvr_type;
-# endif // defined(__i386__) || defined(__x86_64__)
+# endif // defined(__x86_64__)

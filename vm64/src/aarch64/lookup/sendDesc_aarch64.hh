@@ -54,6 +54,10 @@
 
     normal_sendDesc_end_offset        = delegatee_offset,
 
+    // words from a lookup stub's frame record to the sender's outgoing
+    // receiver slot: the {fp, lr} record plus the caller's lr hole
+    lookup_stub_record_to_rcvr_words  = 3,
+
     // since always have branch, send getPrimCallEndOffset to the branch
        abortable_prim_continue_offset = branch_around_desc_offset,
     nonabortable_prim_continue_offset = branch_around_desc_offset

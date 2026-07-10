@@ -18,8 +18,8 @@ void   frame::set_nmethod_frame_chain(frame* f, nmethod* nm) {
   *nmethod_frame_chain_addr(nm) = f; }
   
 objVectorOop frame::patched_frame_saved_outgoing_args(nmethod* nm) {
-# if TARGET_ARCH == AARCH64_ARCH
-  // aarch64 saves the args at patch time despite the flag (see
+# if TARGET_ARCH == AARCH64_ARCH || TARGET_ARCH == X86_64_ARCH
+  // the 64-bit ports save the args at patch time despite the flag (see
   // frame::save_outgoing_arguments), but only for compiled frames --
   // an interpreter frame is a C++ frame with no such slot
   if (is_interpreted_self_frame())
@@ -351,7 +351,7 @@ void frame::patch_compiled_self_frame(returnTrapHandlerFn new_fn) {
 // which only currently works for PPC.
 
 void frame::save_outgoing_arguments() {
-# if TARGET_ARCH == AARCH64_ARCH
+# if TARGET_ARCH == AARCH64_ARCH || TARGET_ARCH == X86_64_ARCH
   // No asm glue saves outgoing args on this port, but the restart path
   // (the conversion's copyOutgoingArgs) needs their values from before a
   // conversion rebuilds this part of the stack.  They are still in this
