@@ -503,7 +503,16 @@ void* Heap::firstUsed() {
 // return next used chunk with address > p
 void* Heap::nextUsed(void* p) {
   ChunkMap* m = mapAddr(p);
-  if (m->isValid() && !lastCombine->contains(m->asByte())) {
+  // Test contains() BEFORE isValid(): when p was just flushed and combined
+  // (the sweeper advances from the nmethod it freed), m points into the
+  // interior of the lastCombine chunk, where the map bytes are stale --
+  // markSize writes only a chunk's header and trailer.  isValid() computes
+  // next() from whatever the stale byte encodes and reads the "trailer"
+  // there, far off the malloc'd map: on NetBSD (jemalloc) that byte landed
+  // on an unmapped page and the LRU sweep SEGVed mid-world-build; glibc's
+  // layout let the same wild read return harmless garbage, which is why
+  // Linux never showed it.  The reorder only changes evaluation order.
+  if (!lastCombine->contains(m->asByte()) && m->isValid()) {
     if (VerifyZoneOften) {
       ChunkMap *m1;
       for (m1 = heapMap; m1 < m; m1 = m1->next()) ;
