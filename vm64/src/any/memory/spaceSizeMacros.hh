@@ -36,7 +36,17 @@
 # endif 
 
 // Doubled 8 to 16 below -- dmu 1/02
-# define        default_code_size        (16 * 1024 * 1024)
+// Doubled 16 to 32: tiered interpreter+SIC world building churns far more
+// code (and nmethod-dependency space, which is sized as a fraction of this)
+// than the eager NIC the 16MB was tuned for, and on slow or emulated hosts
+// (QEMU TCG amd64, NetBSD under emulation, -O0 Debug builds) the extra
+// preemptions per unit of Self progress drive enough extra conversions and
+// recompiles to exhaust the 16MB cache late in the world build -- the deps
+// zone hit its clean out-of-space fatal on ubuntu-amd64 and the reclaim
+// sweeper thrashed to a crash on netbsd-amd64.  The carve-out spacing
+// (StubsStart - NMethodStart = MaxNMethodSize = 58MB) accommodates this
+// with room to spare.
+# define        default_code_size        (32 * 1024 * 1024)
 # define        default_deps_size        DepsSize(default_code_size)
 # define        default_debug_size       DebugSize(default_code_size)
 # define        default_pic_size         ((int)PicSize(default_code_size))

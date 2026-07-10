@@ -40,8 +40,10 @@ option(SELF_INTERP_ONLY "Build the interpreter-only VM (no SIC compiler) on 64-b
 # repeated full tiered world builds, the snapshot write/reboot round
 # trip, and the CI suite to 'End of CI tests' with an empty error list,
 # on Release and on the assertions-on -O2 build.  (The -O0 Debug world
-# build separately exhausts the nmethod-dependency zone -- a capacity
-# issue, now a clean fatal, not a geometry one.)  amd64 needs no gcc
+# build still fails separately: with the 32MB code cache it completes
+# every file read and the module-cache refill, then jumps to a garbage
+# pc during the final scheduler/save phase -- open, -O0-only.)  amd64
+# needs no gcc
 # gate either -- RET consumes the patched slot and records are
 # rbp-pinned.  Apple x86_64 stays off: the runtime-stub asm uses plain
 # ELF symbol names.  Force with -DSELF_FORCE_SIC=ON to work on a port.
