@@ -28,18 +28,26 @@ endif()
 # handlePreemption completion, both guarded to !SIC_COMPILER). Default OFF keeps
 # the normal 64-bit JIT build.
 option(SELF_INTERP_ONLY "Build the interpreter-only VM (no SIC compiler) on 64-bit" OFF)
-# SIC by default on macOS/aarch64 and on non-Apple x86_64 (the amd64 backend
-# passes the full tiered world build, snapshot round-trip, and CI suite on
-# Linux; x86 trap geometry is C-compiler-independent, so no gcc gate is
-# needed).  Apple x86_64 stays off: the runtime-stub asm uses plain ELF
-# symbol names.  aarch64 Linux/gcc builds and runs but the mixed-mode
-# return-trap machinery still miscomputes gcc's frame-record geometry one
-# layer past PrimCallReturnTrap (see runtime_stubs_aarch64.cpp);
-# interpreter-only there until that campaign lands.  Force with
-# -DSELF_FORCE_SIC=ON to work on a port.
+# SIC by default on all aarch64 and on non-Apple x86_64.  The aarch64
+# Linux/gcc gate is gone: the Self<->C boundary geometry is now hand-built
+# and C-compiler-independent (the PrimBoundary trapdoor pins the prim-call
+# record at running_sp-16 where every mixed-mode walk expects it; the NLR
+# landing sp and the watermark alias are computed from the nmethod's
+# pinned frame size instead of the record's address), the naked resume
+# glue is noipa so gcc can neither inline it nor constprop-clone it away
+# from its raw register protocol, and glibc's fortified longjmp is
+# disabled (see the flag comment below).  Validated on Linux/gcc 13:
+# repeated full tiered world builds, the snapshot write/reboot round
+# trip, and the CI suite to 'End of CI tests' with an empty error list,
+# on Release and on the assertions-on -O2 build.  (The -O0 Debug world
+# build separately exhausts the nmethod-dependency zone -- a capacity
+# issue, now a clean fatal, not a geometry one.)  amd64 needs no gcc
+# gate either -- RET consumes the patched slot and records are
+# rbp-pinned.  Apple x86_64 stays off: the runtime-stub asm uses plain
+# ELF symbol names.  Force with -DSELF_FORCE_SIC=ON to work on a port.
 option(SELF_FORCE_SIC "Enable the SIC on platforms where it is not yet the default" OFF)
 if(NOT SELF_INTERP_ONLY
-   AND ((TARGET_ARCH STREQUAL "AARCH64_ARCH" AND (APPLE OR SELF_FORCE_SIC))
+   AND (TARGET_ARCH STREQUAL "AARCH64_ARCH"
         OR (TARGET_ARCH STREQUAL "X86_64_ARCH" AND (NOT APPLE OR SELF_FORCE_SIC))))
   list(APPEND _defines
     SIC_COMPILER
@@ -74,6 +82,13 @@ list(APPEND _flags
   -fno-stack-protector			# frames are inspected
   -fno-strict-aliasing			# compilers used to be less opinionated
   -fno-threadsafe-statics
+  # The VM switches stacks (SwitchStack/SetSPAndCall) and NLRs longjmp
+  # across them (interpreter_longjmp_for_NLR); glibc's fortified
+  # ____longjmp_chk treats any cross-stack longjmp as an attack and
+  # aborts ("longjmp causes uninitialized stack frame").  Ubuntu's gcc
+  # enables _FORTIFY_SOURCE by default at -O1+, so optimized builds died
+  # on kill-process unwinds while -O0 builds sailed on.  (NB: critical)
+  -U_FORTIFY_SOURCE
 )
 
 if(SELF_COVERAGE)
