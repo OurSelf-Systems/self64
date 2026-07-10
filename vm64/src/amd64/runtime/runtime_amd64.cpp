@@ -5,6 +5,7 @@
    See the LICENSE file for license information. */
 
 # pragma implementation  "runtime_amd64.hh"
+# pragma implementation "runtime_aarch64.hh"  // same file: aarch64 includes it via the symlink name
 
 # include "_runtime_amd64.cpp.incl"
 

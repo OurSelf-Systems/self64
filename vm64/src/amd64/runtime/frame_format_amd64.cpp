@@ -5,6 +5,7 @@
    See the LICENSE file for license information. */
 
 # pragma implementation "frame_format_amd64.hh"
+# pragma implementation "frame_format_aarch64.hh"  // same file: aarch64 includes it via the symlink name
 
 # include "_frame_format_amd64.cpp.incl"
 

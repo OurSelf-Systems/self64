@@ -5,6 +5,7 @@
    See the LICENSE file for license information. */
 
 # pragma implementation "framePieces_amd64.hh"
+# pragma implementation "framePieces_aarch64.hh"  // same file: aarch64 includes it via the symlink name
 
 # include "_framePieces_amd64.cpp.incl"
 

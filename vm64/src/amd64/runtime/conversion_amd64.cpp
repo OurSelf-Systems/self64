@@ -5,6 +5,7 @@
    See the LICENSE file for license information. */
 
 # pragma implementation "conversion_amd64.hh"
+# pragma implementation "conversion_aarch64.hh"  // same file: aarch64 includes it via the symlink name
 # include "_conversion_amd64.cpp.incl"
 
 

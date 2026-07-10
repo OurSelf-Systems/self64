@@ -2,6 +2,8 @@
 /* Copyright 2024-2026 AUTHORS.
    See the LICENSE file for license information. */
 
+# pragma implementation "regs_aarch64.hh"
+
 # include "_regs_aarch64.cpp.incl"
 
 // change Location enum in regs_aarch64.hh if you change this!
