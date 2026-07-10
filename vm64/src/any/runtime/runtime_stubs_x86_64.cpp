@@ -9,6 +9,23 @@
 
 # include "_runtime_amd64.cpp.incl"
 
+// Naked glue functions reference the argument registers directly in raw
+// asm, which is only valid when the function is genuinely CALLED per the
+// ABI.  gcc treats naked functions as ordinary IPA material: it inlines
+// them into C callers (reusing "dead" argument registers as scratch -- a
+// resume's continuation pc became &processSemaphore) and, blocked from
+// inlining, emits constant-propagated clones (.constprop.0) with modified
+// signatures that break the register protocol just as thoroughly.  noipa
+// (gcc 8+) turns all of that off; clang never inlines naked functions and
+// does not know noipa.
+# if defined(__clang__)
+#   define NAKED_GLUE          __attribute__((naked, noinline))
+#   define NAKED_GLUE_NORETURN __attribute__((naked, noinline, noreturn))
+# else
+#   define NAKED_GLUE          __attribute__((naked, noipa))
+#   define NAKED_GLUE_NORETURN __attribute__((naked, noipa, noreturn))
+# endif
+
 
 // =====================================================================
 // Frame pointer access
@@ -174,7 +191,7 @@ extern "C" char* SwitchStack4(char* fn_start, char* newSP,
 
 extern "C" void ReturnOffTopOfProcess();
 
-extern "C" __attribute__((naked))
+extern "C" NAKED_GLUE
 void SetSPAndCall(char** callerSaveAddr, char** calleeSaveAddr,
                   bool init, bool8* semaphore, bool8 pcWasSet) {
   __asm__ __volatile__(
@@ -397,7 +414,7 @@ extern "C" void ProfilerTrap() {
 // Resume normal execution after a return trap: restore the caller's frame
 // pointer, put sp back at the trap-entry position (F + 16, always), and
 // jump to the continuation PC with the result in rax.
-extern "C" __attribute__((naked, noreturn))
+extern "C" NAKED_GLUE_NORETURN
 void ReturnTrap_resume(oop result, char* pc, char* sp_arg) {
   // naked: rdi = result, rsi = pc, rdx = sp_arg = F
   __asm__ __volatile__(
@@ -417,7 +434,7 @@ extern "C" void volatile ContinueAfterReturnTrap(oop result, char* pc, char* sp)
 // but loading the NLR register triple; pc is the send site's NLR entry
 // (sendDesc + non_local_return_offset), exactly where F's unpatched NLR
 // epilogue would have gone.
-extern "C" __attribute__((naked, noreturn))
+extern "C" NAKED_GLUE_NORETURN
 void ReturnTrapNLR_resume(char* pc, char* sp_arg, oop result,
                           frame* home, smi homeID) {
   // naked: rdi = pc, rsi = F, rdx = result, rcx = home, r8 = homeID
@@ -524,7 +541,7 @@ extern "C" {
 
 // Final hop: install the computed fp/sp and jump to the NLR target with
 // the NLR register convention (rax/rdx/rcx) loaded.
-extern "C" __attribute__((naked, noreturn))
+extern "C" NAKED_GLUE_NORETURN
 void ContinueNLR_jump(oop result, smi home, int32 homeID,
                       char* target, frame* new_fp, char* new_sp) {
   // naked: rdi=result, rsi=home, rdx=homeID, rcx=target, r8=new_fp, r9=new_sp

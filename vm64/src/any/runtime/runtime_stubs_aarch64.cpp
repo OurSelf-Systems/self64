@@ -19,6 +19,23 @@
 
 # include "_runtime_aarch64.cpp.incl"
 
+// Naked glue functions reference the argument registers directly in raw
+// asm, which is only valid when the function is genuinely CALLED per the
+// ABI.  gcc treats naked functions as ordinary IPA material: it inlines
+// them into C callers (reusing "dead" argument registers as scratch -- a
+// resume's continuation pc became &processSemaphore) and, blocked from
+// inlining, emits constant-propagated clones (.constprop.0) with modified
+// signatures that break the register protocol just as thoroughly.  noipa
+// (gcc 8+) turns all of that off; clang never inlines naked functions and
+// does not know noipa.
+# if defined(__clang__)
+#   define NAKED_GLUE          __attribute__((naked, noinline))
+#   define NAKED_GLUE_NORETURN __attribute__((naked, noinline, noreturn))
+# else
+#   define NAKED_GLUE          __attribute__((naked, noipa))
+#   define NAKED_GLUE_NORETURN __attribute__((naked, noipa, noreturn))
+# endif
+
 
 // =====================================================================
 // Frame pointer access
@@ -188,7 +205,7 @@ extern "C" char* SwitchStack4(char* fn_start, char* newSP,
 
 extern "C" void ReturnOffTopOfProcess();
 
-extern "C" __attribute__((naked))
+extern "C" NAKED_GLUE
 void SetSPAndCall(char** callerSaveAddr, char** calleeSaveAddr,
                   bool init, bool8* semaphore, bool8 pcWasSet) {
   __asm__ __volatile__(
@@ -326,7 +343,7 @@ extern "C" oop MakeOld_stub(...) {
 
 extern bool8 processSemaphore;   // process.hh
 
-extern "C" __attribute__((naked)) void ReturnTrap() {
+extern "C" NAKED_GLUE void ReturnTrap() {
   __asm__ __volatile__(
     // A non-local return through a patched frame diverts to savedPC +
     // sendDesc::non_local_return_offset (+8): the frame's NLR epilogue does
@@ -382,7 +399,7 @@ extern "C" __attribute__((naked)) void ReturnTrap() {
 // Resume normal execution after a return trap: restore the caller's frame
 // pointer and stack, and branch to the continuation PC with the result in
 // x0.  Mirrors i386 ContinueAfterReturnTrap.  sp_arg is the patched frame F.
-extern "C" __attribute__((naked, noreturn))
+extern "C" NAKED_GLUE_NORETURN
 void ReturnTrap_resume(oop result, char* pc, char* sp_arg) {
   // naked: args are referenced directly by register (x0=result, x1=pc, x2=sp)
   // sp_arg (self_sp) is sp_of_patched_frame as formed by the trap stub:
@@ -412,7 +429,7 @@ extern "C" void ReturnTrap2() {
   fatal("ReturnTrap2 called without JIT");
 }
 
-extern "C" __attribute__((naked)) void PrimCallReturnTrap() {
+extern "C" NAKED_GLUE void PrimCallReturnTrap() {
   // Single-step debugger trap: the patched frame F is still active (a callee
   // returned into its send site).  The entry sp is running_sp + 8 when a C
   // prim returns (the true prim-call geometry) but running_sp when the
@@ -524,7 +541,7 @@ extern "C" void ProfilerTrap() {
 // have gone.  Same sp rounding as ReturnTrap_resume: the next 16-aligned
 // boundary above F is the frame's running sp for either trap convention.
 //  -- rca 6/26
-extern "C" __attribute__((naked, noreturn))
+extern "C" NAKED_GLUE_NORETURN
 void ReturnTrapNLR_resume(char* pc, char* sp_arg, oop result,
                           frame* home, smi homeID) {
   // naked: x0=pc, x1=sp_arg(F), x2=result, x3=home, x4=homeID
@@ -651,7 +668,7 @@ extern bool8 processSemaphore;   // process.hh
 
 // Final hop: install the computed fp/sp and branch to the NLR target.
 // x0..x2 already hold the NLR register convention values.
-extern "C" __attribute__((naked, noreturn))
+extern "C" NAKED_GLUE_NORETURN
 void ContinueNLR_jump(oop result, smi home, int32 homeID,
                       char* target, frame* new_fp, char* new_sp) {
   // naked: args are referenced directly by register (x0..x5)
@@ -674,22 +691,41 @@ static void ContinueNLR_unwind_and_jump(oop result, smi home, int32 homeID,
   if (x9 == NULL)
     fatal1("ContinueNLR: return PC %#lx not on the frame chain", match);
 
-  // Pop the matched record.  How much to pop depends on who built it:
-  // a JIT prologue record straddles the boundary -- its saved-lr word at
-  // [x9+8] is the caller's reserved lr-hole, so the sp just above it is
-  // x9+8, the caller's running sp.  An EnterSelf/C boundary record is a
-  // self-contained pair, so the sp above it is x9+16.  Disambiguate by
-  // content first: a patched return address only ever lives in a Self
-  // frame record (frame::patch_compiled_self_frame), even one a
-  // conversion rebuilt at 0 mod 16.  For unpatched matches fall back to
-  // parity, "the next 16-aligned boundary at or above x9+8" (same
-  // rounding as ReturnTrap_resume): JIT records are 8 mod 16, boundary
-  // records 0 mod 16.  A flat x9+16 left the JIT case 8-misaligned and
-  // tripped Apple's hardware sp-alignment check at the target's first
-  // sp-relative store (e.g. ReturnTrap+0x10).
-  char* new_sp = isPatchedReturnAddress(match)
-      ?  (char*)x9 + oopSize
-      :  (char*)(((uintptr_t)x9 + 16) & ~(uintptr_t)15);
+  // Pop the matched record.  Disambiguate by content first: a patched
+  // return address only ever lives in a Self frame record
+  // (frame::patch_compiled_self_frame), even one a conversion rebuilt at
+  // 0 mod 16; the trap's NLR entry expects sp = F.fp + 8.
+  //
+  // For an unpatched match inside compiled code, every possible matched
+  // record -- a compiled callee's straddling prologue record, a zone
+  // stub's hand-built boundary record (SendMessage_stub), or a C
+  // primitive's own prologue record (compiled Self calls prims with a
+  // direct blr) -- stores the compiled SENDER's fp in its [+0] word, and
+  // a compiled frame's running sp is pinned by its nmethod:
+  // sp = fp + 8 - frameSize.  Compute the landing sp from that, NOT from
+  // the record's address: the old record-relative answer ("next
+  // 16-aligned boundary at or above x9+8") is right for the straddling
+  // record (8 mod 16 -> x9+8), the hand-built stub record, and clang's
+  // top-of-frame prim records (both 0 mod 16 -> x9+16), but gcc builds a
+  // prim's record at the frame BOTTOM -- an entire dead prim frame below
+  // the Self caller's running sp -- so no offset from x9 can recover the
+  // landing sp there (this was the "one layer past PrimCallReturnTrap"
+  // gcc geometry failure that kept the SIC off on Linux/gcc).
+  //
+  // Outside compiled code the match is the EnterSelf boundary record
+  // (firstSelfFrame_returnPC, in the stub zone), a self-contained
+  // hand-built pair: the sp above it is x9+16.
+  char* new_sp;
+  if (isPatchedReturnAddress(match)) {
+    new_sp = (char*)x9 + oopSize;
+# if defined(FAST_COMPILER) || defined(SIC_COMPILER)
+  } else if (Memory->code->contains(match)) {
+    nmethod* nm = nmethod::findNMethod(match);
+    new_sp = x9[0] + oopSize - nm->frameSize() * oopSize;
+# endif
+  } else {
+    new_sp = (char*)(((uintptr_t)x9 + 16) & ~(uintptr_t)15);
+  }
   ContinueNLR_jump(NLRResultFromC, NLRHomeFromC, NLRHomeIDFromC,
                    target, (frame*)x9[0], new_sp);
   ShouldNotReachHere();
