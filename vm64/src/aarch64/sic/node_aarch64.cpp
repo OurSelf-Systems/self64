@@ -16,7 +16,8 @@ static void unimplemented_gen(const char* who) {
   fatal1("aarch64 SIC code generation not yet implemented: %s", who);
 }
 
-static void emit_desc_call_head();
+static void emit_desc_call_head(Location callee = x16);
+static Location load_prim_boundary_stub();
 static void gen_SPLimit_test();
 
   // Frame protocol (see frame_format_aarch64.hh): the caller leaves a hole
@@ -438,7 +439,9 @@ static void gen_SPLimit_test();
     theAssembler->mov(x0, Temp1);                       // C args: (block, fp)
     theAssembler->mov(x1, fp);
 
-    emit_desc_call_head();
+    // through the PrimBoundary trapdoor: CreateBlock is a C call from
+    // compiled code, so it needs the canonical boundary record too
+    emit_desc_call_head(load_prim_boundary_stub());
     Label past(theAssembler->printing);
     theAssembler->b(&past);                        // @0
     theAssembler->Data(mask());                    // @4
@@ -831,7 +834,13 @@ static void gen_SPLimit_test();
       theAssembler->str(x16, SP, (i - 8) * oopSize);
     }
 
-    emit_desc_call_head();
+    // Through the PrimBoundary trapdoor (canonical boundary record), except
+    // for prims with stack-passed C args: the stub's 16-byte push would sit
+    // between the args just marshaled at [sp..] and the prim's entry sp, so
+    // those keep the direct call and the C compiler's own record (the
+    // return-trap scan and ContinueNLR's nmethod-pinned landing sp still
+    // handle that geometry).
+    emit_desc_call_head(nstack ? x16 : load_prim_boundary_stub());
     Label past_nlr(theAssembler->printing);
     theAssembler->b(&past_nlr);                    // @0
     theAssembler->Data(mask());                    // @4 used registers for GC
@@ -860,12 +869,29 @@ static void gen_SPLimit_test();
   // 8-byte target word at retPC+16 that the ldr/blr pair below calls
   // through.  Both real sends and primitive calls use it, so
   // sendDesc_from_addrDesc_addr works uniformly.
+  //
+  // callee selects who is blr'd: sends and >8-C-arg prims call the target
+  // word itself (x16); ordinary prim and block-clone calls load the
+  // PrimBoundary trapdoor into x17 first and call THAT with the primitive
+  // still in x16 -- the stub hand-builds the Self->C boundary frame record
+  // at running_sp - 16, where every mixed-mode walk expects it, instead of
+  // leaving the record's position to the C compiler's frame convention
+  // (clang: top of the prim frame, right there; gcc: bottom, an entire
+  // frame lower -- which corrupted every walk past an outstanding prim
+  // call and kept the SIC off on Linux/gcc).
 
-  static void emit_desc_call_head() {
+  static void emit_desc_call_head(Location callee) {
     Assembler* a = theAssembler;
     a->align(8);                       // retPC (after blr) lands 8-aligned
     a->emit32(a64_ldr_lit(x16, 6));    // load target word at retPC+16
-    a->blr(x16);
+    a->blr(callee);
+  }
+
+  static Location load_prim_boundary_stub() {
+    extern char* aarch64_PrimBoundary_stub();
+    theAssembler->loadAddressLiteral(x17, (void*)aarch64_PrimBoundary_stub(),
+                                     VMAddressOperand);
+    return x17;
   }
 
   void CallNode::nlrCode() {

@@ -366,13 +366,20 @@ void frame::save_outgoing_arguments() {
       // A patched frame's outgoing-args area is not always a valid oop
       // snapshot: for some frames these slots hold a non-object value (a
       // collected/never-live arg, or a reused slot).  The i386 path asserts
-      // arg->verify_oop(); here we must not store a bogus new-space pointer,
-      // or the scavenger crashes when this GC-visited vector is later scanned
-      // (it would forward a pointer whose target has no valid map).  Substitute
-      // nil for anything that isn't a real oop.  -- rca 6/26
-      if (e->is_mem() && Memory->should_scavenge(memOop(e))
-          && !memOop(e)->is_forwarded()
-          && (memOop(e)->addr()->_map == NULL
+      // arg->verify_oop(); here we must not store a bogus pointer, or the
+      // GC crashes when this GC-visited vector is later scanned.  Substitute
+      // nil for any mem-tagged word that does not point at a real object
+      // header: stale C-stack residue can be the address of a byte-aligned
+      // VM global (CheckAssertions's odd address mem-tags it -- the full
+      // GC's oTable::add died on it), or a derived pointer into an object's
+      // interior or a bytes part (the full GC's mark cascade then reads a
+      // data word as the map and jumps through it).  A real memOop sits in
+      // an objs area and its mark slot holds a markOop; an unscavenged
+      // new-space clone can still be map-less, so accept only a set map.
+      // -- rca 6/26, 7/26
+      if (e->is_mem()
+          && (!Memory->is_obj_heap((oop*)memOop(e)->addr())
+              || memOop(e)->addr()->_map == NULL
               || !oop(memOop(e)->addr()->_mark)->is_mark()))
         e = Memory->nilObj;
       v->obj_at_put(i, e);

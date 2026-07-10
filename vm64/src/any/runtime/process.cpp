@@ -1373,24 +1373,50 @@ void Process::clearWatermark() {
 }
 
 
+// A top compiled activation with an outstanding C call appears on the
+// frame chain as the C callee's prologue record P -- a content-perfect
+// copy of the activation's canonical frame object ({caller fp, zone
+// return PC}) -- while canonical vframeOops name the frame object at the
+// callee-record slot, running_sp - 8.  WHERE the C compiler leaves P is
+// convention-dependent: clang builds the record at the top of its frame,
+// one word below the canonical slot (the old hard-coded P+8 alias); gcc
+// builds it at the frame BOTTOM, a whole dead C frame below.  Recover
+// the canonical slot from P's content instead of its address: [P+0] is
+// the compiled caller's fp and [P+8] its return PC, and a compiled
+// frame's running sp is pinned by its nmethod (sp = fp + 8 - frameSize),
+// so the canonical slot is fp - frameSize.  For a real compiled callee's
+// prologue record this computation is the identity, so it cannot name a
+// different activation. -- rca
+static frame* canonical_frame_alias(frame* f) {
+# if defined(FAST_COMPILER) || defined(SIC_COMPILER)
+  char* pc = ((char**)f)[saved_pc_offset];
+  if (!Memory->code->contains(pc)) return f;   // not a compiled record
+  char* caller_fp = ((char**)f)[saved_bp_offset];
+  nmethod* nm = nmethod::findNMethod(pc);
+  return (frame*)(caller_fp - nm->frameSize() * oopSize);
+# else
+  return f;  // interpreter-only: no compiled records
+# endif
+}
+
+
 // called to arrange to regain control in future to kill
 //  any vfos that may be left.
 // Assumes procObj vframeList is non-null
 
 void Process::setWatermark( abstract_vframe* currentVF ) {
-  
+
   frame* current = currentVF->fr;
   vframeOop first = procObj->vframeList()->next();
 
-  // aarch64: when the top compiled activation has an outstanding C call, the
-  // walk hands us the C callee's record P -- a content-perfect copy of the
-  // activation's object at P+8 (walks through P work; the object's own [+0]
-  // is clobbered by the C record's saved lr).  A vframeOop naming exactly
-  // P+8 is therefore THIS activation, not one above it: take the
-  // current-frame branch, whose walks start from P and stay safe.  No two
-  // real frames can be one word apart. -- rca
-  bool aliasedTop = (char*)first->locals() == (char*)current + oopSize
-                    &&  !current->is_interpreted_self_frame();
+  // A vframeOop naming exactly the canonical slot of the record the walk
+  // handed us is THIS activation, not one above it: take the
+  // current-frame branch, whose walks start from the record and stay
+  // safe.  (See canonical_frame_alias above; identity for real records,
+  // and no two real frames can be one word apart.) -- rca
+  bool aliasedTop = !current->is_interpreted_self_frame()
+                    &&  first->locals() != current
+                    &&  first->locals() == canonical_frame_alias(current);
 
   if (first->is_above(currentVF->fr) && !aliasedTop) {
 
@@ -1495,12 +1521,14 @@ bool Process::verifyVFrameList() {
       frame* f = last_self_frame(true);
       // aarch64: a top frame with an outstanding C call appears on the
       // chain as the C callee's record P, while the canonical vframeOop
-      // names the frame object at P+8 (same activation; see setWatermark's
-      // alias handling).  Accept that alias instead of stepping past it.
+      // names the frame object at P's canonical slot (same activation;
+      // see canonical_frame_alias above setWatermark).  Accept that
+      // alias instead of stepping past it.
       bool aliased = false;
       while (l->is_above(f)) {
-        if ((char*)l->locals() == (char*)f + oopSize
-            &&  !f->is_interpreted_self_frame()) { aliased = true; break; }
+        if (!f->is_interpreted_self_frame()
+            &&  l->locals() != f
+            &&  l->locals() == canonical_frame_alias(f)) { aliased = true; break; }
         f = f->sender();
       }
       if (!aliased && !l->is_equal(f)) {

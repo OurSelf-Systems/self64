@@ -844,6 +844,13 @@ void universe::setDepsMap(nmln *deps, slotsMapDeps *m) {
 
 nmln* universe::allocateSlotDeps(slotsMapDeps *m) {
   char *d= code->allocateDeps(m->length_slots() * sizeof(nmln) + sizeof(m));
+  // allocateDeps returns NULL when its reclamation loop cannot free enough
+  // dependency space; unchecked, deps became (nmln*)8 and setDepsMap wrote
+  // through address 0 (silent SEGV mid-world-build under heavy tiered
+  // code-cache pressure).  Fail loudly instead.
+  if (d == NULL)
+    fatal("out of nmethod-dependency (dZone) space and reclamation "
+          "could not free enough; consider a larger code cache");
   nmln *deps= (nmln*)(d + sizeof(m));
   code->setDepsMap(deps, m);
   return deps;
