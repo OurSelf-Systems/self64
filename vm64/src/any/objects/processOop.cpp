@@ -222,6 +222,13 @@ void processOopClass::TWAINS_await_signal() {
   do {
     // wait for any interrupt
     SignalInterface::wait_for_any();
+    // With the GUI console (macOS Finder launch), the event queue must be
+    // pumped while the world idles: a keystroke only reaches the console's
+    // pty via keyDown, which needs the pump -- without this, the world
+    // waits for stdin that can never arrive.  Timer signals end the
+    // wait_for_any sleep, so this runs every tick.  No-op elsewhere.
+    { extern bool VMConsoleActive;
+      if (VMConsoleActive) OS::check_events(); }
     // The while loop is necessary for debugging: sigpause
     // ends after a ^C even if gdb doesn't pass the signal.
   } while ( preemptCause == cNoCause );

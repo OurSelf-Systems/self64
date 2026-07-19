@@ -128,6 +128,17 @@ set_source_files_properties(${OSX_ICON_FILES} PROPERTIES MACOSX_PACKAGE_LOCATION
 # include the icns files in the target
 list(APPEND SRC ${OSX_ICON_FILES})
 
+# Optionally ship a world in the bundle so double-clicking Self.app starts
+# it without arguments (see osx_choose_world_for_finder_launch in
+# quartzWindow.mm, which prefers a snapshot named Self.snap64).
+set(SELF_OSX_BUNDLE_SNAPSHOT "" CACHE FILEPATH
+  "Snapshot (.snap64) copied into Self.app/Contents/Resources at build time")
+if(SELF_OSX_BUNDLE_SNAPSHOT)
+  set_source_files_properties(${SELF_OSX_BUNDLE_SNAPSHOT}
+    PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+  list(APPEND SRC ${SELF_OSX_BUNDLE_SNAPSHOT})
+endif()
+
 
 
 macro(add_framework_to_list listVar framework)

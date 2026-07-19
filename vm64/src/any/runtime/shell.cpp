@@ -5,6 +5,8 @@
 
 # pragma implementation "shell.hh"
 # include "_shell.cpp.incl"
+# include <unistd.h>       // usleep, for the RunningWithoutConsole park loop
+# include <sys/select.h>   // select, for vm_console_block_until_input
 
 oop evalExpressions(Scanner* scanner) {
   // evaluate expressions until scanner is at EOF or an error occurs
@@ -78,6 +80,31 @@ oop eval(const char* expression, const char* fn) {
 
 static char* spyLogFile= NULL;
 char* startUpSelfFile= NULL;
+
+// Set when launched from the Finder (macOS app bundle): stdin is /dev/null,
+// so the read-eval-print loop must park instead of quitting on EOF.
+bool RunningWithoutConsole = false;
+
+// Set when a GUI console window (quartzWindow.mm) has spliced a pty over
+// fds 0/1/2: the REPL runs normally, but waits for input via
+// vm_console_block_until_input so events keep pumping while it is idle.
+bool VMConsoleActive = false;
+
+void vm_console_block_until_input() {
+  // Wait for fd 0 (the console pty) to become readable, pumping GUI events
+  // in between so the console stays live even when no world is running.
+  // Called by InteractiveScanner::read_next_char when VMConsoleActive.
+  for (;;) {
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(0, &fds);
+    struct timeval tv;
+    tv.tv_sec  = 0;
+    tv.tv_usec = 100 * 1000;
+    if (select(1, &fds, NULL, NULL, &tv) > 0) return;
+    OS::check_events();
+  }
+}
 static bool run_vm_tests_flag = false;
 bool print_vm_version = false;
 bool ForceFrequentScavengesViaSmallNewSpace = false;
@@ -255,6 +282,20 @@ void run_the_VM() {
     eval("snapshotAction postRead", "<postRead Snapshot>");
   }
 
+  if (RunningWithoutConsole && !VMConsoleActive) {
+    // Launched from the Finder but the console window could not be set up:
+    // stdin is /dev/null, so the loop below would read EOF at once and take
+    // the VM down under the running world.  Park this process instead; the
+    // world shuts down via primitives, and the pump lets Quit from the Dock
+    // through even when no world is running.  (With the console active the
+    // normal REPL below runs, reading the console's pty.)
+    for (;;) {
+      processes->idle = true;
+      OS::check_events();
+      usleep(100 * 1000);
+    }
+  }
+
   // The read-eval-print loop
   for (;;) {
     ResourceMark m;
@@ -325,7 +366,17 @@ int main(int argc, char *argv[]) {
   OS::enable_core_dumps();
 
   processArguments(argc, (const char **)argv);
-  
+
+# if defined(QUARTZ_LIB) && defined(__aarch64__)
+  // Double-clicked in the Finder?  Pick the world (dropped snapshot,
+  // bundled snapshot, or open panel) before the universe reads WorldName
+  // in init_globals().
+  {
+    extern void osx_choose_world_for_finder_launch();
+    osx_choose_world_for_finder_launch();
+  }
+# endif
+
   TrackCHeapInMonitor::reset();
   init_globals();
   set_flags_for_platform(print_vm_version);
@@ -349,7 +400,7 @@ int main(int argc, char *argv[]) {
 # ifdef EXPERIMENT_WITH_APPLE_EVENTS
   extern void handle_dropped_snapshot();
   handle_dropped_snapshot();
-# endif  
+# endif
   
   vmProcess = new Process(NULL, SelfStackLimit);
   processes->startVMProcess();

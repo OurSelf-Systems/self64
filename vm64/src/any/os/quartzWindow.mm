@@ -466,6 +466,10 @@ static void blitIOSurfaceToView(SelfContentView* view, IOSurfaceRef surface) {
 
 static bool cocoa_initialized = false;
 
+// Diagnostic counter for the console test harness (SELF_TEST_DUMP_CONSOLE):
+// how often the event queue has actually been pumped.
+long g_quartz_pump_count = 0;
+
 static void ensure_cocoa_initialized() {
   if (cocoa_initialized) return;
   cocoa_initialized = true;
@@ -1175,6 +1179,7 @@ void QuartzWindow::check_carbon_events() {
 
   // On Cocoa, pump the event loop briefly
   @autoreleasepool {
+    g_quartz_pump_count++;
     BlockGlueFlag f(quartz_semaphore);
     for (;;) {
       if (system_is_sleeping) break;
@@ -1352,6 +1357,587 @@ OpaqueATSUTextLayout::~OpaqueATSUTextLayout() {
 
 OpaqueATSUStyle::~OpaqueATSUStyle() {
     if (font) CFRelease(font);
+}
+
+
+// ======================================================================
+// VM console window
+// ======================================================================
+//
+// A terminal-ish window for the VM prompt and the world's shell, used when
+// Self.app is launched from the Finder and so has no real terminal.  A pty
+// is spliced over fds 0/1/2: the completely unmodified REPL and Self-level
+// shell read and print through it (stdin never reaches EOF, isatty(0) is
+// true, and the tty line discipline provides echo and line editing).  The
+// window appends the pty master's output and feeds keystrokes back into it.
+// Everything runs on the VM's own (initial) thread: output is drained by a
+// run-loop timer, which fires whenever anything pumps events -- the world's
+// event loop, a modal panel, or the REPL's own wait loop (see
+// vm_console_block_until_input in shell.cpp).
+
+#include <util.h>       // openpty
+#include <sys/ioctl.h>
+#include <fcntl.h>
+#include <ctype.h>
+#include <float.h>
+
+extern bool VMConsoleActive;         // defined in shell.cpp
+
+// Test-harness counters (see SELF_TEST_DUMP_CONSOLE below).
+extern long g_quartz_pump_count;
+static long g_console_key_bytes   = 0;
+static long g_console_drain_bytes = 0;
+long g_console_inject_sched = 0;
+long g_console_inject_fired = 0;
+
+@interface SelfVMConsoleView : NSTextView {
+ @public
+  int masterFD;
+}
+@end
+
+@implementation SelfVMConsoleView
+
+- (void)keyDown: (NSEvent*)e {
+  if ([e modifierFlags] & NSEventModifierFlagCommand) {
+    [super keyDown:e];   // menu key equivalents
+    return;
+  }
+  NSString* chars = [e characters];
+  if ([chars length] == 0) return;
+  unichar u = [chars characterAtIndex:0];
+  if (u >= 0xF700 && u <= 0xF8FF) return;   // arrows, function keys
+  const char* bytes = [chars UTF8String];
+  if (bytes) {
+    g_console_key_bytes += write(masterFD, bytes, strlen(bytes));
+    // The world watches stdin with O_ASYNC and sleeps until SIGIO.  A tty
+    // only sends SIGIO to its foreground process group, which this pty
+    // lacks when launchd made us a process-group leader (setsid/TIOCSCTTY
+    // then both fail).  We know exactly when input arrives -- we just
+    // wrote it -- so ring the bell ourselves.  A spurious ring is safe:
+    // the world re-polls a nonblocking fd and goes back to sleep.
+    raise(SIGIO);
+    if (strlen(bytes) == 1) [self maybeDeliverJobControlSignal:bytes[0]];
+  }
+}
+
+// ^C (and ^\) parity with a real terminal.  The line discipline recognizes
+// the INTR char (it already flushed the input queue when we wrote it above)
+// but its SIGINT goes to the pty's foreground process group -- nowhere,
+// under a Finder launch.  Deliver it ourselves, only under the conditions
+// a terminal would: ISIG enabled (raw-mode worlds read ^C as data), no
+// working foreground group (else the tty just delivered it and we must not
+// double-signal), and the VM's handler installed (raising SIGINT before
+// SignalInterface::initialize would terminate the process, its default).
+- (void)maybeDeliverJobControlSignal: (char)c {
+  struct termios tio;
+  if (tcgetattr(0, &tio) != 0) return;
+  if (!(tio.c_lflag & ISIG)) return;
+  if (tcgetpgrp(0) > 0) return;
+  int sig;
+  if      (tio.c_cc[VINTR] != _POSIX_VDISABLE && c == (char)tio.c_cc[VINTR]) sig = SIGINT;
+  else if (tio.c_cc[VQUIT] != _POSIX_VDISABLE && c == (char)tio.c_cc[VQUIT]) sig = SIGQUIT;
+  else return;
+  struct sigaction cur;
+  if (sigaction(sig, NULL, &cur) != 0) return;
+  if (cur.sa_handler == SIG_DFL || cur.sa_handler == SIG_IGN) return;
+  raise(sig);
+}
+
+- (void)paste: (id)sender {
+  NSString* s = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
+  if (!s) return;
+  const char* bytes = [s UTF8String];
+  if (bytes) {
+    write(masterFD, bytes, strlen(bytes));
+    raise(SIGIO);   // see keyDown
+  }
+}
+
+@end
+
+@interface SelfVMConsole : NSObject <NSWindowDelegate> {
+ @public
+  NSWindow*          window;
+  SelfVMConsoleView* view;
+  int                masterFD;
+  BOOL               inEscape;    // swallowing an ANSI escape sequence
+}
+@end
+
+@implementation SelfVMConsole
+
+- (id)initWithMasterFD: (int)fd {
+  if (self = [super init]) {
+    masterFD = fd;
+    [self buildWindow];
+    [self buildMenu];
+    // Drain in every common run-loop mode so output appears during modal
+    // panels (the snapshot chooser) as well as normal event pumping.
+    NSTimer* t = [NSTimer timerWithTimeInterval:0.05
+                                         target:self
+                                       selector:@selector(drain:)
+                                       userInfo:nil
+                                        repeats:YES];
+    [[NSRunLoop currentRunLoop] addTimer:t forMode:NSRunLoopCommonModes];
+
+    [self dumpForTestHarness];   // baseline dump before any timer fires
+
+    // Test harness: with SELF_TEST_TYPE=<text> set, feed <text> through the
+    // console's keyDown path 6 seconds in (after the world has booted), as
+    // if typed.  SELF_TEST_TYPE_LATE=<text> types 14 seconds in, to test
+    // interaction sequences (e.g. ^C, then answering the interrupt menu).
+    // Exercises keystroke -> pty -> world -> output -> display.
+    [self scheduleTestTyping:getenv("SELF_TEST_TYPE")      after:6.0];
+    [self scheduleTestTyping:getenv("SELF_TEST_TYPE_LATE") after:14.0];
+  }
+  return self;
+}
+
+- (void)scheduleTestTyping: (const char*)toType after: (double)seconds {
+  if (!toType) return;
+  NSString* text = [NSString stringWithUTF8String:toType];
+  extern long g_console_inject_sched, g_console_inject_fired;
+  g_console_inject_sched++;
+  NSTimer* it = [NSTimer timerWithTimeInterval:seconds
+                                       repeats:NO
+                                         block:^(NSTimer* tt){
+    g_console_inject_fired++;
+    for (NSUInteger i = 0; i < [text length]; i++) {
+      NSString* ch = [text substringWithRange:NSMakeRange(i, 1)];
+      NSEvent* ev = [NSEvent keyEventWithType:NSEventTypeKeyDown
+                                     location:NSZeroPoint
+                                modifierFlags:0
+                                    timestamp:0
+                                 windowNumber:[window windowNumber]
+                                      context:nil
+                                   characters:ch
+                  charactersIgnoringModifiers:ch
+                                    isARepeat:NO
+                                      keyCode:0];
+      [view keyDown:ev];
+    }
+  }];
+  [[NSRunLoop currentRunLoop] addTimer:it forMode:NSRunLoopCommonModes];
+}
+
+- (void)buildWindow {
+  NSRect frame = NSMakeRect(120, 140, 720, 440);
+  window = [[NSWindow alloc]
+      initWithContentRect:frame
+                styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                           NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
+                  backing:NSBackingStoreBuffered
+                    defer:NO];
+  [window setTitle:@"Self Console"];
+  [window setReleasedWhenClosed:NO];
+  [window setDelegate:self];
+
+  NSScrollView* scroll = [[NSScrollView alloc] initWithFrame:[[window contentView] bounds]];
+  [scroll setHasVerticalScroller:YES];
+  [scroll setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+
+  NSSize contentSize = [scroll contentSize];
+  view = [[SelfVMConsoleView alloc] initWithFrame:NSMakeRect(0, 0, contentSize.width, contentSize.height)];
+  view->masterFD = masterFD;
+  [view setEditable:NO];       // typing goes through keyDown to the pty
+  [view setSelectable:YES];
+  [view setBackgroundColor:[NSColor textBackgroundColor]];
+  [view setMinSize:NSMakeSize(0, contentSize.height)];
+  [view setMaxSize:NSMakeSize(FLT_MAX, FLT_MAX)];
+  [view setVerticallyResizable:YES];
+  [view setHorizontallyResizable:NO];
+  [view setAutoresizingMask:NSViewWidthSizable];
+  [[view textContainer] setContainerSize:NSMakeSize(contentSize.width, FLT_MAX)];
+  [[view textContainer] setWidthTracksTextView:YES];
+
+  [scroll setDocumentView:view];
+  [[window contentView] addSubview:scroll];
+  [window makeFirstResponder:view];
+  [window makeKeyAndOrderFront:nil];
+}
+
+- (void)buildMenu {
+  // Replaces the empty menu set in ensure_cocoa_initialized.
+  NSMenu* mainMenu = [[NSMenu alloc] init];
+
+  NSMenuItem* appItem = [mainMenu addItemWithTitle:@"Self" action:nil keyEquivalent:@""];
+  NSMenu* appMenu = [[NSMenu alloc] init];
+  NSMenuItem* show = [appMenu addItemWithTitle:@"Show Console"
+                                        action:@selector(show:)
+                                 keyEquivalent:@"k"];
+  [show setTarget:self];
+  [appMenu addItem:[NSMenuItem separatorItem]];
+  [appMenu addItemWithTitle:@"Quit Self" action:@selector(terminate:) keyEquivalent:@"q"];
+  [appItem setSubmenu:appMenu];
+
+  NSMenuItem* editItem = [mainMenu addItemWithTitle:@"Edit" action:nil keyEquivalent:@""];
+  NSMenu* editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+  [editMenu addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@"c"];
+  [editMenu addItemWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@"v"];
+  [editMenu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
+  [editItem setSubmenu:editMenu];
+
+  [NSApp setMainMenu:mainMenu];
+}
+
+- (void)show: (id)sender {
+  [window makeKeyAndOrderFront:sender];
+}
+
+- (BOOL)windowShouldClose: (NSWindow*)w {
+  [window orderOut:nil];   // hide; reopen via Self > Show Console.  Closing
+  return NO;               // for real would EOF the pty and kill the REPL.
+}
+
+- (void)drain: (NSTimer*)t {
+  char buf[4096];
+  for (;;) {
+    ssize_t n = read(masterFD, buf, sizeof(buf));
+    if (n <= 0) break;
+    g_console_drain_bytes += n;
+    [self appendOutput:buf length:(int)n];
+  }
+  [self dumpForTestHarness];
+}
+
+// Test harness: with SELF_TEST_DUMP_CONSOLE=<path> set, keep writing the
+// link counters and the console's current text to <path>, so scripts can
+// observe what the console shows without a screen.  Inert otherwise.
+- (void)dumpForTestHarness {
+  static const char* dumpPath = getenv("SELF_TEST_DUMP_CONSOLE");
+  if (!dumpPath) return;
+  FILE* f = fopen(dumpPath, "w");
+  if (!f) return;
+  fprintf(f, "pumps=%ld keyBytes=%ld drainBytes=%ld sched=%ld fired=%ld keyWindow=%d responder=%s\n",
+          g_quartz_pump_count, g_console_key_bytes, g_console_drain_bytes,
+          g_console_inject_sched, g_console_inject_fired,
+          (int)[window isKeyWindow],
+          [[[[window firstResponder] class] description] UTF8String]);
+
+  // State of fd 0 (the pty slave): what mode has the world put it in,
+  // and is typed input sitting in it unread?
+  struct termios tio;
+  if (tcgetattr(0, &tio) == 0) {
+    fprintf(f, "fd0 termios: ICANON=%d ECHO=%d ICRNL=%d\n",
+            (int)!!(tio.c_lflag & ICANON),
+            (int)!!(tio.c_lflag & ECHO),
+            (int)!!(tio.c_iflag & ICRNL));
+  } else {
+    fprintf(f, "fd0 termios: tcgetattr failed errno=%d\n", errno);
+  }
+  int fl = fcntl(0, F_GETFL, 0);
+  fprintf(f, "fd0 flags: O_ASYNC=%d O_NONBLOCK=%d owner=%d pid=%d pgrp=%d tcgetpgrp=%d\n",
+          fl < 0 ? -1 : (int)!!(fl & O_ASYNC),
+          fl < 0 ? -1 : (int)!!(fl & O_NONBLOCK),
+          fcntl(0, F_GETOWN, 0), (int)getpid(), (int)getpgrp(),
+          (int)tcgetpgrp(0));
+  int pending = -1;
+  ioctl(0, FIONREAD, &pending);
+  fprintf(f, "fd0 pending bytes: %d\n", pending);
+
+  const char* text = [[view string] UTF8String];
+  if (text) fputs(text, f);
+  fclose(f);
+}
+
+- (void)appendOutput: (const char*)buf length: (int)n {
+  static NSDictionary* attrs = nil;
+  if (!attrs) {
+    attrs = [[NSDictionary alloc] initWithObjectsAndKeys:
+        [NSFont monospacedSystemFontOfSize:12.0 weight:NSFontWeightRegular],
+        NSFontAttributeName,
+        [NSColor textColor], NSForegroundColorAttributeName,
+        nil];
+  }
+  NSTextStorage* ts = [view textStorage];
+  NSMutableData* run = [NSMutableData data];
+
+# define FLUSH_RUN                                                            \
+    if ([run length]) {                                                       \
+      NSString* s = [[[NSString alloc] initWithData:run                       \
+                       encoding:NSUTF8StringEncoding] autorelease];           \
+      if (!s) s = [[[NSString alloc] initWithData:run                         \
+                     encoding:NSISOLatin1StringEncoding] autorelease];        \
+      if (s) [ts appendAttributedString:                                      \
+               [[[NSAttributedString alloc] initWithString:s                  \
+                                                attributes:attrs] autorelease]]; \
+      [run setLength:0];                                                      \
+    }
+
+  [ts beginEditing];
+  for (int i = 0; i < n; i++) {
+    unsigned char b = buf[i];
+    if (inEscape)    { if (isalpha(b)) inEscape = NO;  continue; }
+    if (b == 0x1B)   { FLUSH_RUN; inEscape = YES;      continue; }
+    if (b == '\r')   { FLUSH_RUN;                      continue; }
+    if (b == '\b')   {                    // ECHOE erase: "\b \b" nets one delete
+      FLUSH_RUN;
+      if ([ts length])
+        [ts deleteCharactersInRange:NSMakeRange([ts length] - 1, 1)];
+      continue;
+    }
+    [run appendBytes:&b length:1];
+  }
+  FLUSH_RUN
+# undef FLUSH_RUN
+  [ts endEditing];
+  [view scrollRangeToVisible:NSMakeRange([ts length], 0)];
+}
+
+@end
+
+static SelfVMConsole* TheVMConsole = nil;
+
+void osx_open_vm_console() {
+  int master, slave;
+  if (openpty(&master, &slave, NULL, NULL, NULL) != 0)
+    return;   // no console; run_the_VM's park loop is the fallback
+
+  // Set the window size before the pty has a foreground process group:
+  // once it has one (below), TIOCSWINSZ raises SIGWINCH at it, and this
+  // early in main a signal is at best noise.
+  struct winsize ws;
+  memset(&ws, 0, sizeof(ws));
+  ws.ws_row = 24;
+  ws.ws_col = 80;
+  ioctl(master, TIOCSWINSZ, &ws);
+
+  // Make the pty our controlling terminal, with us as its foreground
+  // process group.  BSD ttys deliver async-I/O wakeups (SIGIO) to the
+  // tty's foreground process group; without this there is no foreground
+  // group, so the world's O_ASYNC stdin never rings and typed lines sit
+  // unread in the slave forever.  (Same dance as the 2012 Cocoa console's
+  // Pty.m.)  Failures are tolerated: which of setsid/TIOCSCTTY applies
+  // depends on how we were launched.
+  //
+  // SIGTTOU/SIGTTIN must be ignored during the takeover: tcsetpgrp from a
+  // not-yet-foreground group raises SIGTTOU, which loops forever in the
+  // VM's signal forwarding -- and ignoring it also makes the kernel permit
+  // the call.  Save/restore via sigaction to preserve handler flags.
+  struct sigaction ign, oldTTOU, oldTTIN;
+  memset(&ign, 0, sizeof(ign));
+  ign.sa_handler = SIG_IGN;
+  sigaction(SIGTTOU, &ign, &oldTTOU);
+  sigaction(SIGTTIN, &ign, &oldTTIN);
+
+  setsid();
+  ioctl(slave, TIOCSCTTY, 0);
+  tcsetpgrp(slave, getpgrp());
+
+  sigaction(SIGTTOU, &oldTTOU, NULL);
+  sigaction(SIGTTIN, &oldTTIN, NULL);
+
+  lprintf("Self: opening console window\n");   // last words to the old stderr
+  fflush(stdout);
+  fflush(stderr);
+  dup2(slave, 0);
+  dup2(slave, 1);
+  dup2(slave, 2);
+  if (slave > 2) close(slave);
+  // stdout picked its buffering while aimed at /dev/null; unbuffer so
+  // output reaches the console as it is printed.
+  setvbuf(stdout, NULL, _IONBF, 0);
+  setvbuf(stderr, NULL, _IONBF, 0);
+  fcntl(master, F_SETFL, O_NONBLOCK);
+
+  TheVMConsole = [[SelfVMConsole alloc] initWithMasterFD:master];
+  VMConsoleActive = true;
+}
+
+
+// ======================================================================
+// Finder launch: choose a world when Self.app is opened by double-click
+// ======================================================================
+//
+// When launched from the Finder there is no terminal and no -s argument.
+// Before the universe reads WorldName, pick the world from (in order):
+//   1. a snapshot delivered by the Open Documents Apple Event
+//      (a snapshot dropped on the icon, or a double-clicked .snap64),
+//   2. a snapshot shipped in the bundle's Contents/Resources,
+//   3. an open panel; cancelling it quits.
+// Also sets RunningWithoutConsole so the REPL in shell.cpp parks instead
+// of reading EOF from /dev/null and shutting the VM down.
+
+#include <sys/stat.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+
+extern bool RunningWithoutConsole;   // defined in shell.cpp
+extern char* WorldName;              // universe.hh
+extern char* startUpSelfFile;        // shell.hh
+
+// Four-char Apple Event codes, spelled locally so we do not depend on
+// which Carbon-era headers happen to be visible in this file.
+enum {
+  selfAE_coreClass = 'aevt',   // kCoreEventClass
+  selfAE_openApp   = 'oapp',   // kAEOpenApplication
+  selfAE_openDocs  = 'odoc',   // kAEOpenDocuments
+  selfAE_keyDirect = '----',   // keyDirectObject
+};
+
+@interface SelfLaunchEventCollector : NSObject {
+ @public
+  BOOL            sawOpenApp;
+  BOOL            launchPhaseOver;
+  NSMutableArray* files;       // paths from odoc, launch phase only
+}
+@end
+
+@implementation SelfLaunchEventCollector
+
+- (id)init {
+  if (self = [super init]) {
+    files = [[NSMutableArray alloc] init];
+  }
+  return self;
+}
+
+- (void)handleOpenApp: (NSAppleEventDescriptor*)event
+       withReplyEvent: (NSAppleEventDescriptor*)reply {
+  sawOpenApp = YES;
+}
+
+- (void)handleOpenDocs: (NSAppleEventDescriptor*)event
+        withReplyEvent: (NSAppleEventDescriptor*)reply {
+  if (launchPhaseOver) return;  // a drop on the running app; one VM, one world
+  NSAppleEventDescriptor* list = [event paramDescriptorForKeyword:selfAE_keyDirect];
+  for (NSInteger i = 1; i <= [list numberOfItems]; i++) {
+    NSURL* url = [[list descriptorAtIndex:i] fileURLValue];
+    if (url) [files addObject:[url path]];
+  }
+}
+
+@end
+
+static NSString* snapshotInResources() {
+  NSBundle* bundle = [NSBundle mainBundle];
+  for (NSString* ext in @[@"snap64", @"snap"]) {
+    NSArray* found = [bundle pathsForResourcesOfType:ext inDirectory:nil];
+    if ([found count] == 0) continue;
+    for (NSString* p in found)  // prefer a snapshot literally named Self
+      if ([[[p lastPathComponent] stringByDeletingPathExtension]
+            isEqualToString:@"Self"]) return p;
+    return [found objectAtIndex:0];
+  }
+  return nil;
+}
+
+static bool isSnapshotPath(NSString* p) {
+  return [p hasSuffix:@".snap64"] || [p hasSuffix:@".snap"];
+}
+
+void osx_choose_world_for_finder_launch() {
+  // Only take over when actually launched by LaunchServices: inside an
+  // .app bundle, parented by launchd, stdin on /dev/null.  A plain
+  // command-line or CI invocation (tty, pipe or file on stdin, shell as
+  // parent) keeps the classic behavior.  SELF_BUNDLE_LAUNCH=1 forces the
+  // Finder path for testing from a terminal.
+  if (getenv("SELF_BUNDLE_LAUNCH") == NULL) {
+    if (getppid() != 1) return;
+    struct stat s0, sn;
+    if (fstat(0, &s0) != 0 || stat("/dev/null", &sn) != 0) return;
+    if (s0.st_dev != sn.st_dev || s0.st_ino != sn.st_ino) return;
+    if (![[[NSBundle mainBundle] bundlePath] hasSuffix:@".app"]) return;
+  }
+
+  RunningWithoutConsole = true;
+
+  @autoreleasepool {
+    ensure_cocoa_initialized();
+    osx_open_vm_console();   // REPL and world shell live here from now on
+  }
+
+  if (WorldName != NULL || startUpSelfFile != NULL)
+    return;  // explicit args, e.g. via `open Self.app --args -s foo.snap64`
+
+  @autoreleasepool {
+    // Install our handlers after finishLaunching so they replace, rather
+    // than get replaced by, NSApplication's defaults.  The launch Apple
+    // Event stays queued until pumped, so nothing is lost.
+    SelfLaunchEventCollector* collector = [[SelfLaunchEventCollector alloc] init];
+    NSAppleEventManager* aem = [NSAppleEventManager sharedAppleEventManager];
+    [aem setEventHandler:collector
+             andSelector:@selector(handleOpenDocs:withReplyEvent:)
+           forEventClass:selfAE_coreClass
+              andEventID:selfAE_openDocs];
+    [aem setEventHandler:collector
+             andSelector:@selector(handleOpenApp:withReplyEvent:)
+           forEventClass:selfAE_coreClass
+              andEventID:selfAE_openApp];
+
+    // LaunchServices sends exactly one of oapp/odoc right after launch;
+    // pump until it arrives (bounded, in case we were exec'd directly).
+    NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:2.0];
+    while (!collector->sawOpenApp && [collector->files count] == 0
+           && [deadline timeIntervalSinceNow] > 0) {
+      NSEvent* e = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                      untilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]
+                                         inMode:NSDefaultRunLoopMode
+                                        dequeue:YES];
+      if (e) [NSApp sendEvent:e];
+    }
+    collector->launchPhaseOver = YES;
+
+    NSString* world  = nil;
+    NSString* script = nil;
+    for (NSString* f in collector->files) {
+      if      (!world  && isSnapshotPath(f))      world  = f;
+      else if (!script && [f hasSuffix:@".self"]) script = f;
+    }
+
+    bool worldFromResources = false;
+    if (!world && !script) {
+      world = snapshotInResources();
+      worldFromResources = world != nil;
+    }
+
+    if (!world && !script) {
+#     pragma clang diagnostic push
+#     pragma clang diagnostic ignored "-Wdeprecated-declarations"
+      [NSApp activateIgnoringOtherApps:YES];
+      NSOpenPanel* panel = [NSOpenPanel openPanel];
+      [panel setMessage:@"Choose a Self snapshot (or script) to start"];
+      [panel setPrompt:@"Start"];
+      [panel setCanChooseFiles:YES];
+      [panel setCanChooseDirectories:NO];
+      [panel setAllowsMultipleSelection:NO];
+      [panel setAllowedFileTypes:@[@"snap64", @"snap", @"self"]];
+#     pragma clang diagnostic pop
+      if (getenv("SELF_TEST_CANCEL_CHOOSER") != NULL) {
+        // test hook: auto-cancel the panel shortly after it opens
+        NSTimer* t = [NSTimer timerWithTimeInterval:1.5
+                                            repeats:NO
+                                              block:^(NSTimer* tt){ [panel cancel:nil]; }];
+        [[NSRunLoop currentRunLoop] addTimer:t forMode:NSRunLoopCommonModes];
+      }
+      if ([panel runModal] == NSModalResponseOK) {
+        NSString* f = [[[panel URLs] objectAtIndex:0] path];
+        if ([f hasSuffix:@".self"]) script = f; else world = f;
+      }
+      // else: nothing chosen -- fall through with no world, and the REPL
+      // presents the bare VM# prompt in the console window.
+      // (If quitting here instead, use ::exit, NOT OS::terminate:
+      // init_globals() has not run yet, so exit_globals() would tear down
+      // subsystems that were never set up and hang.)
+    }
+
+    if (world)  WorldName       = strdup([world  fileSystemRepresentation]);
+    if (script) startUpSelfFile = strdup([script fileSystemRepresentation]);
+
+    // launchd starts us with cwd "/": neither writable (snapshot saves)
+    // nor where the world's relative paths point.  Move somewhere sane.
+    NSString* dir = ((world || script) && !worldFromResources)
+      ? [(world ? world : script) stringByDeletingLastPathComponent]
+      : NSHomeDirectory();
+    if (dir) ::chdir([dir fileSystemRepresentation]);
+
+    if (world)       lprintf("Self: starting world %s\n", WorldName);
+    if (script)      lprintf("Self: startup script %s\n", startUpSelfFile);
+    if (!world && !script)
+      lprintf("Self: no world chosen; starting the bare VM\n");
+  }
 }
 
 

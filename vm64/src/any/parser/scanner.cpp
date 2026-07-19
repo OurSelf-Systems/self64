@@ -342,9 +342,17 @@ Scanner::Scanner(FILE* source_file) {
 
 InteractiveScanner::InteractiveScanner() : Scanner(ScannerBufferSize) {}
 
+extern bool VMConsoleActive;   // shell.cpp: GUI console pty on fds 0/1/2
+
 fint InteractiveScanner::read_next_char() {
   char c;
   while (true) {
+    if (VMConsoleActive) {
+      // stdin is the GUI console's pty (quartzWindow.mm); wait for a line
+      // while pumping events so the console stays responsive at the prompt.
+      extern void vm_console_block_until_input();
+      vm_console_block_until_input();
+    }
     if (fread(&c, sizeof(char), 1, stdin)) return c;
     if (feof(stdin)) return EOF;
   }

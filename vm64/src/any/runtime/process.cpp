@@ -1832,6 +1832,14 @@ void interruptCheck() {
     // A profiler call InterruptedContext::setupPreemptionFromSignal to empty its filled buffer.
     profilers->handleOverflow();
   } else {
+    // With the GUI console, this once-per-tick slow path is where events
+    // get pumped while Self code is RUNNING -- the TWAINS pump only covers
+    // the idle scheduler.  Without this, any busy-wait on console input
+    // (e.g. the ^C interrupt menu's preemptReadLine, which polls stdin
+    // with scheduling suspended) spins forever: the keystrokes it waits
+    // for can only arrive through the pump.  No-op off macOS.
+    { extern bool VMConsoleActive;
+      if (VMConsoleActive) OS::check_events(); }
     handlePreemption();
   }
   if (currentProcess->isKillingOrDeoptimizing()) {

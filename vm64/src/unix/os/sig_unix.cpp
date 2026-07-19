@@ -211,6 +211,8 @@ void SignalInterface::unblock_synchronous_fault_signals() {
 
 
 static int32 ctrl_z_handler(int sig) {
+  if (InterruptedContext::the_interrupted_context == NULL)
+    return 0;   // too early; see signal_handler
   if (InterruptedContext::the_interrupted_context->forwarded_to_self_thread(sig))
     return 0;
   
@@ -237,6 +239,22 @@ static int32 ctrl_z_handler(int sig) {
 __attribute__((force_align_arg_pointer))
 #endif
 static void signal_handler(int sig, self_code_info_t *info, self_sig_context_t *scp) {
+  if (InterruptedContext::the_interrupted_context == NULL) {
+    // Handlers are installed by OS::init() at the top of main, but the
+    // interrupted context only exists after abort_init() in init_globals();
+    // a signal in between would loop forever in forwarded_to_self_thread
+    // on the NULL object.  Asynchronous signals (SIGIO from early console
+    // typing, SIGWINCH, ...) can safely be dropped this early; synchronous
+    // faults must crash properly rather than refault forever.
+    switch (sig) {
+     case SIGSEGV: case SIGBUS: case SIGILL: case SIGFPE:
+     case SIGTRAP: case SIGSYS: case SIGABRT:
+      signal(sig, SIG_DFL);
+      raise(sig);         // pending while masked; fires with SIG_DFL on return
+     default:
+      return;
+    }
+  }
   if (InterruptedContext::the_interrupted_context->forwarded_to_self_thread(sig))
     return;
  
