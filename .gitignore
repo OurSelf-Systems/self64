@@ -12,5 +12,7 @@
 build/
 build_rel/
 build_interp/
+build_release/
+build_reldbg/
 objects/glue/test*
 
