@@ -3,6 +3,9 @@
 *~
 *.snap
 *.snap.backup
+*.snap64
+*.snap64.backup
+*.snapshot
 *.old
 *.file_status
 *.xcuserdatad
