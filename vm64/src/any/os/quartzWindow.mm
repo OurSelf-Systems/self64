@@ -1454,6 +1454,14 @@ long g_console_inject_fired = 0;
   }
 }
 
+// The view is editable only so that it draws a caret.  Keystrokes never
+// reach the text system (keyDown above writes them to the pty), but drops
+// and key-binding actions would; refuse them all.  appendOutput: edits the
+// text storage directly and is not consulted here.
+- (BOOL)shouldChangeTextInRange: (NSRange)r replacementString: (NSString*)s {
+  return NO;
+}
+
 @end
 
 @interface SelfVMConsole : NSObject <NSWindowDelegate> {
@@ -1540,7 +1548,10 @@ long g_console_inject_fired = 0;
   NSSize contentSize = [scroll contentSize];
   view = [[SelfVMConsoleView alloc] initWithFrame:NSMakeRect(0, 0, contentSize.width, contentSize.height)];
   view->masterFD = masterFD;
-  [view setEditable:NO];       // typing goes through keyDown to the pty
+  // Editable, or NSTextView never draws its insertion point.  Typing still
+  // goes through keyDown to the pty: shouldChangeTextInRange: refuses every
+  // edit the text system itself would make.
+  [view setEditable:YES];
   [view setSelectable:YES];
   [view setBackgroundColor:[NSColor textBackgroundColor]];
   [view setMinSize:NSMakeSize(0, contentSize.height)];
@@ -1609,10 +1620,11 @@ long g_console_inject_fired = 0;
   if (!dumpPath) return;
   FILE* f = fopen(dumpPath, "w");
   if (!f) return;
-  fprintf(f, "pumps=%ld keyBytes=%ld drainBytes=%ld sched=%ld fired=%ld keyWindow=%d responder=%s\n",
+  fprintf(f, "pumps=%ld keyBytes=%ld drainBytes=%ld sched=%ld fired=%ld keyWindow=%d caret=%d responder=%s\n",
           g_quartz_pump_count, g_console_key_bytes, g_console_drain_bytes,
           g_console_inject_sched, g_console_inject_fired,
           (int)[window isKeyWindow],
+          (int)[view shouldDrawInsertionPoint],
           [[[[window firstResponder] class] description] UTF8String]);
 
   // State of fd 0 (the pty slave): what mode has the world put it in,
@@ -1682,6 +1694,11 @@ long g_console_inject_fired = 0;
   FLUSH_RUN
 # undef FLUSH_RUN
   [ts endEditing];
+  // Keep the caret at the end, where the cursor of a terminal would be --
+  // unless the user has selected text (for Copy), which output must not
+  // clobber.
+  if ([view selectedRange].length == 0)
+    [view setSelectedRange:NSMakeRange([ts length], 0)];
   [view scrollRangeToVisible:NSMakeRange([ts length], 0)];
 }
 
