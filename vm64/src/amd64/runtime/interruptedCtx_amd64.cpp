@@ -32,7 +32,7 @@ bool InterruptedContext::in_system_trap() {
 
 
 int InterruptedContext::system_trap() {
-  return int(NULL); // unimp for now
+  return 0; // unimp for now (was int(NULL); musl's C++11 NULL is nullptr, which won't cast to int)
 }
 
 

@@ -7,7 +7,9 @@
 # include "_lprintf.cpp.incl"
 
 # include <stdarg.h>
-# include <execinfo.h>
+# if !defined(__linux__) || defined(__GLIBC__)
+#   include <execinfo.h> // musl has no <execinfo.h>
+# endif
 
 static FILE* logFile = NULL;
 static char fname[80];

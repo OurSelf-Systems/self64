@@ -352,8 +352,11 @@ static int32 true_size_of_malloced_obj(int32* p) {
 
 #endif
 
-// Linux malloc allocates addresses with bit 31 set, this conflicts with Self oop marking
-# if TARGET_OS_VERSION == LINUX_VERSION
+// Linux malloc allocates addresses with bit 31 set, this conflicts with Self oop marking.
+// mallopt and __morecore are glibc-only; musl (Alpine) has neither, and on
+// 64-bit the C heap has no address-range constraint anyway (macOS and the
+// BSDs already run with high malloc addresses).
+# if TARGET_OS_VERSION == LINUX_VERSION  &&  defined(__GLIBC__)
     # include <malloc.h> // for mallopt
 # endif
 
@@ -364,7 +367,7 @@ const char *__je_malloc_conf = "dss:primary";
 # endif
 
 void malloc_init() {
-    # if TARGET_OS_VERSION == LINUX_VERSION
+    # if TARGET_OS_VERSION == LINUX_VERSION  &&  defined(__GLIBC__)
       mallopt(M_MMAP_MAX, 0); // if Linux malloc mmaps, we get bit 31 on, which conflicts with memOop marking
     # endif
     mallocReserve= (caddr_t)malloc(mallocReserveAmount);
@@ -448,7 +451,7 @@ void malloc_init() {
   
   // Linux: sbrk returns ponters with the high-order bit and Self objects
 
-  # if TARGET_OS_VERSION == LINUX_VERSION
+  # if TARGET_OS_VERSION == LINUX_VERSION  &&  defined(__GLIBC__)
   
     static void *self_morecore(ptrdiff_t n) {
       // try first way, if it doesn't work, try second way

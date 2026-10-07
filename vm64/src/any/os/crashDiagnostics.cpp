@@ -5,7 +5,16 @@
 
 # include "_crashDiagnostics.cpp.incl"
 
-# include <execinfo.h>
+# if defined(__linux__) && !defined(__GLIBC__)
+    // musl has no <execinfo.h> (Alpine dropped libexecinfo in 3.17). Stub the
+    // backtrace API: the hybrid trace degrades to its banners plus the
+    // "(backtrace_symbols failed)" note.
+    static int backtrace(void**, int) { return 0; }
+    static char** backtrace_symbols(void* const*, int) { return 0; }
+    static void backtrace_symbols_fd(void* const*, int, int) {}
+# else
+#   include <execinfo.h>
+# endif
 # include <dlfcn.h>
 # include <signal.h>
 # include <sys/utsname.h>
