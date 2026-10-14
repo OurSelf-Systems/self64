@@ -24,6 +24,16 @@ extern "C" int profil( char* /*buf*/,
   fatal("unimp mac");
   return 0;
 }
+# elif defined(__linux__) && !defined(__GLIBC__)
+// musl (Alpine) has no profil(2); glibc and the BSDs do. Stub it like macOS so
+// the SIC build links; flat profiling is simply unavailable there.
+extern "C" int profil( unsigned short* /*buf*/,
+            size_t   /*bufsiz*/,
+            unsigned long    /*offset*/,
+            unsigned int    /*scale*/ ) {
+  fatal("unimp musl");
+  return 0;
+}
 # elif TARGET_OS_FAMILY == UNIX_FAMILY
 /* Pick this up from header file:
   extern "C" void profil(unsigned short *buf,
