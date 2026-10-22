@@ -78,6 +78,359 @@ CGLayer* CGLayerCreateWithContext_wrap(CGContextRef context, float w, float h) {
 }
 
 
+// ui1-on-Quartz indexed-colour offscreen.  ui1 draws into an 8-bit *indexed*
+// framebuffer (so its colormap-animation / acetate / arrow-plane tricks keep
+// working unchanged), and we convert that buffer + a CLUT to true colour for
+// the Quartz window.  We realise the "8-bit indexed drawable" as an 8-bit
+// grayscale CGBitmapContext: the gray byte *is* the palette index, and CG's
+// own rasteriser fills lines/rects/text/blits for us.  Antialiasing is off so
+// CG never blends two indices into a meaningless intermediate byte.
+// CGBitmapContextGetData lets Self read/write individual index bytes for
+// pixelValueAt:/copyArea/plane_mask.  -- claude & dmu 5/26
+CGContextRef MakeIndexedOffscreen_wrap(int32 w, int32 h) {
+  if (w <= 0 || h <= 0)  return NULL;
+  CGColorSpaceRef gray = CGColorSpaceCreateDeviceGray();
+  // data == NULL: CG owns the (row-aligned) backing store; fetch it later with
+  // CGBitmapContextGetData.  One byte per pixel, no alpha.
+  CGContextRef ctx = CGBitmapContextCreate( NULL, (size_t)w, (size_t)h,
+                                            8, (size_t)w,
+                                            gray, kCGImageAlphaNone);
+  CGColorSpaceRelease(gray);
+  if (ctx) {
+    CGContextSetShouldAntialias(ctx, false);
+    CGContextSetAllowsAntialiasing(ctx, false);
+    CGContextSetInterpolationQuality(ctx, kCGInterpolationNone);
+  }
+  return ctx;
+}
+
+// Convert the indexed offscreen (gray byte = index) through a CLUT to true
+// colour and draw it into a destination context (the window).  clut is a
+// packed RGB table (3 bytes per entry); colour-map animation is just calling
+// this again with a different clut over the same offscreen bytes.  -- claude & dmu 5/26
+void BlitIndexedToContext_wrap( CGContextRef offscreen, CGContextRef dest,
+                                u_char* clut, uint32 clutLen,
+                                float x, float y) {
+  if ((offscreen == NULL) || (dest == NULL) || (clut == NULL))  return;
+  void*  data = CGBitmapContextGetData(offscreen);
+  size_t w    = CGBitmapContextGetWidth(offscreen);
+  size_t h    = CGBitmapContextGetHeight(offscreen);
+  size_t bpr  = CGBitmapContextGetBytesPerRow(offscreen);
+  uint32 nColors = clutLen / 3;
+  if ((data == NULL) || (w == 0) || (h == 0) || (nColors == 0))  return;
+  CGColorSpaceRef base = CGColorSpaceCreateDeviceRGB();
+  CGColorSpaceRef idx  = CGColorSpaceCreateIndexed(base, nColors - 1, clut);
+  CGDataProviderRef dp = CGDataProviderCreateWithData(NULL, data, bpr * h, NULL);
+  CGImageRef img = CGImageCreate( w, h, 8, 8, bpr, idx,
+                                  kCGImageAlphaNone, dp, NULL,
+                                  false, kCGRenderingIntentDefault);
+  if (img) {
+    CGContextDrawImage(dest, CGRectMake(x, y, (CGFloat)w, (CGFloat)h), img);
+    CGImageRelease(img);
+  }
+  CGDataProviderRelease(dp);
+  CGColorSpaceRelease(idx);
+  CGColorSpaceRelease(base);
+}
+
+// Read one palette-index byte from an indexed offscreen at logical (x,y).
+// ui1/X coords are top-down (row 0 = top); a CGBitmapContext is bottom-up, so
+// flip.  Returns -1 if the context isn't a bitmap or (x,y) is out of range.
+// This is pixelValueAt: for the quartz indexed pixMap.  -- claude & dmu 5/26
+int32 OffscreenPixelAt_wrap(CGContextRef ctx, int32 x, int32 y) {
+  if (ctx == NULL)  return -1;
+  u_char* data = (u_char*)CGBitmapContextGetData(ctx);
+  size_t  w    = CGBitmapContextGetWidth(ctx);
+  size_t  h    = CGBitmapContextGetHeight(ctx);
+  size_t  bpr  = CGBitmapContextGetBytesPerRow(ctx);
+  if ((data == NULL) || (x < 0) || (y < 0) || ((size_t)x >= w) || ((size_t)y >= h))
+    return -1;
+  size_t row = h - 1 - (size_t)y;   // flip top-down -> CG's bottom-up
+  return (int32)data[row * bpr + (size_t)x];
+}
+
+// 4-byte pixel from an RGBA/BGRA bitmap context. Logical (x,y) is ui1 top-down.
+// Returns objVector of 4 smis: bytes in memory order (little-endian B,G,R,A/X).
+// -- claude & dmu 8/26
+oop RGBAPixelAt_wrap(CGContextRef ctx, int32 x, int32 y) {
+  objVectorOop r = Memory->objVectorObj->cloneSize(4);
+  r->obj_at_put(0, as_smiOop(-1), false);
+  r->obj_at_put(1, as_smiOop(-1), false);
+  r->obj_at_put(2, as_smiOop(-1), false);
+  r->obj_at_put(3, as_smiOop(-1), false);
+  if (ctx == NULL)  return r;
+  u_char* data = (u_char*)CGBitmapContextGetData(ctx);
+  size_t  w    = CGBitmapContextGetWidth(ctx);
+  size_t  h    = CGBitmapContextGetHeight(ctx);
+  size_t  bpr  = CGBitmapContextGetBytesPerRow(ctx);
+  size_t  bpp  = (size_t)CGBitmapContextGetBitsPerPixel(ctx) / 8;
+  if ((data == NULL) || (bpp < 4) || (x < 0) || (y < 0)
+      || ((size_t)x >= w) || ((size_t)y >= h))
+    return r;
+  size_t row = h - 1 - (size_t)y;
+  u_char* p = data + row * bpr + ((size_t)x * bpp);
+  r->obj_at_put(0, as_smiOop(p[0]), false);
+  r->obj_at_put(1, as_smiOop(p[1]), false);
+  r->obj_at_put(2, as_smiOop(p[2]), false);
+  r->obj_at_put(3, as_smiOop(p[3]), false);
+  return r;
+}
+
+// Index-preserving bitblt between two 8-bit indexed offscreens (the X path got
+// this free from the server's XCopyArea; CG has no equivalent that leaves the
+// palette-index bytes untouched, so we copy the backing bytes ourselves).  This
+// is the engine for ui1's double-buffer flush (graphic->offScreen->window-shadow)
+// and for scrolling.  Coords are ui1/X top-down logical pixels; both contexts
+// store bottom-up, so each logical row r maps to physical row (h-1-r).  The copy
+// region is clipped against both src and dst, so partial/off-edge blits are safe.
+// -- claude & dmu 5/26
+void CopyIndexedArea_wrap( CGContextRef src, CGContextRef dst,
+                           int32 sx, int32 sy, int32 w, int32 h,
+                           int32 dx, int32 dy) {
+  if ((src == NULL) || (dst == NULL) || (w <= 0) || (h <= 0))  return;
+  u_char* sdata = (u_char*)CGBitmapContextGetData(src);
+  u_char* ddata = (u_char*)CGBitmapContextGetData(dst);
+  if ((sdata == NULL) || (ddata == NULL))  return;
+  int32 sw = (int32)CGBitmapContextGetWidth(src);
+  int32 sh = (int32)CGBitmapContextGetHeight(src);
+  int32 sbpr = (int32)CGBitmapContextGetBytesPerRow(src);
+  int32 dw = (int32)CGBitmapContextGetWidth(dst);
+  int32 dh = (int32)CGBitmapContextGetHeight(dst);
+  int32 dbpr = (int32)CGBitmapContextGetBytesPerRow(dst);
+
+  // Clip the column range [x0,x1) so sx+x in [0,sw) and dx+x in [0,dw).
+  int32 x0 = 0;
+  if (-sx > x0)  x0 = -sx;
+  if (-dx > x0)  x0 = -dx;
+  int32 x1 = w;
+  if (sw - sx < x1)  x1 = sw - sx;
+  if (dw - dx < x1)  x1 = dw - dx;
+  int32 count = x1 - x0;
+  if (count <= 0)  return;
+
+  // Clip the row range [r0,r1) so sy+r in [0,sh) and dy+r in [0,dh).
+  int32 r0 = 0;
+  if (-sy > r0)  r0 = -sy;
+  if (-dy > r0)  r0 = -dy;
+  int32 r1 = h;
+  if (sh - sy < r1)  r1 = sh - sy;
+  if (dh - dy < r1)  r1 = dh - dy;
+
+  for (int32 r = r0;  r < r1;  ++r) {
+    int32 srow = sh - 1 - (sy + r);   // flip top-down -> CG bottom-up
+    int32 drow = dh - 1 - (dy + r);
+    memcpy( ddata + (size_t)drow * dbpr + (dx + x0),
+            sdata + (size_t)srow * sbpr + (sx + x0),
+            (size_t)count);
+  }
+}
+
+// The X11 GXfunction raster ops, on a single 8-bit palette-index byte.  ui1's
+// plane masking and acetate/arrow overlays drive these through the quartz GC
+// (function: gxClear/gxCopy/gxOr/...).  CG can't do raster ops or plane masks
+// on its own bytes, so we apply them ourselves when ui1 sets a non-default GC.
+// codes match traits quartz context (gxClear=0, gxAnd=1, gxCopy=3, gxOr=7,
+// gxXor=6); the full 16 are here for completeness.  -- claude & dmu 5/26
+static inline u_char xRasterOp(int32 func, u_char src, u_char dst) {
+  switch (func & 0xf) {
+    case 0x0: return 0;                 // GXclear
+    case 0x1: return src & dst;         // GXand
+    case 0x2: return src & ~dst;        // GXandReverse
+    case 0x3: return src;               // GXcopy
+    case 0x4: return ~src & dst;        // GXandInverted
+    case 0x5: return dst;               // GXnoop
+    case 0x6: return src ^ dst;         // GXxor
+    case 0x7: return src | dst;         // GXor
+    case 0x8: return ~(src | dst);      // GXnor
+    case 0x9: return ~(src ^ dst);      // GXequiv
+    case 0xa: return ~dst;              // GXinvert
+    case 0xb: return src | ~dst;        // GXorReverse
+    case 0xc: return ~src;              // GXcopyInverted
+    case 0xd: return ~src | dst;        // GXorInverted
+    case 0xe: return ~(src & dst);      // GXnand
+    default:  return 0xff;              // GXset
+  }
+}
+
+// Plane-masked, raster-op fill of a rectangle of palette indices -- the engine
+// for ui1's acetate/arrow overlays (eraseAcetate, clear:, prepareToDrawOn*).
+// Each affected byte becomes (xRasterOp(func, colorIndex, old) & planeMask) |
+// (old & ~planeMask): the plane mask restricts which bit-planes change, so
+// transient overlay drawing leaves the underlying image's planes intact (what X
+// gives free via the server's plane_mask, and CG cannot).  Coords are ui1/X
+// top-down logical pixels; the bitmap stores bottom-up, so logical row r maps to
+// physical row (h-1-r).  Only called when the GC is non-default (plane mask !=
+// all-ones or function != copy); the all-ones/copy case stays on the fast CG
+// path (fillRectX:).  -- claude & dmu 5/26
+
+// Debugging ui1 quartz turds: w and h are number of pixels to fill?
+void FillIndexedAreaMasked_wrap( CGContextRef ctx,
+                                 int32 x, int32 top, int32 w, int32 h,
+                                 int32 colorIndex, int32 planeMask, int32 func) {
+  if ((ctx == NULL) || (w <= 0) || (h <= 0))  return;
+  u_char* data = (u_char*)CGBitmapContextGetData(ctx);
+  if (data == NULL)  return;
+  int32 cw  = (int32)CGBitmapContextGetWidth(ctx);
+  int32 ch  = (int32)CGBitmapContextGetHeight(ctx);
+  int32 bpr = (int32)CGBitmapContextGetBytesPerRow(ctx);
+
+  int32 x0 = (x < 0) ? -x : 0;            // clip columns to [0, cw)
+  int32 x1 = (x + w > cw) ? (cw - x) : w;
+  int32 count = x1 - x0;
+  if (count <= 0)  return;
+  int32 r0 = (top < 0) ? -top : 0;        // clip rows to [0, ch)
+  int32 r1 = (top + h > ch) ? (ch - top) : h;
+
+  u_char src = (u_char)colorIndex;
+  u_char m   = (u_char)planeMask;
+  for (int32 r = r0;  r < r1;  ++r) {
+    int32 prow = ch - 1 - (top + r);      // flip top-down -> CG bottom-up
+    u_char* p  = data + (size_t)prow * bpr + (x + x0);
+    for (int32 c = 0;  c < count;  ++c, ++p)
+      *p = (u_char)((xRasterOp(func, src, *p) & m) | (*p & ~m));
+  }
+  lprintf("did %d cols, %d rows\n", count, r1 - r0);
+}
+
+// Plane-masked, raster-op variant of CopyIndexedArea_wrap: copies palette-index
+// bytes from src to dst applying xRasterOp(func, srcByte, dstByte) then the
+// plane mask, exactly like FillIndexedAreaMasked_wrap but with a per-pixel
+// source.  ui1 drives this when copying a moving body's graphic onto the acetate
+// (moving) plane during a drag (bod graphic copy:To:windowBitmap), and for
+// mask/stencil blits (copy:Mask: uses gxAnd then gxOr).  Same top-down logical
+// coords and both-ends clipping as the unmasked copy.  -- claude & dmu 5/26
+void CopyIndexedAreaMasked_wrap( CGContextRef src, CGContextRef dst,
+                                 int32 sx, int32 sy, int32 w, int32 h,
+                                 int32 dx, int32 dy, int32 planeMask, int32 func) {
+  if ((src == NULL) || (dst == NULL) || (w <= 0) || (h <= 0))  return;
+  u_char* sdata = (u_char*)CGBitmapContextGetData(src);
+  u_char* ddata = (u_char*)CGBitmapContextGetData(dst);
+  if ((sdata == NULL) || (ddata == NULL))  return;
+  int32 sw = (int32)CGBitmapContextGetWidth(src);
+  int32 sh = (int32)CGBitmapContextGetHeight(src);
+  int32 sbpr = (int32)CGBitmapContextGetBytesPerRow(src);
+  int32 dw = (int32)CGBitmapContextGetWidth(dst);
+  int32 dh = (int32)CGBitmapContextGetHeight(dst);
+  int32 dbpr = (int32)CGBitmapContextGetBytesPerRow(dst);
+
+  int32 x0 = 0;                           // clip cols against both ends
+  if (-sx > x0)  x0 = -sx;
+  if (-dx > x0)  x0 = -dx;
+  int32 x1 = w;
+  if (sw - sx < x1)  x1 = sw - sx;
+  if (dw - dx < x1)  x1 = dw - dx;
+  int32 count = x1 - x0;
+  if (count <= 0)  return;
+
+  int32 r0 = 0;                           // clip rows against both ends
+  if (-sy > r0)  r0 = -sy;
+  if (-dy > r0)  r0 = -dy;
+  int32 r1 = h;
+  if (sh - sy < r1)  r1 = sh - sy;
+  if (dh - dy < r1)  r1 = dh - dy;
+
+  u_char m = (u_char)planeMask;
+  for (int32 r = r0;  r < r1;  ++r) {
+    int32 srow = sh - 1 - (sy + r);       // flip top-down -> CG bottom-up
+    int32 drow = dh - 1 - (dy + r);
+    u_char* sp = sdata + (size_t)srow * sbpr + (sx + x0);
+    u_char* dp = ddata + (size_t)drow * dbpr + (dx + x0);
+    for (int32 c = 0;  c < count;  ++c, ++sp, ++dp)
+      *dp = (u_char)((xRasterOp(func, *sp, *dp) & m) | (*dp & ~m));
+  }
+}
+
+
+// ----------------------------------------------------------------------
+// ui1-on-Quartz TRUE-COLOUR offscreens (RGBA rewrite, Phase 1).
+// ----------------------------------------------------------------------
+// The indexed prims above realise ui1's old 8-bit palette world.  The RGBA
+// rewrite instead gives ui1 32-bit BGRA offscreens drawn with antialiasing ON:
+// a base (opaque) layer and an acetate / arrow overlay (transparent) layer,
+// composited source-over into the window.  No palette, no plane mask, no
+// integer raster-op path -- all rasterisation is native CG.  Both paths coexist
+// during the dual-backend A/B phase (see ui startOn: 'newQuartz').  -- claude & dmu 6/10
+
+// Make a 32-bit BGRA CGBitmapContext for an RGBA layer.  `opaque` picks BGRX
+// (kCGImageAlphaNoneSkipFirst -- the base layer, matching the window's
+// IOSurface) vs premultiplied BGRA (kCGImageAlphaPremultipliedFirst -- the
+// acetate / arrow overlay layers, which composite with transparency).  Byte
+// order is little-endian 32-bit (= B,G,R,A in memory).  bytesPerRow 0 lets CG
+// choose an optimally aligned stride; CG owns the backing store.  Antialiasing
+// is left ON (the whole point of the rewrite).  -- claude & dmu 6/10
+CGContextRef MakeRGBAOffscreen_wrap(int32 w, int32 h, bool opaque) {
+  if (w <= 0 || h <= 0)  return NULL;
+  CGColorSpaceRef rgb = CGColorSpaceCreateDeviceRGB();
+  CGBitmapInfo info = (CGBitmapInfo)(kCGBitmapByteOrder32Little |
+                        (opaque ? kCGImageAlphaNoneSkipFirst        // BGRX
+                                : kCGImageAlphaPremultipliedFirst)); // BGRA
+  CGContextRef ctx = CGBitmapContextCreate( NULL, (size_t)w, (size_t)h,
+                                            8, 0, rgb, info);
+  CGColorSpaceRelease(rgb);
+  if (ctx) {
+    CGContextSetShouldAntialias(ctx, true);
+    CGContextSetAllowsAntialiasing(ctx, true);
+  }
+  return ctx;
+}
+
+// Snapshot an RGBA offscreen as a CGImage for the Self-side composite (draw base
+// into the window, then acetate / arrows source-over).  The caller owns the
+// returned image and must release it after drawing.  -- claude & dmu 6/10
+CGImageRef CGImageFromOffscreen_wrap(CGContextRef ctx) {
+  if (ctx == NULL)  return NULL;
+  return CGBitmapContextCreateImage(ctx);
+}
+
+
+// Draw a string via CoreText (CTLine) instead of the deprecated
+// CGContextShowTextAtPoint.  The legacy path gives tight, wrong per-glyph
+// advances (ui1 labels looked cramped); CoreText lays the run out properly and
+// matches the metrics ui1 measures with.  kCTForegroundColorFromContextAttribute
+// makes CTLineDraw paint with the context's current fill colour -- for the 8-bit
+// indexed offscreen that fill is the palette index as a gray byte, so glyphs land
+// the right index (no colour conversion).  Honours the context text matrix, so
+// the indexed offscreen's vertical flip still yields upright glyphs.
+// ARM64 implementation is in quartzWindow.mm (integer screen-font advances).
+// -- claude & grok & dmu 5/26, 8/26
+# if defined(__aarch64__)
+extern void DrawTextCoreText_wrap( CGContextRef ctx,
+                            char* text,     uint32 textLen,
+                            char* fontName, uint32 fontNameLen,
+                            float size, float x, float y);
+# else
+void DrawTextCoreText_wrap( CGContextRef ctx,
+                            char* text,     uint32 textLen,
+                            char* fontName, uint32 fontNameLen,
+                            float size, float x, float y) {
+  if ((ctx == NULL) || (text == NULL) || (fontName == NULL))  return;
+  CFStringRef fn = CFStringCreateWithBytes( NULL, (const UInt8*)fontName, fontNameLen,
+                                            kCFStringEncodingUTF8, false);
+  if (fn == NULL)  return;
+  CTFontRef font = CTFontCreateWithName(fn, (CGFloat)size, NULL);
+  CFRelease(fn);
+  if (font == NULL)  return;
+  CFStringRef str = CFStringCreateWithBytes( NULL, (const UInt8*)text, textLen,
+                                             kCFStringEncodingMacRoman, false);
+  if (str == NULL) { CFRelease(font);  return; }
+  CFStringRef keys[2] = { kCTFontAttributeName, kCTForegroundColorFromContextAttributeName };
+  CFTypeRef   vals[2] = { font, kCFBooleanTrue };
+  CFDictionaryRef attrs = CFDictionaryCreate( NULL, (const void**)keys, (const void**)vals, 2,
+                                              &kCFTypeDictionaryKeyCallBacks,
+                                              &kCFTypeDictionaryValueCallBacks);
+  CFAttributedStringRef astr = CFAttributedStringCreate(NULL, str, attrs);
+  CTLineRef line = CTLineCreateWithAttributedString(astr);
+  CGContextSetTextPosition(ctx, (CGFloat)x, (CGFloat)y);
+  CTLineDraw(line, ctx);
+  CFRelease(line);
+  CFRelease(astr);
+  CFRelease(attrs);
+  CFRelease(str);
+  CFRelease(font);
+}
+# endif
+
+
 void CGContextSelectFont_wrap(CGContext* c, const char* s, float siz) {
   // CGContextSelectFont is deprecated since macOS 10.9 but still functional.
   // Self-level code calls this through glue to set the font for subsequent

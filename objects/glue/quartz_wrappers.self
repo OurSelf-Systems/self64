@@ -3156,6 +3156,284 @@ traits quartz context _AddSlots: ( |
     self).
 
 
+" ui1-on-Quartz indexed offscreen: an 8-bit grayscale bitmap context whose  "
+
+" gray byte is the palette index, plus a CLUT->trueColour blit into a window. -- claude & dmu 5/26  "
+
+  makeIndexedOffscreenWidth: t0 Height: t1  = (
+
+       makeIndexedOffscreenWidth: t0 Height: t1 IfFail: 
+        [|:e| ^error: 'makeIndexedOffscreenWidth:Height: failed: ', e] ).
+
+  makeIndexedOffscreenWidth: t0 Height: t1 IfFail: fb = (
+    |
+
+    |
+
+      t0 _MakeIndexedOffscreen_wrapmakeIndexedOffscreenWidthHeight: 
+        t1 ResultProxy:  quartz context deadCopy  IfFail: 
+        
+      [|:e| ('badTypeError'   isPrefixOf: e)
+        ||  ['deadProxyError' isPrefixOf: e]
+           ifFalse: [^fb value: e] 
+              True: [
+                  t0 asSmallInteger _MakeIndexedOffscreen_wrapmakeIndexedOffscreenWidthHeight: 
+                    t1 asSmallInteger ResultProxy: 
+                     quartz context deadCopy  IfFail: fb 
+           ]] ).
+
+
+  blitIndexedTo: t0 CLUT: t1 X: t2 Y: t3  = (
+
+       blitIndexedTo: t0 CLUT: t1 X: t2 Y: t3 IfFail: 
+        [|:e| ^error: 'blitIndexedTo:CLUT:X:Y: failed: ', e] ).
+
+  blitIndexedTo: t0 CLUT: t1 X: t2 Y: t3 IfFail: fb = (
+    |
+
+    |
+
+       _BlitIndexedToContext_wrapblitIndexedTo: t0 CLUT: t1 X: t2 
+        Y: t3 IfFail: 
+        
+      [|:e| ('badTypeError'   isPrefixOf: e)
+        ||  ['deadProxyError' isPrefixOf: e]
+           ifFalse: [^fb value: e] 
+              True: [
+                  ( reviveIfFail: [|:e| ^ fb value: e]) _BlitIndexedToContext_wrapblitIndexedTo: 
+                    (t0 reviveIfFail: [|:e| ^ fb value: e]) 
+                    CLUT: t1 asVMByteVector X: t2 asFloat 
+                    Y: t3 asFloat IfFail: fb 
+           ]] .
+    self).
+
+
+  indexedPixelAtX: t0 Y: t1  = (
+
+       indexedPixelAtX: t0 Y: t1 IfFail: 
+        [|:e| ^error: 'indexedPixelAtX:Y: failed: ', e] ).
+
+  indexedPixelAtX: t0 Y: t1 IfFail: fb = (
+    |
+
+    |
+
+       _OffscreenPixelAt_wrapindexedPixelAtX: t0 Y: t1 IfFail: 
+        
+      [|:e| ('badTypeError'   isPrefixOf: e)
+        ||  ['deadProxyError' isPrefixOf: e]
+           ifFalse: [^fb value: e] 
+              True: [
+                  ( reviveIfFail: [|:e| ^ fb value: e]) _OffscreenPixelAt_wrapindexedPixelAtX: t0 asSmallInteger Y: 
+                    t1 asSmallInteger IfFail: fb 
+           ]] ).
+
+
+" index-preserving bitblt between two indexed offscreens (double-buffer flush + scrolling). -- claude & dmu 5/26  "
+
+  copyIndexedAreaTo: t0 SrcX: t1 SrcY: t2 Width: t3 Height: 
+    t4 DestX: t5 DestY: t6  = (
+
+       copyIndexedAreaTo: t0 SrcX: t1 SrcY: t2 Width: t3 Height: 
+        t4 DestX: t5 DestY: t6 IfFail: 
+        [|:e| ^error: 'copyIndexedAreaTo:SrcX:SrcY:Width:Height:DestX:DestY: failed: ', e] ).
+
+  copyIndexedAreaTo: t0 SrcX: t1 SrcY: t2 Width: t3 Height: 
+    t4 DestX: t5 DestY: t6 IfFail: fb = (
+    |
+
+    |
+
+       _CopyIndexedArea_wrapcopyIndexedAreaTo: t0 SrcX: t1 SrcY: 
+        t2 Width: t3 Height: t4 DestX: t5 DestY: t6 IfFail: 
+        
+      [|:e| ('badTypeError'   isPrefixOf: e)
+        ||  ['deadProxyError' isPrefixOf: e]
+           ifFalse: [^fb value: e] 
+              True: [
+                  ( reviveIfFail: [|:e| ^ fb value: e]) _CopyIndexedArea_wrapcopyIndexedAreaTo: 
+                    (t0 reviveIfFail: [|:e| ^ fb value: e]) 
+                    SrcX: t1 asSmallInteger SrcY: 
+                    t2 asSmallInteger Width: 
+                    t3 asSmallInteger Height: 
+                    t4 asSmallInteger DestX: 
+                    t5 asSmallInteger DestY: 
+                    t6 asSmallInteger IfFail: fb 
+           ]] .
+    self).
+
+
+" plane-masked / raster-op fill + copy for ui1 acetate/arrow overlays (plane_mask + function). -- claude & dmu 5/26  "
+
+  fillIndexedMaskedX: t0 Y: t1 Width: t2 Height: t3 Index: t4 
+    Mask: t5 Function: t6  = (
+
+       fillIndexedMaskedX: t0 Y: t1 Width: t2 Height: t3 Index: t4 
+        Mask: t5 Function: t6 IfFail: 
+        [|:e| ^error: 'fillIndexedMaskedX:Y:Width:Height:Index:Mask:Function: failed: ', e] ).
+
+  fillIndexedMaskedX: t0 Y: t1 Width: t2 Height: t3 Index: t4 
+    Mask: t5 Function: t6 IfFail: fb = (
+    |
+
+    |
+
+       _FillIndexedAreaMasked_wrapfillIndexedMaskedX: t0 Y: t1 
+        Width: t2 Height: t3 Index: t4 Mask: t5 Function: 
+        t6 IfFail: 
+        
+      [|:e| ('badTypeError'   isPrefixOf: e)
+        ||  ['deadProxyError' isPrefixOf: e]
+           ifFalse: [^fb value: e] 
+              True: [
+                  ( reviveIfFail: [|:e| ^ fb value: e]) _FillIndexedAreaMasked_wrapfillIndexedMaskedX: 
+                    t0 asSmallInteger Y: t1 asSmallInteger 
+                    Width: t2 asSmallInteger Height: 
+                    t3 asSmallInteger Index: 
+                    t4 asSmallInteger Mask: 
+                    t5 asSmallInteger Function: 
+                    t6 asSmallInteger IfFail: fb 
+           ]] .
+    self).
+
+
+  copyIndexedMaskedAreaTo: t0 SrcX: t1 SrcY: t2 Width: t3 
+    Height: t4 DestX: t5 DestY: t6 Mask: t7 Function: t8  = (
+
+       copyIndexedMaskedAreaTo: t0 SrcX: t1 SrcY: t2 Width: t3 
+        Height: t4 DestX: t5 DestY: t6 Mask: t7 Function: 
+        t8 IfFail: 
+        [|:e| ^error: 'copyIndexedMaskedAreaTo:SrcX:SrcY:Width:Height:DestX:DestY:Mask:Function: failed: ', e] ).
+
+  copyIndexedMaskedAreaTo: t0 SrcX: t1 SrcY: t2 Width: t3 
+    Height: t4 DestX: t5 DestY: t6 Mask: t7 Function: t8 
+    IfFail: fb = (
+    |
+
+    |
+
+       _CopyIndexedAreaMasked_wrapcopyIndexedMaskedAreaTo: t0 
+        SrcX: t1 SrcY: t2 Width: t3 Height: t4 DestX: t5 
+        DestY: t6 Mask: t7 Function: t8 IfFail: 
+        
+      [|:e| ('badTypeError'   isPrefixOf: e)
+        ||  ['deadProxyError' isPrefixOf: e]
+           ifFalse: [^fb value: e] 
+              True: [
+                  ( reviveIfFail: [|:e| ^ fb value: e]) _CopyIndexedAreaMasked_wrapcopyIndexedMaskedAreaTo: 
+                    (t0 reviveIfFail: [|:e| ^ fb value: e]) 
+                    SrcX: t1 asSmallInteger SrcY: 
+                    t2 asSmallInteger Width: 
+                    t3 asSmallInteger Height: 
+                    t4 asSmallInteger DestX: 
+                    t5 asSmallInteger DestY: 
+                    t6 asSmallInteger Mask: 
+                    t7 asSmallInteger Function: 
+                    t8 asSmallInteger IfFail: fb 
+           ]] .
+    self).
+
+
+" draw text via CoreText (CTLine) instead of the deprecated CGContextShowTextAtPoint -- proper per-glyph advances, paints with the contexts fill colour (= palette index for the indexed offscreen). -- claude & dmu 5/26  "
+
+  drawCTText: t0 FontName: t1 Size: t2 X: t3 Y: t4  = (
+
+       drawCTText: t0 FontName: t1 Size: t2 X: t3 Y: t4 IfFail: 
+        [|:e| ^error: 'drawCTText:FontName:Size:X:Y: failed: ', e] ).
+
+  drawCTText: t0 FontName: t1 Size: t2 X: t3 Y: t4 IfFail: fb = (
+    |
+
+    |
+
+       _DrawTextCoreText_wrapdrawCTText: t0 FontName: t1 Size: t2 
+        X: t3 Y: t4 IfFail: 
+        
+      [|:e| ('badTypeError'   isPrefixOf: e)
+        ||  ['deadProxyError' isPrefixOf: e]
+           ifFalse: [^fb value: e] 
+              True: [
+                  ( reviveIfFail: [|:e| ^ fb value: e]) _DrawTextCoreText_wrapdrawCTText: t0 asVMByteVector 
+                    FontName: t1 asVMByteVector Size: 
+                    t2 asFloat X: t3 asFloat Y: t4 asFloat 
+                    IfFail: fb 
+           ]] .
+    self).
+
+
+" ui1-on-Quartz TRUE-COLOUR offscreen (RGBA rewrite): 32-bit BGRA bitmap context, antialiasing ON, for the base (Opaque: true) + acetate/arrow overlay (Opaque: false) layers composited into the window. Acetate erase reuses clearRectX:Y:Width:Height: above. -- claude & dmu 6/10  "
+
+  makeRGBAOffscreenWidth: t0 Height: t1 Opaque: t2  = (
+
+       makeRGBAOffscreenWidth: t0 Height: t1 Opaque: t2 IfFail: 
+        [|:e| ^error: 'makeRGBAOffscreenWidth:Height:Opaque: failed: ', e] ).
+
+  makeRGBAOffscreenWidth: t0 Height: t1 Opaque: t2 IfFail: fb = (
+    |
+
+    |
+
+      t0 _MakeRGBAOffscreen_wrapmakeRGBAOffscreenWidthHeight: t1 
+        Opaque: t2 ResultProxy: 
+         quartz rgbaContext deadCopy  IfFail: 
+        
+      [|:e| ('badTypeError'   isPrefixOf: e)
+        ||  ['deadProxyError' isPrefixOf: e]
+           ifFalse: [^fb value: e] 
+              True: [
+                  t0 asSmallInteger _MakeRGBAOffscreen_wrapmakeRGBAOffscreenWidthHeight: 
+                    t1 asSmallInteger Opaque: t2 
+                    ResultProxy: 
+                     quartz rgbaContext deadCopy  IfFail: 
+                    fb 
+           ]] ).
+
+
+" snapshot an RGBA offscreen to a CGImage for the Self-side source-over composite (caller releases). -- claude & dmu 6/10  "
+
+  createImageSnapshot = (
+
+       createImageSnapshotIfFail: 
+        [|:e| ^error: 'createImageSnapshot failed: ', e] ).
+
+  createImageSnapshotIfFail: fb = (
+    |
+
+    |
+
+       _CGImageFromOffscreen_wrapcreateImageSnapshotResultProxy: 
+         quartz image deadCopy  IfFail: 
+        
+      [|:e| ('badTypeError'   isPrefixOf: e)
+        ||  ['deadProxyError' isPrefixOf: e]
+           ifFalse: [^fb value: e] 
+              True: [
+                  ( reviveIfFail: [|:e| ^ fb value: e]) _CGImageFromOffscreen_wrapcreateImageSnapshotResultProxy: 
+                     quartz image deadCopy  IfFail: fb 
+           ]] ).
+
+
+  rgbaPixelAtX: t0 Y: t1  = (
+
+       rgbaPixelAtX: t0 Y: t1 IfFail: 
+        [|:e| ^error: 'rgbaPixelAtX:Y: failed: ', e] ).
+
+  rgbaPixelAtX: t0 Y: t1 IfFail: fb = (
+    |
+
+    |
+
+       _RGBAPixelAt_wraprgbaPixelAtX: t0 Y: t1 IfFail: 
+        
+      [|:e| ('badTypeError'   isPrefixOf: e)
+        ||  ['deadProxyError' isPrefixOf: e]
+           ifFalse: [^fb value: e] 
+              True: [
+                  ( reviveIfFail: [|:e| ^ fb value: e]) _RGBAPixelAt_wraprgbaPixelAtX: t0 asSmallInteger Y: 
+                    t1 asSmallInteger IfFail: fb 
+           ]] ).
+
+
   setShadowOffsetX: t0 OffsetY: t1 Blur: t2 Color: t3  = (
 
        setShadowOffsetX: t0 OffsetY: t1 Blur: t2 Color: t3 IfFail: 

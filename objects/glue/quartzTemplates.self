@@ -275,7 +275,26 @@ primitiveMaker reader copy beNoisy staticLinking create: 'quartz' Flag: 'quartz_
    CGContext drawImage: CGImage X: float Y: float Width: float Height: float = void call CGContextDrawImage_wrap
    CGContext interpolationQuality = int call CGContextGetInterpolationQuality
    CGContext interpolationQuality: int = void call CGContextSetInterpolationQuality_wrap
-   
+
+   -- ui1-on-Quartz indexed offscreen: an 8-bit grayscale bitmap context whose
+   -- gray byte is the palette index, plus a CLUT->trueColour blit into a window. -- claude & dmu 5/26
+   void makeIndexedOffscreenWidth: int Height: int = CGContext { quartz context deadCopy } call MakeIndexedOffscreen_wrap
+   CGContext blitIndexedTo: CGContext CLUT: cbv_len u_char* X: float Y: float = void call BlitIndexedToContext_wrap
+   CGContext indexedPixelAtX: int Y: int = int call OffscreenPixelAt_wrap
+   -- index-preserving bitblt between two indexed offscreens (double-buffer flush + scrolling). -- claude & dmu 5/26
+   CGContext copyIndexedAreaTo: CGContext SrcX: int SrcY: int Width: int Height: int DestX: int DestY: int = void call CopyIndexedArea_wrap
+   -- plane-masked / raster-op fill + copy for ui1 acetate/arrow overlays (plane_mask + function). -- claude & dmu 5/26
+   CGContext fillIndexedMaskedX: int Y: int Width: int Height: int Index: int Mask: int Function: int = void call FillIndexedAreaMasked_wrap
+   CGContext copyIndexedMaskedAreaTo: CGContext SrcX: int SrcY: int Width: int Height: int DestX: int DestY: int Mask: int Function: int = void call CopyIndexedAreaMasked_wrap
+   -- draw text via CoreText (CTLine) instead of the deprecated CGContextShowTextAtPoint -- proper per-glyph advances, paints with the contexts fill colour (= palette index for the indexed offscreen). -- claude & dmu 5/26
+   CGContext drawCTText: cbv_len char* FontName: cbv_len char* Size: float X: float Y: float = void call DrawTextCoreText_wrap
+
+   -- ui1-on-Quartz TRUE-COLOUR offscreen (RGBA rewrite): 32-bit BGRA bitmap context, antialiasing ON, for the base (Opaque: true) + acetate/arrow overlay (Opaque: false) layers composited into the window.  Acetate erase reuses clearRectX:Y:Width:Height: above. -- claude & dmu 6/10
+   void makeRGBAOffscreenWidth: int Height: int Opaque: bool = CGContext { quartz rgbaContext deadCopy } call MakeRGBAOffscreen_wrap
+   -- snapshot an RGBA offscreen to a CGImage for the Self-side source-over composite (caller releases). -- claude & dmu 6/10
+   CGContext createImageSnapshot = CGImage { quartz image deadCopy } call CGImageFromOffscreen_wrap
+   CGContext rgbaPixelAtX: int Y: int = oop call RGBAPixelAt_wrap
+
    CGContext setShadowOffsetX: float OffsetY: float Blur: float Color: CGColor = void call CGContextSetShadowWithColor_wrap
    CGContext setShadowOffsetX: float OffsetY: float Blur: float Red: float Green: float Blue: float Alpha: float \
      = void call CGContextSetShadowWithColor_wrap2

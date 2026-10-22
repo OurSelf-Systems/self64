@@ -11,7 +11,19 @@
 // The .mm file does not get the precompiled header (it's C++ only, not ObjC++).
 // Include AppKit FIRST so system types are defined, then include Self headers.
 // quartzWindow.hh will detect already-defined system types and skip its versions.
+//
+// Workaround: Xcode does inject the PCH for .mm files via -include, so util.hh's
+// `const int32 K = 1024;` is already in scope. macOS SDK 26.5's NSDictionary.h
+// declares a generic `<K, V>` whose unqualified `K` then becomes ambiguous with
+// the global. Rename the SDK's `K` lexically via a macro just for these imports.
+//
+// This did not arise before the AVP port because the macOS build used
+// quartzWindow.cpp (Carbon, pure C++); no translation unit pulled both util.hh
+// and Foundation. The port introduced this .mm (Cocoa, ObjC++) for ARM64, and
+// SDK 26.5 added the `<K, V>` generic that triggers the ambiguity.
+#define K _Self_NSDict_K
 #import <AppKit/AppKit.h>
+#undef K
 #import <CoreText/CoreText.h>
 #import <QuartzCore/QuartzCore.h>
 #import <IOSurface/IOSurface.h>
@@ -80,6 +92,95 @@ static _Atomic(uint32_t) sleep_generation = 0;
 @interface SelfContentView : NSView
 @property (nonatomic, assign) QuartzWindow* quartzWindow;
 @end
+
+// ======================================================================
+// Cross-window drag support
+// ----------------------------------------------------------------------
+// Cocoa delivers mouseDragged:/mouseUp: only to the window where the drag
+// began, but the Self ui2 world was written for X11, which routes pointer
+// motion to the window UNDER the cursor and emits Enter/LeaveNotify when the
+// pointer crosses a window boundary.  To make a morph drag hand off between
+// windows the way it does on X11, we (a) route a held-button drag to the Self
+// window under the cursor and (b) synthesize windowLeave/windowEnter on each
+// transition.  windowLeave is a mouse event whose part code is inDesk (the
+// Self quartz event mapper turns that into 'windowLeave'); windowEnter reuses
+// the window handleActivate kind (which the mapper turns into 'windowEnter').
+//
+// -- claude & dmu, 5/26
+// ======================================================================
+
+// Map a Cocoa window number to the QuartzWindow that owns it, or NULL if it is
+// not one of our Self content windows (e.g. another app, or the desktop).
+static QuartzWindow* selfWindowForNumber(NSInteger n) {
+    if (n <= 0) return NULL;
+    NSWindow* w = [NSApp windowWithWindowNumber:n];
+    if (!w) return NULL;
+    NSView* v = [w contentView];
+    if (![v isKindOfClass:[SelfContentView class]]) return NULL;
+    return [(SelfContentView*)v quartzWindow];
+}
+
+// Fill in the location/window params shared by both synthetic crossing events.
+static void setCrossingLocation(OpaqueEventRef* e, NSWindow* nsWin, QuartzWindow* qw,
+                                NSPoint screenPt, double globalX, double globalY) {
+    e->setParam_point(kEventParamMouseLocation, globalX, globalY);
+    NSPoint loc = [nsWin convertPointFromScreen:screenPt];
+    NSRect  b   = [[nsWin contentView] bounds];
+    e->setParam_point(kEventParamWindowMouseLocation,
+                      qw->inset_left() + loc.x,
+                      qw->inset_top()  + (b.size.height - loc.y));
+    e->setParam_ptr(kEventParamWindowRef, typeWindowRef, qw->my_window());
+}
+
+// windowLeave: a mouse-moved event tagged with part code inDesk.
+static void postWindowLeave(NSInteger num, NSPoint screenPt, double gX, double gY, double t) {
+    NSWindow*     nsWin = [NSApp windowWithWindowNumber:num];
+    QuartzWindow* qw    = selfWindowForNumber(num);
+    if (!nsWin || !qw) return;
+    OpaqueEventRef* e = new OpaqueEventRef();
+    e->eventClass = kEventClassMouse;
+    e->eventKind  = kEventMouseMoved;
+    e->eventTime  = t;
+    setCrossingLocation(e, nsWin, qw, screenPt, gX, gY);
+    e->setParam_uint32(kEventParamMouseChord,    typeUInt32, 0);
+    e->setParam_uint32(kEventParamWindowDefPart, typeUInt32, kPartInDesk);
+    qw->put_event(e);
+    e->release();
+}
+
+// windowEnter: a window handleActivate event.
+static void postWindowEnter(NSInteger num, NSPoint screenPt, double gX, double gY, double t) {
+    NSWindow*     nsWin = [NSApp windowWithWindowNumber:num];
+    QuartzWindow* qw    = selfWindowForNumber(num);
+    if (!nsWin || !qw) return;
+    OpaqueEventRef* e = new OpaqueEventRef();
+    e->eventClass = kEventClassWindow;
+    e->eventKind  = kEventWindowHandleActivate;
+    e->eventTime  = t;
+    setCrossingLocation(e, nsWin, qw, screenPt, gX, gY);
+    qw->put_event(e);
+    e->release();
+}
+
+// Route a held-button drag to the Self window currently under the cursor (X11
+// delivers motion to the window under the pointer; Cocoa keeps it on the
+// mouse-down window).  Emits windowLeave/windowEnter as the cursor crosses
+// between Self windows, updates currentWindowNumberForDrag (the window the drag is routed to now),
+// and leaves destNS/destQW unchanged unless the cursor is over a Self window.
+// -- claude & dmu 5/26
+static NSInteger destinationSelfWindow(
+        NSInteger originWindowNumber, NSPoint screenPt, double globalX, double globalY, double t,
+        NSInteger currentWindowNumberForDrag) {
+    NSInteger     underNum = [NSWindow windowNumberAtPoint:screenPt belowWindowWithWindowNumber:0];
+    QuartzWindow* overQW   = selfWindowForNumber(underNum);
+    // Over a non-Self window (other app / desktop) → stay with the origin.
+    NSInteger     destSelfWindow   = (overQW && underNum != originWindowNumber) ? underNum : originWindowNumber;
+    if (destSelfWindow == currentWindowNumberForDrag)
+      return currentWindowNumberForDrag;
+  postWindowLeave(currentWindowNumberForDrag, screenPt, globalX, globalY, t);
+  postWindowEnter(destSelfWindow, screenPt, globalX, globalY, t);
+  return destSelfWindow;
+}
 
 @implementation SelfContentView
 
@@ -189,15 +290,11 @@ static _Atomic(uint32_t) sleep_generation = 0;
     double globalY = screenH - locOnScreen.y;
     evt->setParam_point(kEventParamMouseLocation, globalX, globalY);
 
-    // Window-local coordinates (structure-relative, top-left origin)
-    // Carbon's kEventParamWindowMouseLocation is relative to the window's
-    // structure region (including title bar), not the content area.
-    NSRect contentBounds = [self bounds];
-    int insetLeft = _quartzWindow->inset_left();
-    int insetTop  = _quartzWindow->inset_top();
-    double localX = insetLeft + locInWindow.x;
-    double localY = insetTop + (contentBounds.size.height - locInWindow.y);
-    evt->setParam_point(kEventParamWindowMouseLocation, localX, localY);
+    // Window-local coordinates (kEventParamWindowMouseLocation) and the window
+    // reference are set below, after the destination window is determined: a
+    // cross-window drag re-targets the event to the window under the cursor, so
+    // those must be computed relative to THAT window.
+    // claude & dmu, 5/26
 
     // Button number: Carbon uses 1=left, 2=right, 3=middle
     uint16 button = 1;
@@ -244,13 +341,40 @@ static _Atomic(uint32_t) sleep_generation = 0;
     if (mods & NSEventModifierFlagCapsLock) carbonMods |= (1 << 10); // capsLock
     evt->setParam_uint32(kEventParamKeyModifiers, typeUInt32, carbonMods);
 
-    // Window reference
-    evt->setParam_ptr(kEventParamWindowRef, typeWindowRef, _quartzWindow->my_window());
+    // ---- Cross-window drag routing (mirror X11) --------------------------
+    // While a button is held (and on the terminating mouseUp), deliver the
+    // event to the Self window under the cursor rather than the window that
+    // began the drag, and emit windowLeave/windowEnter as the cursor crosses
+    // between Self windows so the carried morph is handed off.
+    // claude & dmu, 5/26
+    NSInteger originWindowNumber = [[self window] windowNumber];
+    BOOL      dragging  = (chord != 0) || (kind == kEventMouseUp);
 
-    // Window part code: inContent = 3 (Carbon HIToolbox part code)
+    static NSInteger dragsDestinationSelfWindow = 0;   // Self window the drag is routed to now
+    if (kind == kEventMouseDown) dragsDestinationSelfWindow = originWindowNumber;
+
+    NSWindow*     destNS = [self window];
+    QuartzWindow* destQW = _quartzWindow;
+
+  if (dragging) {
+    dragsDestinationSelfWindow = destinationSelfWindow(originWindowNumber, locOnScreen, globalX, globalY,
+                                    [event timestamp], dragsDestinationSelfWindow);
+    NSWindow*     rNS = [NSApp windowWithWindowNumber:dragsDestinationSelfWindow];
+    QuartzWindow* rQW = selfWindowForNumber(dragsDestinationSelfWindow);
+    if (rNS && rQW) { destNS = rNS; destQW = rQW; }
+  }
+
+    // Window-local coordinates and window reference, relative to the destination.
+    // claude & dmu, 5/26
+    NSPoint destLoc    = [destNS convertPointFromScreen:locOnScreen];
+    NSRect  destBounds = [[destNS contentView] bounds];
+    evt->setParam_point(kEventParamWindowMouseLocation,
+                        destQW->inset_left() + destLoc.x,
+                        destQW->inset_top()  + (destBounds.size.height - destLoc.y));
+    evt->setParam_ptr(kEventParamWindowRef, typeWindowRef, destQW->my_window());
     evt->setParam_uint32(kEventParamWindowDefPart, typeUInt32, kPartInContent);
 
-    _quartzWindow->put_event(evt);
+    destQW->put_event(evt);
     evt->release(); // put_event retains
 }
 
@@ -375,17 +499,8 @@ static uint32 cocoaCharToMacCharCode(unichar ch) {
 @implementation SelfWindowDelegate
 
 - (void)windowDidResize:(NSNotification *)notification {
-    if (_quartzWindow) {
-        _quartzWindow->set_bounds_changed();
-
-        OpaqueEventRef* evt = new OpaqueEventRef();
-        evt->eventClass = kEventClassWindow;
-        evt->eventKind = kEventWindowBoundsChanged;
-        evt->eventTime = [[NSProcessInfo processInfo] systemUptime];
-        evt->setParam_ptr(kEventParamWindowRef, typeWindowRef, _quartzWindow->my_window());
-        _quartzWindow->put_event(evt);
-        evt->release();
-    }
+    if (_quartzWindow)
+        _quartzWindow->queue_bounds_changed();
 }
 
 - (void)windowDidMove:(NSNotification *)notification {
@@ -461,6 +576,25 @@ static void blitIOSurfaceToView(SelfContentView* view, IOSurfaceRef surface) {
 
 
 // ======================================================================
+// SelfAppDelegate - minimal NSApplicationDelegate
+// Exists only to declare our state-restoration secure-coding policy, which
+// silences AppKit's "implement applicationSupportsSecureRestorableState:"
+// warning. We never restore window state, so YES is safe and asserts nothing
+// we don't honor.
+// -- claude & dmu 5/26
+// ======================================================================
+
+@interface SelfAppDelegate : NSObject <NSApplicationDelegate>
+@end
+
+@implementation SelfAppDelegate
+- (BOOL)applicationSupportsSecureRestorableState:(NSApplication *)app {
+    return YES;
+}
+@end
+
+
+// ======================================================================
 // NSApplication initialization (must be called before any Cocoa use)
 // ======================================================================
 
@@ -480,6 +614,19 @@ static void ensure_cocoa_initialized() {
 
   @autoreleasepool {
     [NSApplication sharedApplication];
+    // Install a minimal delegate before finishLaunching so AppKit can read our
+    // secure-coding policy for state restoration. -- claude & dmu 5/26
+    static SelfAppDelegate* appDelegate = [[SelfAppDelegate alloc] init];
+    [NSApp setDelegate:appDelegate];
+
+    // We don't restore window state; tell AppKit not to save/restore it so it
+    // stops attempting restoration (the "restoreWindowWithIdentifier ...
+    // className=(null)" log line). registerDefaults sets a volatile default,
+    // so this never persists into the user's real preferences.
+    // -- claude & dmu 5/26
+    [[NSUserDefaults standardUserDefaults]
+        registerDefaults:@{@"NSQuitAlwaysKeepsWindows": @NO}];
+
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     // Set an empty main menu before finishLaunching to prevent AppKit from
     // building the default menu, which triggers lazy loading of Writing Tools
@@ -736,6 +883,18 @@ void QuartzWindow::init_font_info() {
 }
 
 
+void QuartzWindow::queue_bounds_changed() {
+  set_bounds_changed();
+  OpaqueEventRef* evt = new OpaqueEventRef();
+  evt->eventClass = kEventClassWindow;
+  evt->eventKind = kEventWindowBoundsChanged;
+  evt->eventTime = [[NSProcessInfo processInfo] systemUptime];
+  evt->setParam_ptr(kEventParamWindowRef, typeWindowRef, my_window());
+  put_event(evt);
+  evt->release();
+}
+
+
 void QuartzWindow::activate() {
   @autoreleasepool {
     NSWindow* nsWin = (__bridge NSWindow*)_ns_window;
@@ -744,6 +903,9 @@ void QuartzWindow::activate() {
       [nsWin orderFront:nil];
     [nsWin makeKeyAndOrderFront:nil];
     [nsWin makeFirstResponder:view];
+    // Cocoa does not send windowDidResize on first show; ui1 first paint
+    // waits on boundsChanged (configureNotify). Same event as a user resize.
+    queue_bounds_changed();
   }
 }
 
@@ -1029,14 +1191,47 @@ void QuartzWindow::draw_rectangle_black(int x, int y, int w, int h) {
   CGContextStrokeRectWithWidth(myContext, CGRectMake(x, y, w, h), 1.0);
 }
 
+// What Claude says about the +-1's I am getting rid of while I am working on ui1 on Quartz: (dmu, 6/26)
+// 
+// Who & when — not you, and not the recent ui1-on-Quartz work. The +1/-1s are original classic-Self Quartz code:
+//
+//   - They first appear in vm/src/any/os/quartzWindow.cpp in commit 2d10d299 — Russell Allen's 2008 "Initial commit of 4.3 CVS tree" (the repo root; the code itself is older still, from
+//   the classic Mac OS X Self 4.3 Quartz layer).
+//   - Russell copied them verbatim into the new vm64/src/any/os/quartzWindow.mm in cf3a27a7 (2026-02-27, "Port Quartz graphics layer to ARM64 macOS with Cocoa/CoreText"). Blame confirms
+//   lines 1184–1192 are his port, untouched except for your comment-out.
+//   - You commented them out in f7c8a0bd (2026-06-05). That's committed and matches the working tree — no uncommitted changes.
+//
+//   Precision note: only two prims ever had them — clear_rectangle (x-1, y-1, w+1, h+1) and fill_rectangle (x, y-1, w, h+1). draw_rectangle_black uses x,y,w,h straight, so there's
+//   nothing to remove there.
+//
+//   Why they were there. The context is y-flipped (lines 1075–1076: TranslateCTM(0, height()) + ScaleCTM(1,-1), plus isFlipped → YES). Working out the pixel coverage, the fudge expands
+//   the painted region by exactly one pixel on the top (and, for clear_rectangle, one on the left) — not right/bottom. They're empirical "over-erase the top/left seam" guards tuned
+//   against 2008-era Quartz, where the flipped CTM left a faint 1px edge artifact. Crude pixel-alignment hacks, not load-bearing logic.
+//   
+//   Is it safe to comment them out? Yes — and it's the right direction.
+//
+//   - Mechanically safe: pure geometry on two fill calls; worst case is a 1px visual artifact, never a crash/corruption. And you kept them as /*-1*/ so they're self-documenting and
+//   trivially restorable. Good way to run an experiment.
+//   - Why it's correct now: you're fixing the convention properly elsewhere in the same session — 64ff82e8 ("cleaning up oldStyle rectangle") reworks the Self-level rect/point model,
+//   and d0dc5cdb ("Turd prevention") replaces truncating asSmallInteger with floor (origin) / ceil (size) at the float→int boundary in quartz_wrappers.self. That floor/ceil is the
+//   principled version of what the crude -1/+1 was groping at. With the convention fixed at the Self level, the VM-level fudge is redundant and now additive — the extra left/top pixel
+//   becomes a turd instead of preventing one. That left-column over-clear matches the memory's residual symptom (the bodyLight on left 1px strip).
+//   - The one real risk: the fudge over-erased. If any Self drawing still bleeds 1px above/left of its nominal rect, removing the expanded clear can leave the opposite turd (a stale 1px
+//   strip). The call sites are full-window clear (clear_rectangle(0,0,width,height), line 1112), text-line clear (line 1136), and the Self clearRectangle/fillRectangle prims — so it's
+//   exactly the drag/redraw paths you're tuning.
+//
+//   So: keep it commented out, but the verdict is visual, not analytic — drag a window and watch the left/top edges. Given 64ff82e8 + d0dc5cdb, I'd expect it to be cleaner now, not
+//   worse. If a 1px stale strip reappears on bottom/right, that's a different edge than the fudge guarded, so the culprit is the Self-side bevel/deltaList coverage, not these two lines.
+
+
 void QuartzWindow::clear_rectangle(int x, int y, int w, int h) {
   set_color(white());
-  CGContextFillRect(myContext, CGRectMake(x-1, y-1, w+1, h+1));
+  CGContextFillRect(myContext, CGRectMake(x/*-1*/, y/*-1*/, w/*+1*/, h/*+1*/));
   set_color(black());
 }
 
 void QuartzWindow::fill_rectangle(int x, int y, int w, int h) {
-  CGContextFillRect(myContext, CGRectMake(x, y-1, w, h+1));
+  CGContextFillRect(myContext, CGRectMake(x, y/*-1*/, w, h/*+1*/));
 }
 
 void QuartzWindow::set_color(long int c) {
@@ -1342,6 +1537,60 @@ void QDEndCGContext_wrap(OpaqueGrafPtr* port, CGContext* carg, void* FH) {
         SelfContentView* view = (__bridge SelfContentView*)port->nsView;
         blitIOSurfaceToView(view, qw ? qw->ioSurface() : NULL);
     }
+}
+
+
+// Integer screen-font advances (Verdana 12 "g"=8, not CTLine's 7.477) with the
+// working CTLineDraw path. CTFontDrawGlyphs of a screen font into the ui1
+// offscreen painted nothing (text vanished). Per-character CTLineDraw uses the
+// same text matrix as indexed; positions come from
+// NSFontIntegerAdvancementsRenderingMode. -- grok 08/26/26
+void DrawTextCoreText_wrap( CGContextRef ctx,
+                            char* text,     uint32 textLen,
+                            char* fontName, uint32 fontNameLen,
+                            float size, float x, float y) {
+  if ((ctx == NULL) || (text == NULL) || (fontName == NULL) || (textLen == 0))
+    return;
+  @autoreleasepool {
+    NSString* fn = [[NSString alloc] initWithBytes:fontName
+                                            length:fontNameLen
+                                          encoding:NSUTF8StringEncoding];
+    NSString* str = [[NSString alloc] initWithBytes:text
+                                             length:textLen
+                                           encoding:NSMacOSRomanStringEncoding];
+    if (fn == nil || str == nil)  return;
+    NSFont* outline = [NSFont fontWithName:fn size:(CGFloat)size];
+    if (outline == nil)  outline = [NSFont systemFontOfSize:(CGFloat)size];
+    NSFont* screen = [outline screenFontWithRenderingMode:
+                        NSFontIntegerAdvancementsRenderingMode];
+    if (screen == nil)  screen = outline;
+    CTFontRef ctOutline = (__bridge CTFontRef)outline;
+    CTFontRef ctScreen  = (__bridge CTFontRef)screen;
+    CFStringRef keys[] = { kCTFontAttributeName, kCTForegroundColorFromContextAttributeName };
+    CFTypeRef   vals[] = { ctOutline, kCFBooleanTrue };
+    CFDictionaryRef attrs = CFDictionaryCreate(NULL, (const void**)keys, (const void**)vals, 2,
+                          &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    NSUInteger n = [str length];
+    CGFloat pen = (CGFloat)floor((double)x + 0.5);
+    CGFloat py  = (CGFloat)floor((double)y + 0.5);
+    for (NSUInteger i = 0; i < n; i++) {
+      unichar c = [str characterAtIndex:i];
+      CFStringRef one = CFStringCreateWithCharacters(NULL, &c, 1);
+      CFAttributedStringRef astr = CFAttributedStringCreate(NULL, one, attrs);
+      CTLineRef line = CTLineCreateWithAttributedString(astr);
+      CGContextSetTextPosition(ctx, pen, py);
+      CTLineDraw(line, ctx);
+      CFRelease(line);
+      CFRelease(astr);
+      CFRelease(one);
+      CGGlyph g = 0;
+      CTFontGetGlyphsForCharacters(ctScreen, &c, &g, 1);
+      NSSize adv = [screen advancementForGlyph:(NSGlyph)g];
+      if (adv.width <= 0)  adv.width = 1;
+      pen += adv.width;
+    }
+    CFRelease(attrs);
+  }
 }
 
 

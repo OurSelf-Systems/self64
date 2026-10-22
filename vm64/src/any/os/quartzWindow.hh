@@ -661,6 +661,7 @@ class QuartzWindow: public AbstractPlatformWindow {
   void  full_redraw();
 
   void set_bounds_changed() { _bounds_changed = true; }
+  void queue_bounds_changed(); // Cocoa didResize + first show (ui1 first paint)
   void set_was_closed() { _was_closed = true; }
   int  screen_width(), screen_height(), menubar_height();
   int  font_width(), font_height();
